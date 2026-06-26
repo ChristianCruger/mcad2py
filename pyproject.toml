@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "mathcad-converter"
+name = "mcad2py"
 version = "0.1.0"
 description = "Convert PTC Mathcad Prime (.mcdx) worksheets into runnable Jupyter notebooks / Python."
 readme = "README.md"
@@ -19,7 +19,7 @@ numpy = ["numpy>=1.24"]
 dev = ["pytest>=7"]
 
 [project.scripts]
-mcad2py = "mathcad_converter.cli:main"
+mcad2py = "mcad2py.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["mathcad_converter*"]
+include = ["mcad2py*"]

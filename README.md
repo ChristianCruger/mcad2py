@@ -1,4 +1,4 @@
-# mathcad-converter
+# mcad2py
 
 Convert PTC **Mathcad Prime** worksheets (`.mcdx`) into runnable Python — either a
 **Jupyter notebook** (one region per cell, results echoed inline like Mathcad's `=`) or a
@@ -30,7 +30,7 @@ mcad2py convert worksheet.mcdx -o - -f py      # to stdout
 Or from Python:
 
 ```python
-from mathcad_converter import convert_file
+from mcad2py import convert_file
 print(convert_file("worksheet.mcdx", fmt="py"))
 ```
 
@@ -44,7 +44,7 @@ f_cd.to(ureg.MPa)        # the bare last line echoes "20 megapascal", like Mathc
 ```
 
 Mathcad trig handles angle units automatically; generated code matches this via small
-angle-aware helpers (`from mathcad_converter.runtime import sin, cos, tan, cot`), so
+angle-aware helpers (`from mcad2py.runtime import sin, cos, tan, cot`), so
 `tan(phi)` works whether `phi` is in `deg` or `rad`.
 
 ## What's supported

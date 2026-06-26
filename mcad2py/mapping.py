@@ -27,7 +27,7 @@ BINARY_OPS = {
 UNARY_PREC = 3
 
 # Mathcad builtin functions -> Python expression for the callable.
-# Trig functions resolve to angle-aware helpers from mathcad_converter.runtime
+# Trig functions resolve to angle-aware helpers from mcad2py.runtime
 # (imported by name into the generated module), so they appear bare here.
 FUNCTIONS = {
     "sin": "sin",

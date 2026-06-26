@@ -126,7 +126,7 @@ def header_lines(ws: ir.Worksheet) -> list[str]:
     lines = ["import math", "import pint", ""]
     if used_runtime:
         names = ", ".join(n for n in RUNTIME_IMPORTS if n in used_runtime)
-        lines.append(f"from mathcad_converter.runtime import {names}")
+        lines.append(f"from mcad2py.runtime import {names}")
     lines.append("ureg = pint.UnitRegistry()")
     return lines
 

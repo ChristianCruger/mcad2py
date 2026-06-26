@@ -17,7 +17,7 @@ def to_notebook(ws: ir.Worksheet) -> nbformat.NotebookNode:
     nb = nbformat.v4.new_notebook()
     cells: list[nbformat.NotebookNode] = [
         nbformat.v4.new_markdown_cell(
-            "*Auto-generated from a Mathcad worksheet by mathcad-converter.*"
+            "*Auto-generated from a Mathcad worksheet by mcad2py.*"
         ),
         nbformat.v4.new_code_cell("\n".join(header_lines(ws))),
     ]

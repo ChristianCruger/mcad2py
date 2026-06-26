@@ -7,7 +7,7 @@ from .codegen import assignment_line, echo_expr, expr_to_str, header_lines
 
 
 def to_python(ws: ir.Worksheet) -> str:
-    lines: list[str] = ['"""Auto-generated from a Mathcad worksheet by mathcad-converter."""']
+    lines: list[str] = ['"""Auto-generated from a Mathcad worksheet by mcad2py."""']
     lines += header_lines(ws)
     lines.append("")
 

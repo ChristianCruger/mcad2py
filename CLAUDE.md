@@ -4,7 +4,7 @@ Guidance for working in this repo.
 
 ## What this is
 
-`mathcad-converter` converts PTC **Mathcad Prime** worksheets (`.mcdx`) into runnable Python —
+`mcad2py` converts PTC **Mathcad Prime** worksheets (`.mcdx`) into runnable Python —
 a **Jupyter notebook** (primary) or a `.py` script. Units are preserved with **Pint**. The end
 goal includes a Claude skill (`.claude/skills/read-mathcad/`) so Claude can read `.mcdx` files.
 
@@ -17,7 +17,7 @@ tree into an IR and emits Python from it.
 pip install -e .                                    # install (deps: pint, nbformat; pytest for tests)
 mcad2py convert file.mcdx                           # -> file.ipynb
 mcad2py convert file.mcdx -f py -o -                # -> stdout as .py
-python -m mathcad_converter.cli convert file.mcdx   # same, without console-script install
+python -m mcad2py.cli convert file.mcdx   # same, without console-script install
 pytest                                              # run the suite
 ```
 
@@ -33,17 +33,17 @@ When adding features, respect this boundary — parsers produce IR, backends con
 
 | File | Role |
 |------|------|
-| [loader.py](mathcad_converter/loader.py) | Unzip `.mcdx`; return `worksheet.xml`, `result.xml`, XAML text packages, rels map |
-| [parser/namespaces.py](mathcad_converter/parser/namespaces.py) | Namespace constants; `localname()` strips `{ns}` — **match on local name, not full URI** (Prime bumps version numbers) |
-| [parser/expressions.py](mathcad_converter/parser/expressions.py) | Recursive XML→IR walk; identifier reading (subscripts/Greek), `sanitize()` |
-| [parser/regions.py](mathcad_converter/parser/regions.py) | Worksheet→ordered regions; **sort by (top, left)** for reading order |
-| [ir.py](mathcad_converter/ir.py) | Backend-agnostic node dataclasses |
-| [mapping.py](mathcad_converter/mapping.py) | Data tables: operators, builtins, constants, Greek, unit aliases |
-| [runtime.py](mathcad_converter/runtime.py) | Angle-aware `sin/cos/tan/cot` imported by generated code |
-| [emit/codegen.py](mathcad_converter/emit/codegen.py) | Precedence-aware expression printer; shared by both backends |
-| [emit/notebook_backend.py](mathcad_converter/emit/notebook_backend.py) | IR→`.ipynb`; region→cell; bare last line echoes result |
-| [emit/py_backend.py](mathcad_converter/emit/py_backend.py) | IR→`.py`; evaluations become `print(...)` |
-| [convert.py](mathcad_converter/convert.py) | Orchestration: `convert_file` / `convert_worksheet` |
+| [loader.py](mcad2py/loader.py) | Unzip `.mcdx`; return `worksheet.xml`, `result.xml`, XAML text packages, rels map |
+| [parser/namespaces.py](mcad2py/parser/namespaces.py) | Namespace constants; `localname()` strips `{ns}` — **match on local name, not full URI** (Prime bumps version numbers) |
+| [parser/expressions.py](mcad2py/parser/expressions.py) | Recursive XML→IR walk; identifier reading (subscripts/Greek), `sanitize()` |
+| [parser/regions.py](mcad2py/parser/regions.py) | Worksheet→ordered regions; **sort by (top, left)** for reading order |
+| [ir.py](mcad2py/ir.py) | Backend-agnostic node dataclasses |
+| [mapping.py](mcad2py/mapping.py) | Data tables: operators, builtins, constants, Greek, unit aliases |
+| [runtime.py](mcad2py/runtime.py) | Angle-aware `sin/cos/tan/cot` imported by generated code |
+| [emit/codegen.py](mcad2py/emit/codegen.py) | Precedence-aware expression printer; shared by both backends |
+| [emit/notebook_backend.py](mcad2py/emit/notebook_backend.py) | IR→`.ipynb`; region→cell; bare last line echoes result |
+| [emit/py_backend.py](mcad2py/emit/py_backend.py) | IR→`.py`; evaluations become `print(...)` |
+| [convert.py](mcad2py/convert.py) | Orchestration: `convert_file` / `convert_worksheet` |
 
 ## Confirmed Prime schema (from `references/.../worksheet.xml`)
 
@@ -57,7 +57,7 @@ When adding features, respect this boundary — parsers produce IR, backends con
 - `<ml:id labels="...">` roles: `VARIABLE`/`UNIT`/`FUNCTION`/`CONSTANT` — use them, don't guess.
 - Subscripts: `f<pw:Subscript>cd</pw:Subscript>` → `f_cd`. Greek is literal unicode.
 - Text regions: content is in `mathcad/xaml/FlowDocumentN.XamlPackage` (a nested zip),
-  linked via `item-idref` → `worksheet.xml.rels`. See [text.py](mathcad_converter/text.py).
+  linked via `item-idref` → `worksheet.xml.rels`. See [text.py](mcad2py/text.py).
 
 ## Conventions
 
@@ -65,7 +65,7 @@ When adding features, respect this boundary — parsers produce IR, backends con
 - Display units come from `unitOverride`; emit `x.to(ureg.<unit>)` for the echo.
 - Unknown/unsupported constructs emit a visible `# TODO unsupported: <note>` so output still
   loads — never silently drop a region.
-- Add new builtins/units/constants to [mapping.py](mathcad_converter/mapping.py) (data, not code).
+- Add new builtins/units/constants to [mapping.py](mcad2py/mapping.py) (data, not code).
 
 ## Testing
 

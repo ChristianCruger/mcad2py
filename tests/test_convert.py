@@ -11,9 +11,9 @@ from pathlib import Path
 import nbformat
 import pytest
 
-from mathcad_converter.convert import convert_file, convert_worksheet
-from mathcad_converter.emit.notebook_backend import to_notebook
-from mathcad_converter.loader import load_mcdx
+from mcad2py.convert import convert_file, convert_worksheet
+from mcad2py.emit.notebook_backend import to_notebook
+from mcad2py.loader import load_mcdx
 
 REFERENCE = Path(__file__).parent.parent / "references" / "plain_concrete_cohesion.mcdx"
 
