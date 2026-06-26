@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# generated conversion outputs
+*.ipynb
+!references/**/*.ipynb
+references/_extracted/
+scratch_*.py
