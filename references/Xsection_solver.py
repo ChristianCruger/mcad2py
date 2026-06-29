@@ -1,7 +1,9 @@
 """Auto-generated from a Mathcad worksheet by mcad2py."""
 import math
+import numpy as np
 import pint
 
+from mcad2py.runtime import col, vectorize, integral, summation
 ureg = pint.UnitRegistry()
 
 
@@ -35,24 +37,12 @@ def sigma_c(e):
     if e < epsilon_c2:
         return -f_cd
     elif e < 0:
-        return -f_cd * (1 - (1 - e / epsilon_c2) ** 2)
-    else:
-        return 0 * ureg.MPa
+        return -f_cd * (1 - (1 - e / epsilon_c2)**2)
+    return 0 * ureg.MPa
 
 # Plot:
-def fl_range(start, stop, step):
-    """helper function to generate a range of floats."""
-    while start < stop:
-        yield start
-        start += step
 
-
-e_plot = fl_range(-0.0035, 0.001, (-0.00345 - (-0.0035)))
-
-
-
-## Actual plot here!! - maybe we add matplotlib? 
-
+e_plot = np.arange(-0.0035, (0.001) + (-0.00345 - -0.0035), -0.00345 - -0.0035)
 
 # Steel
 
@@ -60,18 +50,17 @@ e_plot = fl_range(-0.0035, 0.001, (-0.00345 - (-0.0035)))
 
 cov = 75 * ureg.mm
 
-Ø = [0, 25]* ureg.mm
+Ø = col(0, 25) * ureg.mm
 
-## this doesnt seem to work with the units??
-z_s = [h/2 - cov - Ø[0] * 0.5, h/2 - cov - Ø[1] * 0.5]
+z_s = col(h / 2 - cov - Ø[0] * 0.5, -(h / 2) + cov + Ø[1] * 0.5)
 print(z_s)
 
-s = [150, 150] * ureg.mm
+s = col(150, 150) * ureg.mm
 
 n = len(Ø)
 print(n)
 
-A_s = Ø**2 * math.pi / 4 * w / s
+A_s = vectorize(Ø**2 * (math.pi / 4 * (w / s)))
 print(A_s.to(ureg.mm**2))
 
 f_yk = 500 * ureg.MPa
@@ -83,7 +72,7 @@ E_s = 200 * ureg.GPa
 
 # steel stress-strain relation:
 
-sigma_s = lambda e: max(min( E_s * e, f_yd), -f_yd)
+sigma_s = lambda e: np.maximum(np.minimum(E_s * e, f_yd), -f_yd)
 
 # Strain function incl creep
 
@@ -95,43 +84,45 @@ sigma = lambda z, e, k: sigma_c(epsilon(z, e, k))
 
 # Rebar force vector:
 
-F_s = lambda e, k: A_s * sigma_s(epsilon(z_s, e, k))
+F_s = lambda e, k: vectorize(A_s * sigma_s(epsilon(z_s, e, k)))
 
-# # Internal forces:
+# Internal forces:
 
-# N_int = lambda e, k: w * None  # TODO unsupported: apply/integral + None  # TODO unsupported: apply/summation
+N_int = lambda e, k: w * integral(lambda z: sigma(z, e, k), -h / 2, h / 2) + summation(lambda i: F_s(e, k)[i], 0, n - 1)
 
-# M_int = lambda e, k: w * None  # TODO unsupported: apply/integral + None  # TODO unsupported: apply/summation
+M_int = lambda e, k: w * integral(lambda z: sigma(z, e, k) * z, -h / 2, h / 2) + summation(lambda i: F_s(e, k)[i] * z_s[i], 0, n - 1)
 
-# # Gross section stiffness:
+# Gross section stiffness:
 
-# EA_g = w * h * E_c
+EA_g = w * h * E_c
 
-# EI_g = E_c * (1 / 12) * h**3 * w
+EI_g = E_c * (1 / 12) * h**3 * w
 
-# # External forces
+# External forces
 
-# N_ext = -500 * ureg.kN
+N_ext = -500 * ureg.kN
 
-# M_ext = -530 * ureg.kN * ureg.m
+M_ext = -530 * ureg.kN * ureg.m
 
-# # Solve to find strain distribution matchin external forces:
+# Solve to find strain distribution matchin external forces:
 
-# # check:
+# TODO unsupported region: solve block (Given/Find)
 
-# print((N_int(None  # TODO unsupported: sequence)).to(ureg.kN))
+# check:
 
-# print((M_int(None  # TODO unsupported: sequence)).to(ureg.kN * ureg.m))
+print((N_int(e_1, k_1)).to(ureg.kN))
 
-# # Plot:
+print((M_int(e_1, k_1)).to(ureg.kN * ureg.m))
 
-# z_plot = None  # TODO unsupported: range
+# Plot:
 
-# # neutral axis:
+z_plot = np.arange(-h / 2, (h / 2) + (-h / 2 + 1 * ureg.mm - -h / 2), -h / 2 + 1 * ureg.mm - -h / 2)
 
-# x = h / 2 + e_1 / k_1
-# print(x.to(ureg.mm))
+# neutral axis:
 
-# # Stress in steel:
+x = h / 2 + e_1 / k_1
+print(x.to(ureg.mm))
 
-# print((None  # TODO unsupported: apply/vectorize).to(ureg.MPa))
+# Stress in steel:
+
+print((vectorize(sigma_s(epsilon(z_s, e_1, k_1)))).to(ureg.MPa))
