@@ -9,6 +9,8 @@ We execute the generated module up to ``F_s`` (later regions use not-yet-
 supported integrals) and compare to Mathcad's cached ``result.xml``.
 """
 
+import contextlib
+import io
 import math
 from pathlib import Path
 
@@ -165,6 +167,42 @@ def test_summation_helper_is_inclusive():
     assert summation(lambda i: i, 0, 4) == 10
     assert summation(lambda i: i, 2, 2) == 2  # single term
     assert summation(lambda i: i, 3, 1) == 0  # empty range
+
+
+def _exec_through_checks() -> dict:
+    """Execute the module through the solve block and its N_int/M_int checks.
+
+    Stops before ``z_plot`` (a range over a unit-bearing variable, not yet
+    supported), so the solve block and the checks that follow it do run.
+    """
+    src = convert_file(REFERENCE, fmt="py")
+    cut = src.index("z_plot")
+    ns: dict = {}
+    with contextlib.redirect_stdout(io.StringIO()):
+        exec(compile(src[:cut], "<generated>", "exec"), ns)  # noqa: S102
+    return ns
+
+
+def test_solve_block_finds_cached_solution():
+    ns = _exec_through_checks()
+    ureg = ns["ureg"]
+    e_1 = float(ns["e_1"])                       # dimensionless (unreduced units)
+    k_1 = ns["k_1"].to("1/m").magnitude
+    assert math.isclose(e_1, E_1, rel_tol=1e-5)
+    assert math.isclose(k_1, K_1, rel_tol=1e-5)
+    # The solution satisfies the constraints: N_int = N_ext, M_int = M_ext.
+    n_int = ns["N_int"](ns["e_1"], ns["k_1"]).to("kN").magnitude
+    m_int = ns["M_int"](ns["e_1"], ns["k_1"]).to(ureg.kN * ureg.m).magnitude
+    assert math.isclose(n_int, N_INT_KN, rel_tol=1e-4)
+    assert math.isclose(m_int, M_INT_KNM, rel_tol=1e-4)
+
+
+def test_solve_block_emits_fsolve_helper():
+    src = convert_file(REFERENCE, fmt="py")
+    assert "solve_block" in src
+    assert "def _residuals_e_1_k_1(_x):" in src
+    assert "e, k = _x" in src
+    assert "e_1, k_1 = solve_block(_residuals_e_1_k_1, [e, k])" in src
 
 
 def test_matrix_region_parsed_as_vector():

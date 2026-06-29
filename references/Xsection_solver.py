@@ -3,7 +3,7 @@ import math
 import numpy as np
 import pint
 
-from mcad2py.runtime import col, vectorize, integral, summation
+from mcad2py.runtime import col, vectorize, integral, summation, solve_block
 ureg = pint.UnitRegistry()
 
 
@@ -106,7 +106,15 @@ M_ext = -530 * ureg.kN * ureg.m
 
 # Solve to find strain distribution matchin external forces:
 
-# TODO unsupported region: solve block (Given/Find)
+e = N_ext / EA_g
+k = M_ext / EI_g
+def _residuals_e_1_k_1(_x):
+    e, k = _x
+    return [
+        N_int(e, k) - (N_ext),
+        M_int(e, k) - (M_ext),
+    ]
+e_1, k_1 = solve_block(_residuals_e_1_k_1, [e, k])
 
 # check:
 

@@ -208,6 +208,33 @@ def symbolic_eval_expr(region: ir.SymbolicEval) -> str:
     return f"{region.command}({', '.join(parts)})"
 
 
+def solve_block_lines(region: ir.SolveBlock) -> list[str]:
+    """Emit a numeric solve block: guesses, a residual function, solve_block().
+
+    ``[e_1; k_1] := find(e, k)`` with constraints ``N_int(e,k)=N_ext`` etc.
+    becomes guess assignments, a ``def`` returning the constraint residuals
+    (``lhs - rhs``), and a ``solve_block`` call destructured into the targets.
+    """
+    unknowns = [u.py for u in region.unknowns]
+    targets = [t.py for t in region.targets]
+    resid = "_residuals_" + "_".join(targets)
+
+    lines = [assignment_line(g) for g in region.guesses]
+    lines.append(f"def {resid}(_x):")
+    unpack = ", ".join(unknowns)
+    lines.append(f"    {unpack}, = _x" if len(unknowns) == 1 else f"    {unpack} = _x")
+    lines.append("    return [")
+    for c in region.constraints:
+        lines.append(f"        {expr_to_str(c.lhs)} - ({expr_to_str(c.rhs)}),")
+    lines.append("    ]")
+    call = f"solve_block({resid}, [{', '.join(unknowns)}])"
+    if len(targets) == 1:
+        lines.append(f"{targets[0]} = {call}[0]")
+    else:
+        lines.append(f"{', '.join(targets)} = {call}")
+    return lines
+
+
 # ---------------------------------------------------------------------------
 # Imports needed by a worksheet
 # ---------------------------------------------------------------------------
@@ -228,7 +255,9 @@ def header_lines(ws: ir.Worksheet) -> list[str]:
     lines.append("")
     runtime = _used_runtime(ws)
     if runtime:
-        order = [*RUNTIME_IMPORTS, "col", "vectorize", "integral", "summation"]
+        order = [
+            *RUNTIME_IMPORTS, "col", "vectorize", "integral", "summation", "solve_block"
+        ]
         names = ", ".join(n for n in order if n in runtime)
         lines.append(f"from mcad2py.runtime import {names}")
     lines.append("ureg = pint.UnitRegistry()")
@@ -266,6 +295,8 @@ def _used_runtime(ws: ir.Worksheet) -> set[str]:
     """Runtime-helper names the generated module imports (trig, col, vectorize)."""
     found: set[str] = set()
     for region in ws.regions:
+        if isinstance(region, ir.SolveBlock):
+            found.add("solve_block")
         for node in _region_exprs(region):
             for sub in _walk(node):
                 if isinstance(sub, ir.Call) and sub.func in RUNTIME_IMPORTS:
@@ -290,6 +321,11 @@ def _region_exprs(region: ir.Region) -> list[ir.Expr]:
         return [region.equation]
     if isinstance(region, ir.SymbolicEval):
         return [region.expr, *region.args]
+    if isinstance(region, ir.SolveBlock):
+        exprs: list[ir.Expr] = [g.value for g in region.guesses]
+        for c in region.constraints:
+            exprs += [c.lhs, c.rhs]
+        return exprs
     return []
 
 

@@ -65,8 +65,7 @@ def _parse_region(
         if tag == "picture":
             return _parse_picture(child, image_resolver)
         if tag == "solveblock":
-            # Numeric Given/Find block -> a future scipy.optimize target.
-            return ir.UnsupportedRegion(note="solve block (Given/Find)")
+            return _parse_solveblock(child)
     return None
 
 
@@ -150,6 +149,67 @@ def _parse_define(define_elem: ET.Element) -> ir.Region:
     return ir.Define(
         target=target, value=parse_expr(value_elem), evaluate=False, params=params
     )
+
+
+def _parse_solveblock(elem: ET.Element) -> ir.Region:
+    """Parse a ``<solveblock>``: guess values, constraints, and the solver.
+
+    Sub-regions are tagged ``solve-block-category`` = ``guess-value`` /
+    ``constraint`` / ``solver``. The solver region is ``[targets] := find(unknowns)``.
+    """
+    guesses: list[ir.Define] = []
+    constraints: list[ir.Equation] = []
+    unknowns: list[ir.Name] = []
+    targets: list[ir.Name] = []
+    command = "find"
+    display_unit: ir.Expr | None = None
+
+    regions_elem = next((c for c in elem if localname(c.tag) == "regions"), None)
+    for sub in regions_elem if regions_elem is not None else []:
+        category = sub.get("solve-block-category")
+        math = next((c for c in sub if localname(c.tag) == "math"), None)
+        if math is None or not len(math):
+            continue
+        inner = list(math)[0]
+        if category == "guess-value":
+            parsed = _parse_define(inner)
+            if isinstance(parsed, ir.Define):
+                guesses.append(parsed)
+        elif category == "constraint":
+            eq = parse_expr(inner)
+            if isinstance(eq, ir.Equation):
+                constraints.append(eq)
+        elif category == "solver":
+            command, unknowns, targets, display_unit = _parse_solver(inner)
+
+    if not targets:
+        return ir.UnsupportedRegion(note="solve block (no solver region)")
+    return ir.SolveBlock(
+        guesses=guesses,
+        constraints=constraints,
+        unknowns=unknowns,
+        targets=targets,
+        command=command,
+        display_unit=display_unit,
+    )
+
+
+def _parse_solver(
+    define_elem: ET.Element,
+) -> tuple[str, list[ir.Name], list[ir.Name], ir.Expr | None]:
+    """Parse the ``[targets] := find(unknowns)`` region of a solve block."""
+    children = list(define_elem)
+    target_elem, value_elem = children[0], children[1]
+    targets = [
+        _parse_target(c) for c in target_elem if localname(c.tag) == "id"
+    ]
+    value, display_unit = parse_eval(value_elem)
+    command = "find"
+    unknowns: list[ir.Name] = []
+    if isinstance(value, ir.Call):
+        command = value.func
+        unknowns = [a for a in value.args if isinstance(a, ir.Name)]
+    return command, unknowns, targets, display_unit
 
 
 def _parse_target(id_elem: ET.Element) -> ir.Name:

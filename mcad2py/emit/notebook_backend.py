@@ -18,6 +18,7 @@ from .codegen import (
     echo_expr,
     expr_to_str,
     header_lines,
+    solve_block_lines,
     symbolic_eval_expr,
 )
 
@@ -71,6 +72,9 @@ def _render_region(region: ir.Region) -> nbformat.NotebookNode | None:
 
     if isinstance(region, ir.SymbolicEval):
         return nbformat.v4.new_code_cell(symbolic_eval_expr(region))
+
+    if isinstance(region, ir.SolveBlock):
+        return nbformat.v4.new_code_cell("\n".join(solve_block_lines(region)))
 
     if isinstance(region, ir.UnsupportedRegion):
         return nbformat.v4.new_markdown_cell(f"> **TODO** unsupported region: {region.note}")

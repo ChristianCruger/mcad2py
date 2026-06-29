@@ -110,6 +110,45 @@ def summation(func, lower, upper):
     return total
 
 
+def solve_block(residual, guesses):
+    """Numeric solve block (Mathcad Given/Find) via ``scipy.optimize.fsolve``.
+
+    ``guesses`` are the seed values of the unknowns (Pint quantities or plain
+    numbers); ``residual`` takes the unknowns (units reattached) and returns the
+    constraint residuals (``lhs - rhs``). All Pint bookkeeping lives here:
+    unknowns are solved as bare magnitudes in their guess units, residuals are
+    compared in base units, and the solution is returned with units restored --
+    so generated code can pass quantities straight through.
+    """
+    from scipy.optimize import fsolve
+
+    units = [getattr(g, "units", None) for g in guesses]
+    x0 = [
+        float(g.magnitude) if u is not None else float(g)
+        for g, u in zip(guesses, units)
+    ]
+
+    def _wrapped(x):
+        vals = [
+            (float(xi) * u) if u is not None else float(xi)
+            for xi, u in zip(x, units)
+        ]
+        out = []
+        for r in residual(vals):
+            out.append(
+                float(r.to_base_units().magnitude)
+                if hasattr(r, "to_base_units")
+                else float(r)
+            )
+        return out
+
+    solution = np.atleast_1d(fsolve(_wrapped, x0))
+    return [
+        (float(s) * u) if u is not None else float(s)
+        for s, u in zip(solution, units)
+    ]
+
+
 def vectorize(value: object) -> object:
     """Mathcad's element-wise 'arrow'.
 

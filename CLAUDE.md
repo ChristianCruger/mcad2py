@@ -98,7 +98,14 @@ When adding features, respect this boundary — parsers produce IR, backends con
   its `.png` is often BMP). The notebook embeds it as a **stored `image/png` cell output** (plus
   re-runnable `Image(...)` source), converting non-web formats to PNG via Pillow — *not* a
   markdown `data:` URI, which VS Code/others sanitize or truncate. `.py` emits a comment.
-- `<solveblock>` region (numeric Given/Find) → a `# TODO unsupported` stub for now.
+- `<solveblock>` region (numeric Given/Find) → `ir.SolveBlock`. Sub-regions carry
+  `solve-block-category`: `guess-value` (a `Define` seeding an unknown), `constraint` (a numeric
+  `<ml:equal>` → `ir.Equation`, emitted as a `lhs - rhs` residual — *not* a SymPy `Eq`), and
+  `solver` (`[targets] := find(unknowns)`, the `find` id is `labels="KEYWORD"`). Emits guess
+  assignments, a `def _residuals(_x)` returning the residual list, and `targets = solve_block(...)`.
+  The `solve_block` runtime helper wraps `scipy.optimize.fsolve` and does all the Pint bookkeeping
+  (unknowns solved as magnitudes in their guess units, residuals compared in base units, units
+  restored on the result). Only `find` is wired; `minerr`/`maximize`/`minimize` are future.
 - Worksheet settings live in `mathcad/settings/calculation.xml`: `array-origin="0"` (confirms our
   0-based indexing), `convergence-tolerance` = Mathcad `TOL`, `constraint-tolerance` = `CTOL` (both
   per-file, default `0.001`). Not consumed yet — `TOL`/`CTOL` will drive `find`/`quad` tolerances
@@ -123,17 +130,19 @@ additionally checks the emitted `solve(...)` against Mathcad's cached `symResult
 vectors/indexing vs cached matrices, the `σ_c` program's branches, element-wise `min`/`max` clamps,
 the vectorized `F_s`, and `N_int`/`M_int` (concrete integral + steel summation) evaluated at the
 cached solve point `e_1`/`k_1` against Mathcad's cached force/moment checks (rel_tol 1e-4 — `quad`
-on the kinked integrand vs Mathcad's own quadrature at its 1e-3 solution differ ~1e-5). Plus direct
-unit tests of the `integral`/`summation` runtime helpers.
+on the kinked integrand vs Mathcad's own quadrature at its 1e-3 solution differ ~1e-5), and the
+`find` solve block recovering Mathcad's cached `e_1`/`k_1` via `fsolve`. Plus direct unit tests of
+the `integral`/`summation` runtime helpers.
 
 ## Not yet supported (next targets)
 
-Solve blocks (Given/Find — the *numeric* kind, distinct from the symbolic `solve` above; the most
-natural fit is `scipy.optimize.fsolve`/`root`, with `CTOL`/`TOL` from `calculation.xml`), general
-`rows×cols` matrices (vectors work), plots. Each currently becomes a `# TODO unsupported` stub. A
-*branching* program applied to an array still needs `np.vectorize(fn)` (the `vectorize()` identity
+Ranges over a **unit-bearing** variable (`z_plot := -h/2, … .. h/2`) — the `np.arange` we emit only
+works for dimensionless ranges (`e_plot`); a unit-aware range helper is needed. General `rows×cols`
+matrices (vectors work), plots. `find` solve blocks work; `minerr`/`maximize`/`minimize` don't yet.
+A *branching* program applied to an array still needs `np.vectorize(fn)` (the `vectorize()` identity
 helper only covers arithmetic + `min`/`max`). Known gap: square roots emit `math.sqrt(x)` (fine for
 dimensionless args); switch to `x ** 0.5` when a unit-bearing root appears so Pint handles units.
+`TOL`/`CTOL` from `calculation.xml` aren't consumed yet (solve uses fsolve defaults).
 
 Nice-to-have: an opt-in `--externalize-images` (or `--media-dir`) flag that writes picture
 regions as sidecar files next to the output notebook and references them with a relative link,

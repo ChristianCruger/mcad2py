@@ -280,6 +280,24 @@ class SymbolicEval(Region):
 
 
 @dataclass
+class SolveBlock(Region):
+    """A Mathcad numeric solve block (Given/Find).
+
+    ``guesses`` seed the unknowns; ``constraints`` are numeric equations the
+    solution must satisfy; ``unknowns`` are the variables passed to ``find``;
+    ``targets`` are where the result is stored (``[e_1; k_1] := find(e, k)``).
+    Emits a ``scipy.optimize`` solve via the ``solve_block`` runtime helper.
+    """
+
+    guesses: list[Define]
+    constraints: list[Equation]
+    unknowns: list[Name]
+    targets: list[Name]
+    command: str = "find"
+    display_unit: Expr | None = None
+
+
+@dataclass
 class TextRegion(Region):
     """A text/comment region."""
 
