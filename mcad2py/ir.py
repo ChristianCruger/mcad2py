@@ -92,6 +92,17 @@ class Parens(Expr):
 
 
 @dataclass
+class Equation(Expr):
+    """A symbolic equation (Mathcad boolean/symbolic ``=``) -> SymPy ``Eq``.
+
+    Unlike ``Define`` (``:=``) this binds nothing; it states a relation.
+    """
+
+    lhs: Expr
+    rhs: Expr
+
+
+@dataclass
 class Placeholder(Expr):
     """An empty Mathcad placeholder slot."""
 
@@ -137,6 +148,41 @@ class Evaluate(Region):
 
 
 @dataclass
+class SymbolDeclarations(Region):
+    """Declare free identifiers as SymPy ``Symbol``s before symbolic regions.
+
+    Injected by the parser ahead of the first symbolic region so the equations
+    that follow have something to bind to. ``names`` are Python-safe and are
+    used verbatim both as the variable and as the symbol's string name.
+    """
+
+    names: list[str]
+
+
+@dataclass
+class SymbolicEquation(Region):
+    """A standalone symbolic equation shown as a step (assigned to nothing)."""
+
+    equation: Equation
+
+
+@dataclass
+class SymbolicEval(Region):
+    """A Mathcad symbolic evaluation, e.g. ``... solve, C``.
+
+    ``command`` is a SymPy callable name (``solve``/``simplify``/...); ``expr``
+    is the input (often an :class:`Equation`); ``args`` are extra command
+    arguments (for ``solve``, the variable(s) to solve for). ``result`` is
+    Mathcad's cached symbolic answer, kept for tests (not emitted).
+    """
+
+    expr: Expr
+    command: str
+    args: list[Expr] = field(default_factory=list)
+    result: Expr | None = None
+
+
+@dataclass
 class TextRegion(Region):
     """A text/comment region."""
 
@@ -157,3 +203,27 @@ class UnsupportedRegion(Region):
 @dataclass
 class Worksheet:
     regions: list[Region] = field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Structural traversal (backend-agnostic)
+# ---------------------------------------------------------------------------
+
+
+def child_exprs(node: object) -> list[Expr]:
+    """The sub-expressions of an expression node, for generic tree walks."""
+    if isinstance(node, Quantity):
+        return [node.value, node.unit]
+    if isinstance(node, BinOp):
+        return [node.left, node.right]
+    if isinstance(node, UnaryOp):
+        return [node.operand]
+    if isinstance(node, Call):
+        return list(node.args)
+    if isinstance(node, Root):
+        return [node.operand] + ([node.degree] if node.degree is not None else [])
+    if isinstance(node, Equation):
+        return [node.lhs, node.rhs]
+    if isinstance(node, Parens):
+        return [node.inner]
+    return []

@@ -47,6 +47,15 @@ FUNCTIONS = {
 # Trig helpers that must be imported from the runtime into generated code.
 RUNTIME_IMPORTS = ("sin", "cos", "tan", "cot")
 
+# Mathcad symbolic command keyword (first id of a <ml:command> sequence) ->
+# SymPy callable. Symbolic regions emit ``<callable>(expr, *args)``.
+SYMBOLIC_COMMANDS = {
+    "solve": "solve",
+    "simplify": "simplify",
+    "factor": "factor",
+    "expand": "expand",
+}
+
 # Mathcad constants -> Python expression.
 CONSTANTS = {
     "π": "math.pi",

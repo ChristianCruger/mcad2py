@@ -65,6 +65,9 @@ def _emit(node: ir.Expr) -> tuple[str, int]:
         degree = expr_to_str(node.degree)
         return f"({operand}) ** (1 / ({degree}))", _ATOM
 
+    if isinstance(node, ir.Equation):
+        return f"Eq({expr_to_str(node.lhs)}, {expr_to_str(node.rhs)})", _ATOM
+
     if isinstance(node, ir.Placeholder):
         return "None  # placeholder", _ATOM
 
@@ -115,6 +118,17 @@ def echo_expr(region: ir.Region) -> str | None:
     return None
 
 
+def declaration_lines(region: ir.SymbolDeclarations) -> list[str]:
+    """``x = Symbol('x')`` lines for a symbol-declaration region."""
+    return [f"{name} = Symbol('{name}')" for name in region.names]
+
+
+def symbolic_eval_expr(region: ir.SymbolicEval) -> str:
+    """The ``solve(Eq(...), C)``-style call for a symbolic evaluation."""
+    parts = [expr_to_str(region.expr)] + [expr_to_str(a) for a in region.args]
+    return f"{region.command}({', '.join(parts)})"
+
+
 # ---------------------------------------------------------------------------
 # Imports needed by a worksheet
 # ---------------------------------------------------------------------------
@@ -122,8 +136,15 @@ def echo_expr(region: ir.Region) -> str | None:
 
 def header_lines(ws: ir.Worksheet) -> list[str]:
     """Import/setup lines for the generated module, tailored to what's used."""
+    lines = ["import math", "import pint"]
+    sympy_names = _sympy_imports(ws)
+    if sympy_names:
+        order = ["Eq", "Symbol", "solve", "simplify", "factor", "expand"]
+        ordered = [n for n in order if n in sympy_names]
+        ordered += sorted(sympy_names - set(order))
+        lines.append(f"from sympy import {', '.join(ordered)}")
+    lines.append("")
     used_runtime = _used_runtime(ws)
-    lines = ["import math", "import pint", ""]
     if used_runtime:
         names = ", ".join(n for n in RUNTIME_IMPORTS if n in used_runtime)
         lines.append(f"from mcad2py.runtime import {names}")
@@ -131,32 +152,46 @@ def header_lines(ws: ir.Worksheet) -> list[str]:
     return lines
 
 
+def _sympy_imports(ws: ir.Worksheet) -> set[str]:
+    """SymPy names the generated module needs (``Eq``/``Symbol``/commands)."""
+    names: set[str] = set()
+    for region in ws.regions:
+        if isinstance(region, ir.SymbolDeclarations):
+            names.add("Symbol")
+        elif isinstance(region, ir.SymbolicEquation):
+            names.add("Eq")
+        elif isinstance(region, ir.SymbolicEval):
+            names.add(region.command)
+            if any(isinstance(e, ir.Equation) for e in _walk(region.expr)):
+                names.add("Eq")
+    return names
+
+
 def _used_runtime(ws: ir.Worksheet) -> set[str]:
     found: set[str] = set()
-
-    def visit(node: object) -> None:
-        if isinstance(node, ir.Call) and node.func in RUNTIME_IMPORTS:
-            found.add(node.func)
-        for child in _children(node):
-            visit(child)
-
     for region in ws.regions:
-        if isinstance(region, ir.Define):
-            visit(region.value)
-        elif isinstance(region, ir.Evaluate):
-            visit(region.value)
+        for node in _region_exprs(region):
+            for sub in _walk(node):
+                if isinstance(sub, ir.Call) and sub.func in RUNTIME_IMPORTS:
+                    found.add(sub.func)
     return found
 
 
-def _children(node: object) -> list[ir.Expr]:
-    if isinstance(node, ir.Quantity):
-        return [node.value, node.unit]
-    if isinstance(node, ir.BinOp):
-        return [node.left, node.right]
-    if isinstance(node, ir.UnaryOp):
-        return [node.operand]
-    if isinstance(node, ir.Call):
-        return list(node.args)
-    if isinstance(node, ir.Root):
-        return [node.operand] + ([node.degree] if node.degree is not None else [])
+def _region_exprs(region: ir.Region) -> list[ir.Expr]:
+    if isinstance(region, ir.Define):
+        return [region.value]
+    if isinstance(region, ir.Evaluate):
+        return [region.value]
+    if isinstance(region, ir.SymbolicEquation):
+        return [region.equation]
+    if isinstance(region, ir.SymbolicEval):
+        return [region.expr, *region.args]
     return []
+
+
+def _walk(node: ir.Expr) -> list[ir.Expr]:
+    """The node and all of its descendant expressions (pre-order)."""
+    out = [node]
+    for child in ir.child_exprs(node):
+        out.extend(_walk(child))
+    return out

@@ -114,6 +114,10 @@ def _parse_apply(elem: ET.Element) -> ir.Expr:
         unit = parse_expr(rest[1])
         return ir.Quantity(value=value, unit=unit)
 
+    # Symbolic equation: <apply><equal/> <lhs/> <rhs/>  (Mathcad boolean ``=``).
+    if head_tag == "equal":
+        return ir.Equation(lhs=parse_expr(rest[0]), rhs=parse_expr(rest[1]))
+
     # nth root: <apply><nthRoot/> <degree-or-placeholder/> <operand/>
     if head_tag == "nthRoot":
         degree_elem, operand_elem = rest[0], rest[1]

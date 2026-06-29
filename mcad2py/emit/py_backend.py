@@ -3,7 +3,14 @@
 from __future__ import annotations
 
 from .. import ir
-from .codegen import assignment_line, echo_expr, expr_to_str, header_lines
+from .codegen import (
+    assignment_line,
+    declaration_lines,
+    echo_expr,
+    expr_to_str,
+    header_lines,
+    symbolic_eval_expr,
+)
 
 
 def to_python(ws: ir.Worksheet) -> str:
@@ -30,6 +37,16 @@ def _render_region(region: ir.Region) -> list[str]:
     if isinstance(region, ir.Evaluate):
         echo = echo_expr(region)
         return ["", f"print({echo})"] if echo is not None else []
+
+    if isinstance(region, ir.SymbolDeclarations):
+        return ["", *declaration_lines(region)]
+
+    if isinstance(region, ir.SymbolicEquation):
+        # A step shown for context; assigned to nothing, like the Mathcad sheet.
+        return ["", expr_to_str(region.equation)]
+
+    if isinstance(region, ir.SymbolicEval):
+        return ["", f"print({symbolic_eval_expr(region)})"]
 
     if isinstance(region, ir.UnsupportedRegion):
         return ["", f"# TODO unsupported region: {region.note}"]

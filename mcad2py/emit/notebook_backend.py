@@ -10,7 +10,14 @@ from __future__ import annotations
 import nbformat
 
 from .. import ir
-from .codegen import assignment_line, echo_expr, header_lines
+from .codegen import (
+    assignment_line,
+    declaration_lines,
+    echo_expr,
+    expr_to_str,
+    header_lines,
+    symbolic_eval_expr,
+)
 
 
 def to_notebook(ws: ir.Worksheet) -> nbformat.NotebookNode:
@@ -49,6 +56,16 @@ def _render_region(region: ir.Region) -> nbformat.NotebookNode | None:
     if isinstance(region, ir.Evaluate):
         echo = echo_expr(region)
         return nbformat.v4.new_code_cell(echo) if echo is not None else None
+
+    if isinstance(region, ir.SymbolDeclarations):
+        return nbformat.v4.new_code_cell("\n".join(declaration_lines(region)))
+
+    if isinstance(region, ir.SymbolicEquation):
+        # Bare Eq(...) last line -> the notebook renders the typeset equation.
+        return nbformat.v4.new_code_cell(expr_to_str(region.equation))
+
+    if isinstance(region, ir.SymbolicEval):
+        return nbformat.v4.new_code_cell(symbolic_eval_expr(region))
 
     if isinstance(region, ir.UnsupportedRegion):
         return nbformat.v4.new_markdown_cell(f"> **TODO** unsupported region: {region.note}")

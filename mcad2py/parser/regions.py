@@ -6,6 +6,7 @@ import xml.etree.ElementTree as ET
 from typing import Callable
 
 from .. import ir
+from ..mapping import SYMBOLIC_COMMANDS
 from .expressions import parse_eval, parse_expr, read_identifier, sanitize
 from .namespaces import localname
 
@@ -33,6 +34,7 @@ def parse_worksheet(
         parsed = _parse_region(region, text_resolver)
         if parsed is not None:
             ws.regions.append(parsed)
+    _inject_symbol_declarations(ws)
     return ws
 
 
@@ -62,8 +64,51 @@ def _parse_math(math_elem: ET.Element) -> ir.Region:
         value, unit = parse_eval(inner)
         return ir.Evaluate(value=value, display_unit=unit)
 
-    # Bare expression region (no define/eval wrapper) -> treat as evaluation.
+    if tag == "symEval":
+        return _parse_sym_eval(inner)
+
+    # Bare symbolic equation (no define/eval wrapper): <apply><equal/> ...>.
+    if tag == "apply":
+        head = next(iter(inner), None)
+        if head is not None and localname(head.tag) == "equal":
+            return ir.SymbolicEquation(equation=parse_expr(inner))
+
+    # Other bare expression region -> treat as evaluation.
     return ir.Evaluate(value=parse_expr(inner), display_unit=None)
+
+
+def _parse_sym_eval(elem: ET.Element) -> ir.Region:
+    """Parse an ``<ml:symEval>``: an input expr, a command, a cached result."""
+    expr: ir.Expr | None = None
+    command_name = ""
+    args: list[ir.Expr] = []
+    result: ir.Expr | None = None
+
+    for child in elem:
+        ctag = localname(child.tag)
+        if ctag == "command":
+            command_name, args = _parse_command(child)
+        elif ctag == "symResult":
+            res = next(iter(child), None)
+            result = parse_expr(res) if res is not None else None
+        elif expr is None:
+            # The first non-command/result child is the input expression.
+            expr = parse_expr(child)
+
+    canonical = SYMBOLIC_COMMANDS.get(command_name)
+    if expr is None or canonical is None:
+        return ir.UnsupportedRegion(note=f"symbolic command: {command_name or '?'}")
+    return ir.SymbolicEval(expr=expr, command=canonical, args=args, result=result)
+
+
+def _parse_command(elem: ET.Element) -> tuple[str, list[ir.Expr]]:
+    """Read a ``<ml:command><ml:sequence> name, arg, ... </>``."""
+    seq = next((c for c in elem if localname(c.tag) == "sequence"), None)
+    parts = list(seq) if seq is not None else []
+    if not parts:
+        return "", []
+    name = read_identifier(parts[0])
+    return name, [parse_expr(p) for p in parts[1:]]
 
 
 def _parse_define(define_elem: ET.Element) -> ir.Region:
@@ -92,6 +137,47 @@ def _parse_text(
     if not text.strip():
         return None
     return ir.TextRegion(text=text)
+
+
+def _inject_symbol_declarations(ws: ir.Worksheet) -> None:
+    """Declare free identifiers as SymPy Symbols ahead of the first symbolic region.
+
+    Symbolic regions reference variables that have no numeric value yet (the
+    "show the steps" equations). We collect those free names and emit
+    ``x = Symbol('x')`` for each, skipping any already defined numerically
+    above the first symbolic region.
+    """
+    symbolic = (ir.SymbolicEquation, ir.SymbolicEval)
+    first = next(
+        (i for i, r in enumerate(ws.regions) if isinstance(r, symbolic)), None
+    )
+    if first is None:
+        return
+
+    defined_before = {
+        r.target.py for r in ws.regions[:first] if isinstance(r, ir.Define)
+    }
+
+    names: list[str] = []
+    for region in ws.regions:
+        if isinstance(region, ir.SymbolicEquation):
+            _collect_var_names(region.equation, names)
+        elif isinstance(region, ir.SymbolicEval):
+            _collect_var_names(region.expr, names)
+            for arg in region.args:
+                _collect_var_names(arg, names)
+
+    decl = [n for n in names if n not in defined_before]
+    if decl:
+        ws.regions.insert(first, ir.SymbolDeclarations(names=decl))
+
+
+def _collect_var_names(node: ir.Expr, acc: list[str]) -> None:
+    """Append distinct VARIABLE identifier names in first-seen order."""
+    if isinstance(node, ir.Name) and node.role == "VARIABLE" and node.py not in acc:
+        acc.append(node.py)
+    for child in ir.child_exprs(node):
+        _collect_var_names(child, acc)
 
 
 def _to_float(value: str | None) -> float:

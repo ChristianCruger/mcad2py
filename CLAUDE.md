@@ -54,6 +54,11 @@ When adding features, respect this boundary — parsers produce IR, backends con
 - `<ml:apply>`: first child is the operator (empty tag: `div mult plus minus pow scale nthRoot`)
   **or** an `<ml:id labels="FUNCTION">` (function call). `scale` = number×unit ("30 MPa").
   `nthRoot` with empty first child = √.
+- `<ml:apply><ml:equal/> lhs rhs>` = a symbolic/boolean equation (not `:=`) → SymPy `Eq(lhs, rhs)`.
+- `<ml:symEval>` = symbolic evaluation: an input expr, a `<ml:command><ml:sequence> name, args…>`
+  (e.g. `solve, C`), and a cached `<ml:symResult>` → emits `name(expr, *args)` (`solve(Eq(...), C)`).
+  Command keyword → SymPy callable lives in `SYMBOLIC_COMMANDS` in [mapping.py](mcad2py/mapping.py).
+  Free identifiers used symbolically are auto-declared as `x = Symbol('x')` ahead of first use.
 - `<ml:id labels="...">` roles: `VARIABLE`/`UNIT`/`FUNCTION`/`CONSTANT` — use them, don't guess.
 - Subscripts: `f<pw:Subscript>cd</pw:Subscript>` → `f_cd`. Greek is literal unicode.
 - Text regions: content is in `mathcad/xaml/FlowDocumentN.XamlPackage` (a nested zip),
@@ -72,12 +77,17 @@ When adding features, respect this boundary — parsers produce IR, backends con
 [tests/test_convert.py](tests/test_convert.py) converts `references/plain_concrete_cohesion.mcdx`,
 **executes** the generated Python, and asserts values match Mathcad's cached `result.xml`
 (~14 sig figs). When adding a sample, prefer this execute-and-compare-to-`result.xml` style.
+[tests/test_symbolic.py](tests/test_symbolic.py) does the same for `references/NM_to_CT.mcdx` and
+additionally checks the emitted `solve(...)` against Mathcad's cached `symResult` via SymPy.
 
 ## Not yet supported (next targets)
 
-Solve blocks (Given/Find), Mathcad programs, range variables, matrices, plots. Each currently
-becomes a `# TODO unsupported` stub. Known gap: square roots emit `math.sqrt(x)` (fine for
-dimensionless args); switch to `x ** 0.5` when a unit-bearing root appears so Pint handles units.
+Solve blocks (Given/Find — the *numeric* kind, distinct from the symbolic `solve` above),
+Mathcad programs, range variables, matrices, plots. Each currently becomes a `# TODO unsupported`
+stub. Known gaps: square roots emit `math.sqrt(x)` (fine for dimensionless args); switch to
+`x ** 0.5` when a unit-bearing root appears so Pint handles units. A **compound** `unitOverride`
+(e.g. `kN·m`, an `<ml:apply><ml:mult/>` rather than a single `<ml:id>`) is currently dropped by
+`parse_eval`, so that echo falls back to auto units.
 
 ## Scope
 

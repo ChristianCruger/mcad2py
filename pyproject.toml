@@ -11,10 +11,10 @@ requires-python = ">=3.10"
 dependencies = [
     "pint>=0.23",
     "nbformat>=5.9",
+    "sympy>=1.12",
 ]
 
 [project.optional-dependencies]
-sympy = ["sympy>=1.12"]
 numpy = ["numpy>=1.24"]
 dev = ["pytest>=7"]
 
