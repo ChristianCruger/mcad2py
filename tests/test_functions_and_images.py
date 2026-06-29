@@ -70,15 +70,27 @@ def test_picture_region_parsed_with_real_mime():
     assert img.data[:2] == b"BM"
 
 
-def test_notebook_embeds_image_as_data_uri():
+def test_notebook_embeds_image_as_png_output():
+    """The picture is embedded as a stored PNG cell output (renders on open),
+    with re-runnable source -- not a markdown ``data:`` URI (which several
+    renderers, including VS Code, sanitize/truncate). The source BMP is
+    converted to PNG for universal renderer support.
+    """
     from mcad2py.emit.notebook_backend import to_notebook
 
     ws = convert_worksheet(load_mcdx(REFERENCE))
     nb = to_notebook(ws)
     nbformat.validate(nb)
+
     cell = next(
         c for c in nb.cells
-        if c.cell_type == "markdown" and "data:image/bmp;base64," in c.source
+        if c.cell_type == "code" and "IPython.display import Image" in c.source
     )
-    b64 = cell.source.split("base64,", 1)[1].rstrip(")")
-    assert base64.b64decode(b64)[:2] == b"BM"  # round-trips to the BMP bytes
+    # Stored output renders without execution.
+    output = cell.outputs[0]
+    assert output.output_type == "display_data"
+    assert base64.b64decode(output.data["image/png"])[:8].startswith(b"\x89PNG")
+    # Source regenerates the same image on re-run.
+    assert "base64.b64decode" in cell.source
+    # No giant markdown data URI anywhere.
+    assert not any("data:image" in c.source for c in nb.cells)

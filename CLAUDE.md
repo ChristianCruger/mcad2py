@@ -67,8 +67,10 @@ When adding features, respect this boundary — parsers produce IR, backends con
 - Text regions: content is in `mathcad/xaml/FlowDocumentN.XamlPackage` (a nested zip),
   linked via `item-idref` → `worksheet.xml.rels`. See [text.py](mcad2py/text.py).
 - Picture regions: `<picture><png item-idref=N>` → `item-idref` → rels → `mathcad/media/*`
-  bytes (`McdxPackage.image`). Notebook embeds it as a base64 data URI; `.py` emits a comment.
-  Mathcad mislabels extensions (its `.png` is often BMP), so MIME is sniffed from magic bytes.
+  bytes (`McdxPackage.image`). MIME is sniffed from magic bytes (Mathcad mislabels extensions —
+  its `.png` is often BMP). The notebook embeds it as a **stored `image/png` cell output** (plus
+  re-runnable `Image(...)` source), converting non-web formats to PNG via Pillow — *not* a
+  markdown `data:` URI, which VS Code/others sanitize or truncate. `.py` emits a comment.
 
 ## Conventions
 

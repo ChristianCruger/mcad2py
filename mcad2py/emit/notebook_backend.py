@@ -49,12 +49,7 @@ def _render_region(region: ir.Region) -> nbformat.NotebookNode | None:
         return nbformat.v4.new_markdown_cell(region.text)
 
     if isinstance(region, ir.ImageRegion):
-        # Embed as a self-contained data URI so the notebook needs no sidecar.
-        b64 = base64.b64encode(region.data).decode("ascii")
-        alt = region.name or "image"
-        return nbformat.v4.new_markdown_cell(
-            f"![{alt}](data:{region.mime};base64,{b64})"
-        )
+        return _image_cell(region)
 
     if isinstance(region, ir.Define):
         lines = [assignment_line(region)]
@@ -81,3 +76,63 @@ def _render_region(region: ir.Region) -> nbformat.NotebookNode | None:
         return nbformat.v4.new_markdown_cell(f"> **TODO** unsupported region: {region.note}")
 
     return None
+
+
+# ---------------------------------------------------------------------------
+# Image embedding
+# ---------------------------------------------------------------------------
+
+# MIME types front-ends render directly as a notebook output.
+_RASTER_MIME = {"image/png", "image/jpeg", "image/gif"}
+
+
+def _image_cell(region: ir.ImageRegion) -> nbformat.NotebookNode:
+    """A code cell that displays an embedded image.
+
+    The image is stored both as a pre-rendered cell output (so it shows on
+    open, no execution needed, in VS Code / Jupyter / nbviewer / GitHub) and as
+    source that regenerates it on re-run. Non-web formats (Mathcad often emits
+    BMP) are converted to PNG; ``data:`` URIs in markdown are avoided because
+    several renderers sanitize or truncate them.
+    """
+    data, mime = _as_raster(region)
+    b64 = base64.b64encode(data).decode("ascii")
+    alt = region.name or "image"
+
+    source = (
+        "import base64\n"
+        "from IPython.display import Image\n"
+        f'Image(base64.b64decode(\n    "{b64}"\n))  # {alt}'
+    )
+    cell = nbformat.v4.new_code_cell(source)
+    cell.outputs = [
+        nbformat.v4.new_output(
+            output_type="display_data",
+            data={mime: b64, "text/plain": f"<image: {alt}>"},
+        )
+    ]
+    return cell
+
+
+def _as_raster(region: ir.ImageRegion) -> tuple[bytes, str]:
+    """Return image bytes in a directly-renderable raster format (PNG/JPEG/GIF).
+
+    Already-web formats pass through; anything else (BMP, TIFF, ...) is
+    converted to PNG via Pillow. If conversion is unavailable, the original
+    bytes/MIME are returned unchanged (best effort).
+    """
+    if region.mime in _RASTER_MIME:
+        return region.data, region.mime
+    try:
+        import io
+
+        from PIL import Image as PILImage
+
+        im = PILImage.open(io.BytesIO(region.data))
+        if im.mode not in ("RGB", "RGBA", "L", "LA"):
+            im = im.convert("RGBA")
+        buf = io.BytesIO()
+        im.save(buf, format="PNG")
+        return buf.getvalue(), "image/png"
+    except Exception:
+        return region.data, region.mime
