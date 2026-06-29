@@ -14,10 +14,19 @@ OPERATOR_TAGS = {
     "div": "div",
     "pow": "pow",
     "neg": "neg",
+    # Comparisons (used in program tests, e.g. ``e < epsilon_c2``).
+    "lessThan": "lt",
+    "greaterThan": "gt",
+    "lessOrEqual": "le",
+    "greaterOrEqual": "ge",
 }
 
 # Canonical op -> (python infix symbol, precedence). Higher binds tighter.
 BINARY_OPS = {
+    "lt": ("<", 0),
+    "gt": (">", 0),
+    "le": ("<=", 0),
+    "ge": (">=", 0),
     "add": ("+", 1),
     "sub": ("-", 1),
     "mul": ("*", 2),
@@ -42,6 +51,11 @@ FUNCTIONS = {
     "log": "math.log10",
     "sqrt": "math.sqrt",
     "abs": "abs",
+    "length": "len",
+    # Element-wise (2-arg) min/max so they broadcast over arrays under a
+    # vectorize 'arrow'; ``np.minimum``/``np.maximum`` also work on scalars.
+    "min": "np.minimum",
+    "max": "np.maximum",
 }
 
 # Trig helpers that must be imported from the runtime into generated code.

@@ -92,6 +92,61 @@ class Parens(Expr):
 
 
 @dataclass
+class MatrixLiteral(Expr):
+    """A Mathcad matrix/vector literal, stored row-major.
+
+    Column and row vectors (``rows == 1`` or ``cols == 1``) emit a 1-D NumPy /
+    Pint array so they index, broadcast, and ``len()`` like Mathcad vectors.
+    """
+
+    rows: int
+    cols: int
+    elements: list[Expr]
+
+
+@dataclass
+class Index(Expr):
+    """Element access (Mathcad ``indexer``): ``v[i]`` (indices are 0-based)."""
+
+    base: Expr
+    index: Expr
+
+
+@dataclass
+class Vectorize(Expr):
+    """Mathcad's element-wise 'arrow' over an expression.
+
+    Emitted as ``vectorize(<operand>)``; the runtime helper is an identity
+    pass-through because vectors are NumPy/Pint arrays and ``min``/``max`` map
+    to ``np.minimum``/``np.maximum``, so the wrapped expression already
+    evaluates element-wise.
+    """
+
+    operand: Expr
+
+
+@dataclass
+class Range(Expr):
+    """A Mathcad range ``start, next .. stop`` -> ``np.arange`` (inclusive)."""
+
+    start: Expr
+    stop: Expr
+    step: Expr | None = None
+
+
+@dataclass
+class Program(Expr):
+    """A Mathcad program body of if/elif/else branches.
+
+    Each branch is ``(test, result)``; a ``None`` test is the final ``else``.
+    A :class:`Define` whose value is a ``Program`` emits a ``def`` (not a
+    ``lambda``) so the branching is preserved.
+    """
+
+    branches: list[tuple[Expr | None, Expr]]
+
+
+@dataclass
 class Equation(Expr):
     """A symbolic equation (Mathcad boolean/symbolic ``=``) -> SymPy ``Eq``.
 
@@ -239,4 +294,19 @@ def child_exprs(node: object) -> list[Expr]:
         return [node.lhs, node.rhs]
     if isinstance(node, Parens):
         return [node.inner]
+    if isinstance(node, MatrixLiteral):
+        return list(node.elements)
+    if isinstance(node, Index):
+        return [node.base, node.index]
+    if isinstance(node, Vectorize):
+        return [node.operand]
+    if isinstance(node, Range):
+        return [node.start, node.stop] + ([node.step] if node.step is not None else [])
+    if isinstance(node, Program):
+        out: list[Expr] = []
+        for test, result in node.branches:
+            if test is not None:
+                out.append(test)
+            out.append(result)
+        return out
     return []

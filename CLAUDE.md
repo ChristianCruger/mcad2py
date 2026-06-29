@@ -63,6 +63,25 @@ When adding features, respect this boundary — parsers produce IR, backends con
   Command keyword → SymPy callable lives in `SYMBOLIC_COMMANDS` in [mapping.py](mcad2py/mapping.py).
   Free identifiers used symbolically are auto-declared as `x = Symbol('x')` ahead of first use.
 - `<ml:id labels="...">` roles: `VARIABLE`/`UNIT`/`FUNCTION`/`CONSTANT` — use them, don't guess.
+- Multi-arg calls wrap their args in one `<ml:sequence>`: `f(a,b)` is `<apply><id>f</id><sequence>a b</sequence></apply>`
+  → flatten the sequence into `Call.args`. Function-call names are `sanitize()`d so a Greek/subscripted
+  callee (`σ_s`) matches its definition (`sigma_s`); ASCII builtins pass through unchanged for the lookup.
+- `<ml:matrix rows= cols=>` = a vector/matrix literal (row-major) → `ir.MatrixLiteral`. A row/column
+  vector emits the `col(...)` runtime helper, which builds a **1-D NumPy array** (plain numbers) or a
+  **Pint `Quantity` array** (when elements carry units, built *in the elements' own registry* — never a
+  globally imported `Quantity`, or you get cross-registry errors). `<apply><indexer/> base idx>` →
+  `base[idx]` (Mathcad indices are 0-based here). General `rows×cols` matrices are still a TODO.
+- `<apply><vectorize/> expr>` = the element-wise "arrow" → `vectorize(expr)`, a runtime **identity**
+  pass-through. The real element-wise behaviour comes from vectors being NumPy/Pint arrays plus
+  `min`/`max` → `np.minimum`/`np.maximum` (2-arg clamps that broadcast). The one case the identity
+  can't fix — a *branching* program applied to an array — would need `np.vectorize(fn)`; not yet done.
+- `<ml:if>` (with `<ml:test>`/`<ml:then>`/`<ml:elseif>`/`<ml:else>`, branch bodies wrapped in
+  `<ml:program>`) = a Mathcad program → `ir.Program` (branch list). A `Define` whose value is a
+  `Program` emits a real `def` with `if/elif/else return`s (not a `lambda`) to preserve branching.
+- `<ml:range>` = `start, next .. stop` → `np.arange(start, stop + step, step)` (step = `next - start`,
+  inclusive of the endpoint).
+- Comparison ops (`lessThan`/`greaterThan`/`lessOrEqual`/`greaterOrEqual`) live in `OPERATOR_TAGS`
+  and emit `< > <= >=` (used in program tests).
 - Subscripts: `f<pw:Subscript>cd</pw:Subscript>` → `f_cd`. Greek is literal unicode.
 - Text regions: content is in `mathcad/xaml/FlowDocumentN.XamlPackage` (a nested zip),
   linked via `item-idref` → `worksheet.xml.rels`. See [text.py](mcad2py/text.py).
@@ -87,13 +106,18 @@ When adding features, respect this boundary — parsers produce IR, backends con
 (~14 sig figs). When adding a sample, prefer this execute-and-compare-to-`result.xml` style.
 [tests/test_symbolic.py](tests/test_symbolic.py) does the same for `references/NM_to_CT.mcdx` and
 additionally checks the emitted `solve(...)` against Mathcad's cached `symResult` via SymPy.
+[tests/test_vectors.py](tests/test_vectors.py) does the same for `references/Xsection_solver.mcdx`
+(through `F_s`): vectors/indexing vs cached matrices, the `σ_c` program's branches, element-wise
+`min`/`max` clamps, and the vectorized `F_s` over the layer vector.
 
 ## Not yet supported (next targets)
 
 Solve blocks (Given/Find — the *numeric* kind, distinct from the symbolic `solve` above),
-Mathcad programs, range variables, matrices, plots. Each currently becomes a `# TODO unsupported`
-stub. Known gap: square roots emit `math.sqrt(x)` (fine for dimensionless args); switch to
-`x ** 0.5` when a unit-bearing root appears so Pint handles units.
+integrals (`<ml:apply><ml:integral/>`) and summations (`<ml:summation/>`), general `rows×cols`
+matrices (vectors work), plots. Each currently becomes a `# TODO unsupported` stub. A *branching*
+program applied to an array still needs `np.vectorize(fn)` (the `vectorize()` identity helper only
+covers arithmetic + `min`/`max`). Known gap: square roots emit `math.sqrt(x)` (fine for
+dimensionless args); switch to `x ** 0.5` when a unit-bearing root appears so Pint handles units.
 
 Nice-to-have: an opt-in `--externalize-images` (or `--media-dir`) flag that writes picture
 regions as sidecar files next to the output notebook and references them with a relative link,

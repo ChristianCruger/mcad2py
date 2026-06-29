@@ -79,6 +79,15 @@ def parse_expr(elem: ET.Element) -> ir.Expr:
     if tag == "apply":
         return _parse_apply(elem)
 
+    if tag == "matrix":
+        return _parse_matrix(elem)
+
+    if tag == "if":
+        return _parse_if(elem)
+
+    if tag == "range":
+        return _parse_range(elem)
+
     if tag == "eval":
         # An eval nested inside an expression: take its value part.
         value, _unit = parse_eval(elem)
@@ -103,10 +112,21 @@ def _parse_apply(elem: ET.Element) -> ir.Expr:
     head_tag = localname(head.tag)
 
     # Function application: <apply><id labels="FUNCTION">tan</id> <arg/> ...
+    # Multi-argument calls wrap their args in a single <ml:sequence>.
     if head_tag == "id":
-        name = read_identifier(head)
-        args = [parse_expr(c) for c in rest]
-        return ir.Call(func=name, args=args, role=head.get("labels", "FUNCTION"))
+        # Sanitize so a user function called by a Greek/subscripted name
+        # (``σ_s`` -> ``sigma_s``) matches its definition. Builtins are ASCII,
+        # so sanitize leaves them unchanged for the FUNCTIONS lookup.
+        name = sanitize(read_identifier(head))
+        return ir.Call(func=name, args=_call_args(rest), role=head.get("labels", "FUNCTION"))
+
+    # Element access: <apply><indexer/> <base/> <index/>  (0-based).
+    if head_tag == "indexer":
+        return ir.Index(base=parse_expr(rest[0]), index=parse_expr(rest[1]))
+
+    # Element-wise 'arrow': <apply><vectorize/> <expr/>.
+    if head_tag == "vectorize":
+        return ir.Vectorize(operand=parse_expr(rest[0]))
 
     # Unit scaling: <apply><scale/> <value/> <unit/>
     if head_tag == "scale":
@@ -162,6 +182,70 @@ def _parse_unit_override(elem: ET.Element) -> ir.Expr | None:
             return None
         return parse_expr(sub)
     return None
+
+
+def _call_args(rest: list[ET.Element]) -> list[ir.Expr]:
+    """Call arguments, flattening a single ``<ml:sequence>`` wrapper."""
+    if len(rest) == 1 and localname(rest[0].tag) == "sequence":
+        return [parse_expr(c) for c in rest[0]]
+    return [parse_expr(c) for c in rest]
+
+
+def _parse_matrix(elem: ET.Element) -> ir.Expr:
+    rows = int(elem.get("rows", "0") or 0)
+    cols = int(elem.get("cols", "0") or 0)
+    elements = [parse_expr(c) for c in elem]
+    return ir.MatrixLiteral(rows=rows, cols=cols, elements=elements)
+
+
+def _parse_if(elem: ET.Element) -> ir.Expr:
+    """Parse an ``<ml:if>`` (with ``elseif``/``else``) into branch pairs."""
+    branches: list[tuple[ir.Expr | None, ir.Expr]] = []
+    _collect_branches(elem, branches)
+    return ir.Program(branches=branches)
+
+
+def _collect_branches(
+    elem: ET.Element, branches: list[tuple[ir.Expr | None, ir.Expr]]
+) -> None:
+    test: ir.Expr | None = None
+    for child in elem:
+        ctag = localname(child.tag)
+        if ctag == "test":
+            test = parse_expr(child[0]) if len(child) else None
+        elif ctag == "then":
+            branches.append((test, _unwrap_program(child)))
+        elif ctag == "elseif":
+            _collect_branches(child, branches)
+        elif ctag == "else":
+            branches.append((None, _unwrap_program(child)))
+
+
+def _unwrap_program(elem: ET.Element) -> ir.Expr:
+    """The result expression inside a ``<ml:then>``/``<ml:else>`` wrapper.
+
+    Bodies are wrapped in ``<ml:program>``; we take its single expression.
+    """
+    inner = elem[0] if len(elem) else None
+    if inner is not None and localname(inner.tag) == "program":
+        return parse_expr(inner[0]) if len(inner) else ir.Placeholder()
+    return parse_expr(inner) if inner is not None else ir.Placeholder()
+
+
+def _parse_range(elem: ET.Element) -> ir.Expr:
+    """Parse ``<ml:range>``: a ``start[, next]`` sequence then a stop value.
+
+    The step is ``next - start`` (1 if no explicit ``next``).
+    """
+    seq = next((c for c in elem if localname(c.tag) == "sequence"), None)
+    seq_items = list(seq) if seq is not None else []
+    after = [c for c in elem if localname(c.tag) != "sequence"]
+    start = parse_expr(seq_items[0]) if seq_items else ir.Placeholder()
+    stop = parse_expr(after[0]) if after else ir.Placeholder()
+    step: ir.Expr | None = None
+    if len(seq_items) > 1:
+        step = ir.BinOp(op="sub", left=parse_expr(seq_items[1]), right=start)
+    return ir.Range(start=start, stop=stop, step=step)
 
 
 def _summarize(elem: ET.Element) -> str:
