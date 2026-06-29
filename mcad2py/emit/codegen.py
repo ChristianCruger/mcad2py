@@ -81,6 +81,23 @@ def _emit(node: ir.Expr) -> tuple[str, int]:
     if isinstance(node, ir.Vectorize):
         return f"vectorize({expr_to_str(node.operand)})", _ATOM
 
+    if isinstance(node, ir.Lambda):
+        return f"lambda {', '.join(node.params)}: {expr_to_str(node.body)}", 0
+
+    if isinstance(node, ir.Integral):
+        return (
+            f"integral({expr_to_str(node.func)}, "
+            f"{expr_to_str(node.lower)}, {expr_to_str(node.upper)})",
+            _ATOM,
+        )
+
+    if isinstance(node, ir.Summation):
+        return (
+            f"summation({expr_to_str(node.func)}, "
+            f"{expr_to_str(node.lower)}, {expr_to_str(node.upper)})",
+            _ATOM,
+        )
+
     if isinstance(node, ir.Range):
         start = expr_to_str(node.start)
         stop = expr_to_str(node.stop)
@@ -211,7 +228,7 @@ def header_lines(ws: ir.Worksheet) -> list[str]:
     lines.append("")
     runtime = _used_runtime(ws)
     if runtime:
-        order = [*RUNTIME_IMPORTS, "col", "vectorize"]
+        order = [*RUNTIME_IMPORTS, "col", "vectorize", "integral", "summation"]
         names = ", ".join(n for n in order if n in runtime)
         lines.append(f"from mcad2py.runtime import {names}")
     lines.append("ureg = pint.UnitRegistry()")
@@ -257,6 +274,10 @@ def _used_runtime(ws: ir.Worksheet) -> set[str]:
                     found.add("col")
                 elif isinstance(sub, ir.Vectorize):
                     found.add("vectorize")
+                elif isinstance(sub, ir.Integral):
+                    found.add("integral")
+                elif isinstance(sub, ir.Summation):
+                    found.add("summation")
     return found
 
 

@@ -64,6 +64,9 @@ def _parse_region(
             return _parse_text(child, text_resolver)
         if tag == "picture":
             return _parse_picture(child, image_resolver)
+        if tag == "solveblock":
+            # Numeric Given/Find block -> a future scipy.optimize target.
+            return ir.UnsupportedRegion(note="solve block (Given/Find)")
     return None
 
 

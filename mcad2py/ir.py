@@ -147,6 +147,44 @@ class Program(Expr):
 
 
 @dataclass
+class Lambda(Expr):
+    """An inline anonymous function (Mathcad ``<ml:lambda>``).
+
+    Used as the integrand of an :class:`Integral` and the summand of a
+    :class:`Summation`; emits ``lambda <params>: <body>``.
+    """
+
+    params: list[str]
+    body: Expr
+
+
+@dataclass
+class Integral(Expr):
+    """A definite *numeric* integral (Mathcad ``∫…=``).
+
+    Emitted as ``integral(<func>, <lower>, <upper>)`` -> a unit-aware
+    ``scipy.integrate.quad`` wrapper. (The symbolic ``∫…→`` arrow would route to
+    SymPy instead, like the symbolic ``solve``.)
+    """
+
+    func: Lambda
+    lower: Expr
+    upper: Expr
+
+
+@dataclass
+class Summation(Expr):
+    """A discrete summation over an integer index range (inclusive bounds).
+
+    Emitted as ``summation(<func>, <lower>, <upper>)`` -> a plain Python sum.
+    """
+
+    func: Lambda
+    lower: Expr
+    upper: Expr
+
+
+@dataclass
 class Equation(Expr):
     """A symbolic equation (Mathcad boolean/symbolic ``=``) -> SymPy ``Eq``.
 
@@ -309,4 +347,8 @@ def child_exprs(node: object) -> list[Expr]:
                 out.append(test)
             out.append(result)
         return out
+    if isinstance(node, Lambda):
+        return [node.body]
+    if isinstance(node, (Integral, Summation)):
+        return [node.func, node.lower, node.upper]
     return []

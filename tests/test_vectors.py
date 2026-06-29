@@ -24,6 +24,13 @@ REFERENCE = Path(__file__).parent.parent / "references" / "Xsection_solver.mcdx"
 Z_S_M = [0.175, -0.16249999999999998]            # z_s, metres
 A_S_MM2 = [0.0, 3272.4923474893685]              # A_s, mm**2
 
+# The solve block's cached find(e, k) output, and the N_int/M_int checks it
+# feeds. The solve block itself isn't supported yet, so we inject e_1/k_1.
+E_1 = 0.00078313833636410655                     # strain, dimensionless
+K_1 = -0.0059352913987688214                     # curvature, 1/m
+N_INT_KN = -499.99999999999955                   # N_int(e_1, k_1)
+M_INT_KNM = -530.00000000000011                  # M_int(e_1, k_1)
+
 
 def _exec_head() -> dict:
     """Execute the generated .py up to the first unsupported region."""
@@ -96,6 +103,68 @@ def test_range_emits_arange():
     assert math.isclose(e_plot[0], -0.0035, rel_tol=1e-12)
     assert math.isclose(e_plot[1] - e_plot[0], 5e-5, rel_tol=1e-9)
     assert e_plot[-1] >= 0.001 - 1e-9
+
+
+def _exec_through_forces() -> dict:
+    """Execute the module up to (but not into) the unsupported solve block.
+
+    Regions after the solve reference its outputs e_1/k_1, so we stop at the
+    first line that mentions them and inject the cached values ourselves.
+    """
+    src = convert_file(REFERENCE, fmt="py")
+    keep: list[str] = []
+    for line in src.splitlines():
+        if "e_1" in line or "k_1" in line:
+            break
+        keep.append(line)
+    ns: dict = {}
+    exec(compile("\n".join(keep), "<generated>", "exec"), ns)  # noqa: S102
+    return ns
+
+
+def test_integral_and_summation_match_mathcad_checks():
+    """N_int/M_int (concrete integral + steel summation) at the cached solve
+    point reproduce Mathcad's cached force/moment checks."""
+    ns = _exec_through_forces()
+    ureg = ns["ureg"]
+    k_1 = K_1 * ureg("1/m")
+    n_int = ns["N_int"](E_1, k_1).to("kN").magnitude
+    m_int = ns["M_int"](E_1, k_1).to(ureg.kN * ureg.m).magnitude
+    # Loosened from full precision: quad on the piecewise integrand vs Mathcad's
+    # own quadrature at its TOL=1e-3 solution differ by ~1e-5.
+    assert math.isclose(n_int, N_INT_KN, rel_tol=1e-4)
+    assert math.isclose(m_int, M_INT_KNM, rel_tol=1e-4)
+
+
+def test_integral_emits_scipy_helpers():
+    src = convert_file(REFERENCE, fmt="py")
+    assert "integral, summation" in src or "summation, integral" in src
+    assert "N_int = lambda e, k: w * integral(lambda z: sigma(z, e, k)" in src
+    assert "summation(lambda i: F_s(e, k)[i], 0, n - 1)" in src
+
+
+def test_integral_helper_is_unit_aware():
+    """integral(f, a, b) integrates magnitudes and reattaches f_unit * z_unit."""
+    import pint
+
+    from mcad2py.runtime import integral
+
+    ureg = pint.UnitRegistry()
+    # ∫ (2 MPa) dz from 0 to 3 mm = 6 MPa·mm.
+    out = integral(lambda z: 2.0 * ureg.MPa, 0.0 * ureg.mm, 3.0 * ureg.mm)
+    assert math.isclose(out.to(ureg.MPa * ureg.mm).magnitude, 6.0, rel_tol=1e-9)
+    # ∫ z dz from 0 to 4 m = 8 m**2.
+    out2 = integral(lambda z: z, 0.0 * ureg.m, 4.0 * ureg.m)
+    assert math.isclose(out2.to(ureg.m**2).magnitude, 8.0, rel_tol=1e-9)
+
+
+def test_summation_helper_is_inclusive():
+    from mcad2py.runtime import summation
+
+    # Σ_{i=0}^{4} i = 10, inclusive of both ends.
+    assert summation(lambda i: i, 0, 4) == 10
+    assert summation(lambda i: i, 2, 2) == 2  # single term
+    assert summation(lambda i: i, 3, 1) == 0  # empty range
 
 
 def test_matrix_region_parsed_as_vector():

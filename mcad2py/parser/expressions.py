@@ -128,6 +128,11 @@ def _parse_apply(elem: ET.Element) -> ir.Expr:
     if head_tag == "vectorize":
         return ir.Vectorize(operand=parse_expr(rest[0]))
 
+    # Definite numeric integral / discrete summation: a <ml:lambda> integrand
+    # or summand plus <ml:lowerBound>/<ml:upperBound>.
+    if head_tag in ("integral", "summation"):
+        return _parse_integral_like(head_tag, rest)
+
     # Unit scaling: <apply><scale/> <value/> <unit/>
     if head_tag == "scale":
         value = parse_expr(rest[0])
@@ -189,6 +194,40 @@ def _call_args(rest: list[ET.Element]) -> list[ir.Expr]:
     if len(rest) == 1 and localname(rest[0].tag) == "sequence":
         return [parse_expr(c) for c in rest[0]]
     return [parse_expr(c) for c in rest]
+
+
+def _parse_lambda(elem: ET.Element) -> ir.Lambda:
+    """Parse ``<ml:lambda>``: bound-variable names and the body expression."""
+    bound = next((c for c in elem if localname(c.tag) == "boundVars"), None)
+    params = (
+        [sanitize(read_identifier(p)) for p in bound if localname(p.tag) == "id"]
+        if bound is not None
+        else []
+    )
+    body_elem = next(
+        (c for c in elem if localname(c.tag) != "boundVars"), None
+    )
+    body = parse_expr(body_elem) if body_elem is not None else ir.Placeholder()
+    return ir.Lambda(params=params, body=body)
+
+
+def _parse_integral_like(head_tag: str, rest: list[ET.Element]) -> ir.Expr:
+    """Parse an integral/summation: a lambda plus lower/upper bounds."""
+    func: ir.Lambda | None = None
+    lower: ir.Expr = ir.Placeholder()
+    upper: ir.Expr = ir.Placeholder()
+    for child in rest:
+        ctag = localname(child.tag)
+        if ctag == "lambda":
+            func = _parse_lambda(child)
+        elif ctag == "lowerBound" and len(child):
+            lower = parse_expr(child[0])
+        elif ctag == "upperBound" and len(child):
+            upper = parse_expr(child[0])
+    if func is None:
+        return ir.Unsupported(note=f"apply/{head_tag} (no integrand)")
+    cls = ir.Integral if head_tag == "integral" else ir.Summation
+    return cls(func=func, lower=lower, upper=upper)
 
 
 def _parse_matrix(elem: ET.Element) -> ir.Expr:

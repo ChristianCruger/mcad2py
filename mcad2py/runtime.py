@@ -66,6 +66,50 @@ def col(*elements: object) -> object:
     return np.array(elements)
 
 
+def integral(func, lower, upper):
+    """Definite numeric integral (Mathcad ``∫…=``) via ``scipy.integrate.quad``.
+
+    ``func`` takes the integration variable and returns the integrand.
+    Pint-aware: integrates the magnitudes (variable in ``lower``'s unit,
+    integrand in its own unit) and reattaches ``integrand_unit * variable_unit``
+    -- which assumes a consistent integrand unit across the interval, as
+    Mathcad itself requires.
+    """
+    from scipy.integrate import quad
+
+    z_unit = getattr(lower, "units", None)
+    if z_unit is not None:
+        lo = lower.to(z_unit).magnitude
+        hi = upper.to(z_unit).magnitude
+        probe = func(lower)
+        f_unit = getattr(probe, "units", None)
+        if f_unit is not None:
+            reg = probe._REGISTRY
+            value, _ = quad(
+                lambda z: func(z * z_unit).to(f_unit).magnitude, lo, hi
+            )
+            return reg.Quantity(value, f_unit * z_unit)
+        value, _ = quad(lambda z: float(func(z * z_unit)), lo, hi)
+        return value
+    value, _ = quad(lambda z: float(func(z)), float(lower), float(upper))
+    return value
+
+
+def summation(func, lower, upper):
+    """Inclusive discrete sum ``Σ_{i=lower}^{upper} func(i)`` (Mathcad sum).
+
+    Accumulates from the first term so a unit-bearing summand never has to be
+    added to a bare ``0``.
+    """
+    lower, upper = int(lower), int(upper)
+    if upper < lower:
+        return 0
+    total = func(lower)
+    for i in range(lower + 1, upper + 1):
+        total = total + func(i)
+    return total
+
+
 def vectorize(value: object) -> object:
     """Mathcad's element-wise 'arrow'.
 
