@@ -95,6 +95,12 @@ Mathcad programs, range variables, matrices, plots. Each currently becomes a `# 
 stub. Known gap: square roots emit `math.sqrt(x)` (fine for dimensionless args); switch to
 `x ** 0.5` when a unit-bearing root appears so Pint handles units.
 
+Nice-to-have: an opt-in `--externalize-images` (or `--media-dir`) flag that writes picture
+regions as sidecar files next to the output notebook and references them with a relative link,
+instead of the default self-contained base64 embed. Only meaningful for file output (not `-o -`
+stdout); keep embedding as the default since it stays portable. Wanted mainly to keep git diffs
+clean when generated notebooks are committed.
+
 ## Scope
 
 Prime `.mcdx` only (`worksheet50`/`math50`). Legacy `.xmcd` (Mathcad 15, `math30`) is a future
