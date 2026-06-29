@@ -52,6 +52,8 @@ When adding features, respect this boundary — parsers produce IR, backends con
 - `<ml:define>` = `:=`; `<ml:eval>` = inline `=`, carries `<ml:unitOverride>` (display unit, or
   `<ml:placeholder/>` = auto) → drives `.to(<unit-expr>)`. The override is parsed as a full
   expression, so a compound unit (`kN*m`, an `<ml:apply><ml:mult/>`) becomes `ureg.kN * ureg.m`.
+- Function definition: `<ml:define>` whose first child is `<ml:function>` (a name + `<ml:boundVars>`)
+  instead of `<ml:id>` → `f = lambda x, …: <body>` (`Define.params` is the bound-var list).
 - `<ml:apply>`: first child is the operator (empty tag: `div mult plus minus pow scale nthRoot`)
   **or** an `<ml:id labels="FUNCTION">` (function call). `scale` = number×unit ("30 MPa").
   `nthRoot` with empty first child = √.
@@ -64,6 +66,9 @@ When adding features, respect this boundary — parsers produce IR, backends con
 - Subscripts: `f<pw:Subscript>cd</pw:Subscript>` → `f_cd`. Greek is literal unicode.
 - Text regions: content is in `mathcad/xaml/FlowDocumentN.XamlPackage` (a nested zip),
   linked via `item-idref` → `worksheet.xml.rels`. See [text.py](mcad2py/text.py).
+- Picture regions: `<picture><png item-idref=N>` → `item-idref` → rels → `mathcad/media/*`
+  bytes (`McdxPackage.image`). Notebook embeds it as a base64 data URI; `.py` emits a comment.
+  Mathcad mislabels extensions (its `.png` is often BMP), so MIME is sniffed from magic bytes.
 
 ## Conventions
 

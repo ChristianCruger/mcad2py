@@ -7,6 +7,8 @@ Text regions become markdown cells.
 
 from __future__ import annotations
 
+import base64
+
 import nbformat
 
 from .. import ir
@@ -45,6 +47,14 @@ def to_ipynb_string(ws: ir.Worksheet) -> str:
 def _render_region(region: ir.Region) -> nbformat.NotebookNode | None:
     if isinstance(region, ir.TextRegion):
         return nbformat.v4.new_markdown_cell(region.text)
+
+    if isinstance(region, ir.ImageRegion):
+        # Embed as a self-contained data URI so the notebook needs no sidecar.
+        b64 = base64.b64encode(region.data).decode("ascii")
+        alt = region.name or "image"
+        return nbformat.v4.new_markdown_cell(
+            f"![{alt}](data:{region.mime};base64,{b64})"
+        )
 
     if isinstance(region, ir.Define):
         lines = [assignment_line(region)]

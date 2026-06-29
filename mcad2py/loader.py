@@ -5,6 +5,7 @@ A ``.mcdx`` is a zip archive. The interesting parts:
     mathcad/worksheet.xml   -> regions (the math + text layout)
     mathcad/result.xml      -> cached numeric results (used for verification)
     mathcad/xaml/*.XamlPackage -> text-region content (nested zips)
+    mathcad/media/*         -> embedded images (picture regions)
 """
 
 from __future__ import annotations
@@ -22,7 +23,9 @@ class McdxPackage:
     worksheet_xml: str
     result_xml: str | None = None
     xaml_packages: dict[str, bytes] = field(default_factory=dict)
-    # Relationship id (text region's ``item-idref``) -> XamlPackage basename.
+    # Basename -> bytes for embedded images (``mathcad/media/*``).
+    media: dict[str, bytes] = field(default_factory=dict)
+    # Relationship id (region's ``item-idref``) -> target basename.
     rels: dict[str, str] = field(default_factory=dict)
 
     @property
@@ -35,6 +38,14 @@ class McdxPackage:
         if basename is None:
             return None
         return self.xaml_packages.get(basename)
+
+    def image(self, idref: str) -> tuple[str, bytes] | None:
+        """The (basename, bytes) for a picture region's ``item-idref``."""
+        basename = self.rels.get(idref)
+        if basename is None:
+            return None
+        data = self.media.get(basename)
+        return (basename, data) if data is not None else None
 
 
 def load_mcdx(path: str | Path) -> McdxPackage:
@@ -62,6 +73,12 @@ def load_mcdx(path: str | Path) -> McdxPackage:
             if name.lower().endswith(".xamlpackage")
         }
 
+        media = {
+            name.rsplit("/", 1)[-1]: zf.read(name)
+            for name in names
+            if name.lower().endswith(_IMAGE_EXTS)
+        }
+
         rels_name = _find(names, "mathcad/_rels/worksheet.xml.rels")
         rels = _parse_rels(zf.read(rels_name).decode("utf-8")) if rels_name else {}
 
@@ -69,8 +86,12 @@ def load_mcdx(path: str | Path) -> McdxPackage:
         worksheet_xml=worksheet_xml,
         result_xml=result_xml,
         xaml_packages=xaml_packages,
+        media=media,
         rels=rels,
     )
+
+
+_IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".svg")
 
 
 def _parse_rels(xml: str) -> dict[str, str]:

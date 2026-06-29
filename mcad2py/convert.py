@@ -19,7 +19,11 @@ def convert_worksheet(pkg: McdxPackage) -> ir.Worksheet:
         data = pkg.text_package(idref)
         return extract_text(data) if data else ""
 
-    return parse_worksheet(pkg.worksheet_xml, text_resolver=resolve_text)
+    return parse_worksheet(
+        pkg.worksheet_xml,
+        text_resolver=resolve_text,
+        image_resolver=pkg.image,
+    )
 
 
 def convert_file(

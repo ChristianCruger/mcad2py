@@ -27,6 +27,9 @@ def _render_region(region: ir.Region) -> list[str]:
     if isinstance(region, ir.TextRegion):
         return [""] + [f"# {line}" for line in region.text.splitlines()]
 
+    if isinstance(region, ir.ImageRegion):
+        return ["", f"# [image: {region.name or 'embedded image'}]"]
+
     if isinstance(region, ir.Define):
         out = ["", assignment_line(region)]
         echo = echo_expr(region)

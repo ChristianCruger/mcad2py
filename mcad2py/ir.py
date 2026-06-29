@@ -131,13 +131,16 @@ class Define(Region):
     ``evaluate`` is True when the worksheet shows the result inline.
     ``display_unit`` is the unit expression the result should be shown in (from
     ``unitOverride``) -- a single unit or a compound like ``kN*m`` -- or None
-    for automatic units.
+    for automatic units. ``params`` is non-empty for a function definition
+    (``f(x) := ...``), in which case ``value`` is the body and the define emits
+    a ``lambda``.
     """
 
     target: Name
     value: Expr
     evaluate: bool = False
     display_unit: Expr | None = None
+    params: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -188,6 +191,15 @@ class TextRegion(Region):
     """A text/comment region."""
 
     text: str
+
+
+@dataclass
+class ImageRegion(Region):
+    """An embedded image (Mathcad ``<picture>``). ``data`` is the raw bytes."""
+
+    data: bytes
+    mime: str
+    name: str = ""
 
 
 @dataclass

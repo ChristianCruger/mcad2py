@@ -94,8 +94,11 @@ def _wrap(node: ir.Expr, parent_prec: int, *, is_left: bool, right_assoc: bool) 
 
 
 def assignment_line(define: ir.Define) -> str:
-    """The ``target = value`` line for a Define."""
-    return f"{define.target.py} = {expr_to_str(define.value)}"
+    """The ``target = value`` line for a Define (a ``lambda`` for functions)."""
+    rhs = expr_to_str(define.value)
+    if define.params:
+        return f"{define.target.py} = lambda {', '.join(define.params)}: {rhs}"
+    return f"{define.target.py} = {rhs}"
 
 
 def echo_expr(region: ir.Region) -> str | None:
