@@ -129,14 +129,15 @@ class Define(Region):
     """A ``:=`` definition, optionally evaluated inline (``=``).
 
     ``evaluate`` is True when the worksheet shows the result inline.
-    ``display_unit`` is the unit the result should be shown in (from
-    ``unitOverride``), or None for automatic units.
+    ``display_unit`` is the unit expression the result should be shown in (from
+    ``unitOverride``) -- a single unit or a compound like ``kN*m`` -- or None
+    for automatic units.
     """
 
     target: Name
     value: Expr
     evaluate: bool = False
-    display_unit: str | None = None
+    display_unit: Expr | None = None
 
 
 @dataclass
@@ -144,7 +145,7 @@ class Evaluate(Region):
     """A bare ``expr =`` evaluation with no definition."""
 
     value: Expr
-    display_unit: str | None = None
+    display_unit: Expr | None = None
 
 
 @dataclass

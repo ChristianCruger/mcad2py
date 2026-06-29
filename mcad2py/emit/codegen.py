@@ -107,13 +107,13 @@ def echo_expr(region: ir.Region) -> str | None:
         if not region.evaluate:
             return None
         target = region.target.py
-        if region.display_unit:
-            return f"{target}.to(ureg.{unit_attr(region.display_unit)})"
+        if region.display_unit is not None:
+            return f"{target}.to({expr_to_str(region.display_unit)})"
         return target
     if isinstance(region, ir.Evaluate):
         base = expr_to_str(region.value)
-        if region.display_unit:
-            return f"({base}).to(ureg.{unit_attr(region.display_unit)})"
+        if region.display_unit is not None:
+            return f"({base}).to({expr_to_str(region.display_unit)})"
         return base
     return None
 

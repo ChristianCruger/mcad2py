@@ -50,7 +50,8 @@ When adding features, respect this boundary — parsers produce IR, backends con
 - Namespaces: `ws=worksheet50`, `ml=math50`, `u=units10`, `p=provenance10`.
 - `<region top= left=>` → sort by position. `<math resultRef=N>` links to `result.xml`.
 - `<ml:define>` = `:=`; `<ml:eval>` = inline `=`, carries `<ml:unitOverride>` (display unit, or
-  `<ml:placeholder/>` = auto) → drives `.to(ureg.<unit>)`.
+  `<ml:placeholder/>` = auto) → drives `.to(<unit-expr>)`. The override is parsed as a full
+  expression, so a compound unit (`kN*m`, an `<ml:apply><ml:mult/>`) becomes `ureg.kN * ureg.m`.
 - `<ml:apply>`: first child is the operator (empty tag: `div mult plus minus pow scale nthRoot`)
   **or** an `<ml:id labels="FUNCTION">` (function call). `scale` = number×unit ("30 MPa").
   `nthRoot` with empty first child = √.
@@ -84,10 +85,8 @@ additionally checks the emitted `solve(...)` against Mathcad's cached `symResult
 
 Solve blocks (Given/Find — the *numeric* kind, distinct from the symbolic `solve` above),
 Mathcad programs, range variables, matrices, plots. Each currently becomes a `# TODO unsupported`
-stub. Known gaps: square roots emit `math.sqrt(x)` (fine for dimensionless args); switch to
-`x ** 0.5` when a unit-bearing root appears so Pint handles units. A **compound** `unitOverride`
-(e.g. `kN·m`, an `<ml:apply><ml:mult/>` rather than a single `<ml:id>`) is currently dropped by
-`parse_eval`, so that echo falls back to auto units.
+stub. Known gap: square roots emit `math.sqrt(x)` (fine for dimensionless args); switch to
+`x ** 0.5` when a unit-bearing root appears so Pint handles units.
 
 ## Scope
 

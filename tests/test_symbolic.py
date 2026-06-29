@@ -97,6 +97,20 @@ def test_step_equations_are_inert():
     assert src.count("print(solve(") == 1
 
 
+def test_compound_unit_override_in_echo():
+    """A compound display unit (``kN*m``) survives as ``.to(ureg.kN * ureg.m)``.
+
+    The final check region echoes ``C*x_c - T*x_t`` in ``kN*m``; Mathcad's
+    cached value (result-id 13) is 23749 kN*m.
+    """
+    src = convert_file(REFERENCE, fmt="py")
+    assert "(C * x_c - T * x_t).to(ureg.kN * ureg.m)" in src
+
+    ns = _exec_generated()
+    check = (ns["C"] * ns["x_c"] - ns["T"] * ns["x_t"]).to("kN*m")
+    assert math.isclose(check.magnitude, 23749.0, rel_tol=1e-9)
+
+
 def test_header_imports_sympy_only_when_needed():
     sym_ws = convert_worksheet(load_mcdx(REFERENCE))
     plain_ws = convert_worksheet(load_mcdx(PLAIN))

@@ -139,18 +139,29 @@ def _parse_apply(elem: ET.Element) -> ir.Expr:
     return ir.Unsupported(note=f"apply/{head_tag}", raw=_summarize(elem))
 
 
-def parse_eval(elem: ET.Element) -> tuple[ir.Expr, str | None]:
-    """Parse an ``<ml:eval>``: returns (value expr, display unit or None)."""
+def parse_eval(elem: ET.Element) -> tuple[ir.Expr, ir.Expr | None]:
+    """Parse an ``<ml:eval>``: returns (value expr, display-unit expr or None).
+
+    The display unit may be a single unit (``mm``) or a compound expression
+    (``kN*m`` -> ``<apply><mult/>...``); a ``<ml:placeholder/>`` means automatic
+    units, which we represent as None.
+    """
     children = list(elem)
     value = parse_expr(children[0])
-    display_unit: str | None = None
+    display_unit: ir.Expr | None = None
     for child in children[1:]:
         if localname(child.tag) == "unitOverride":
-            for sub in child:
-                if localname(sub.tag) == "id":
-                    display_unit = read_identifier(sub)
-                    break
+            display_unit = _parse_unit_override(child)
     return value, display_unit
+
+
+def _parse_unit_override(elem: ET.Element) -> ir.Expr | None:
+    """The unit expression inside ``<ml:unitOverride>``, or None for auto."""
+    for sub in elem:
+        if localname(sub.tag) == "placeholder":
+            return None
+        return parse_expr(sub)
+    return None
 
 
 def _summarize(elem: ET.Element) -> str:
