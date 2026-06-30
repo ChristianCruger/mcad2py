@@ -39,7 +39,7 @@ When adding features, respect this boundary — parsers produce IR, backends con
 | [parser/regions.py](mcad2py/parser/regions.py) | Worksheet→ordered regions; **sort by (top, left)** for reading order |
 | [ir.py](mcad2py/ir.py) | Backend-agnostic node dataclasses |
 | [mapping.py](mcad2py/mapping.py) | Data tables: operators, builtins, constants, Greek, unit aliases |
-| [runtime.py](mcad2py/runtime.py) | Helpers imported by generated code: angle-aware `sin/cos/tan/cot`, `col`/`vectorize`, `integral` (scipy `quad`), `summation` |
+| [runtime.py](mcad2py/runtime.py) | Helpers imported by generated code: angle-aware `sin/cos/tan/cot`, `col`/`arange`/`vectorize`, `integral` (scipy `quad`), `summation`, `solve_block` (scipy `fsolve`) |
 | [emit/codegen.py](mcad2py/emit/codegen.py) | Precedence-aware expression printer; shared by both backends |
 | [emit/notebook_backend.py](mcad2py/emit/notebook_backend.py) | IR→`.ipynb`; region→cell; bare last line echoes result |
 | [emit/py_backend.py](mcad2py/emit/py_backend.py) | IR→`.py`; evaluations become `print(...)` |
@@ -78,8 +78,9 @@ When adding features, respect this boundary — parsers produce IR, backends con
 - `<ml:if>` (with `<ml:test>`/`<ml:then>`/`<ml:elseif>`/`<ml:else>`, branch bodies wrapped in
   `<ml:program>`) = a Mathcad program → `ir.Program` (branch list). A `Define` whose value is a
   `Program` emits a real `def` with `if/elif/else return`s (not a `lambda`) to preserve branching.
-- `<ml:range>` = `start, next .. stop` → `np.arange(start, stop + step, step)` (step = `next - start`,
-  inclusive of the endpoint).
+- `<ml:range>` = `start, next .. stop` → `arange(start, stop, step)` (step = `next - start`), a
+  unit-aware, **inclusive** range runtime helper. Plain numbers → a NumPy array; unit-bearing bounds
+  (`z_plot := -h/2, … .. h/2`) → a Pint array (steps over magnitudes in `start`'s unit, reattaches it).
 - `<ml:apply><ml:integral/> <ml:lambda> <ml:lowerBound> <ml:upperBound>>` = a definite **numeric**
   integral (`∫…=`) → `integral(lambda z: <body>, lo, hi)`, a unit-aware `scipy.integrate.quad`
   wrapper (integrates magnitudes, reattaches `integrand_unit * var_unit`; assumes a consistent
@@ -131,14 +132,14 @@ vectors/indexing vs cached matrices, the `σ_c` program's branches, element-wise
 the vectorized `F_s`, and `N_int`/`M_int` (concrete integral + steel summation) evaluated at the
 cached solve point `e_1`/`k_1` against Mathcad's cached force/moment checks (rel_tol 1e-4 — `quad`
 on the kinked integrand vs Mathcad's own quadrature at its 1e-3 solution differ ~1e-5), and the
-`find` solve block recovering Mathcad's cached `e_1`/`k_1` via `fsolve`. Plus direct unit tests of
-the `integral`/`summation` runtime helpers.
+`find` solve block recovering Mathcad's cached `e_1`/`k_1` via `fsolve`. The whole sheet now runs
+end-to-end: the unit-bearing `z_plot` range and the neutral axis `x` are checked too. Plus direct
+unit tests of the `integral`/`summation` runtime helpers.
 
 ## Not yet supported (next targets)
 
-Ranges over a **unit-bearing** variable (`z_plot := -h/2, … .. h/2`) — the `np.arange` we emit only
-works for dimensionless ranges (`e_plot`); a unit-aware range helper is needed. General `rows×cols`
-matrices (vectors work), plots. `find` solve blocks work; `minerr`/`maximize`/`minimize` don't yet.
+General `rows×cols` matrices (vectors work), plots. `find` solve blocks work;
+`minerr`/`maximize`/`minimize` don't yet.
 A *branching* program applied to an array still needs `np.vectorize(fn)` (the `vectorize()` identity
 helper only covers arithmetic + `min`/`max`). Known gap: square roots emit `math.sqrt(x)` (fine for
 dimensionless args); switch to `x ** 0.5` when a unit-bearing root appears so Pint handles units.

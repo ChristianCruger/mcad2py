@@ -101,11 +101,9 @@ def _emit(node: ir.Expr) -> tuple[str, int]:
     if isinstance(node, ir.Range):
         start = expr_to_str(node.start)
         stop = expr_to_str(node.stop)
-        if node.step is None:
-            return f"np.arange({start}, ({stop}) + 1)", _ATOM
-        step = expr_to_str(node.step)
-        # +step makes the inclusive Mathcad endpoint land in the array.
-        return f"np.arange({start}, ({stop}) + ({step}), {step})", _ATOM
+        step = expr_to_str(node.step) if node.step is not None else "1"
+        # arange() is a unit-aware, inclusive range helper.
+        return f"arange({start}, {stop}, {step})", _ATOM
 
     if isinstance(node, ir.Program):
         # Inline fallback (a chain of ternaries); a Program that is a Define's
@@ -256,7 +254,8 @@ def header_lines(ws: ir.Worksheet) -> list[str]:
     runtime = _used_runtime(ws)
     if runtime:
         order = [
-            *RUNTIME_IMPORTS, "col", "vectorize", "integral", "summation", "solve_block"
+            *RUNTIME_IMPORTS,
+            "col", "arange", "vectorize", "integral", "summation", "solve_block",
         ]
         names = ", ".join(n for n in order if n in runtime)
         lines.append(f"from mcad2py.runtime import {names}")
@@ -269,7 +268,9 @@ def _uses_numpy(ws: ir.Worksheet) -> bool:
     for region in ws.regions:
         for node in _region_exprs(region):
             for sub in _walk(node):
-                if isinstance(sub, (ir.MatrixLiteral, ir.Range)):
+                # General rows×cols matrices emit a bare ``np.array([...])``;
+                # vectors/ranges go through the col()/arange() helpers instead.
+                if isinstance(sub, ir.MatrixLiteral) and min(sub.rows, sub.cols) > 1:
                     return True
                 if isinstance(sub, ir.Call) and FUNCTIONS.get(sub.func, "").startswith("np."):
                     return True
@@ -303,6 +304,8 @@ def _used_runtime(ws: ir.Worksheet) -> set[str]:
                     found.add(sub.func)
                 elif isinstance(sub, ir.MatrixLiteral):
                     found.add("col")
+                elif isinstance(sub, ir.Range):
+                    found.add("arange")
                 elif isinstance(sub, ir.Vectorize):
                     found.add("vectorize")
                 elif isinstance(sub, ir.Integral):

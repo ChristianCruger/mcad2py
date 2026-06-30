@@ -3,7 +3,7 @@ import math
 import numpy as np
 import pint
 
-from mcad2py.runtime import col, vectorize, integral, summation, solve_block
+from mcad2py.runtime import col, arange, vectorize, integral, summation, solve_block
 ureg = pint.UnitRegistry()
 
 
@@ -42,7 +42,7 @@ def sigma_c(e):
 
 # Plot:
 
-e_plot = np.arange(-0.0035, (0.001) + (-0.00345 - -0.0035), -0.00345 - -0.0035)
+e_plot = arange(-0.0035, 0.001, -0.00345 - -0.0035)
 
 # Steel
 
@@ -124,7 +124,7 @@ print((M_int(e_1, k_1)).to(ureg.kN * ureg.m))
 
 # Plot:
 
-z_plot = np.arange(-h / 2, (h / 2) + (-h / 2 + 1 * ureg.mm - -h / 2), -h / 2 + 1 * ureg.mm - -h / 2)
+z_plot = arange(-h / 2, h / 2, -h / 2 + 1 * ureg.mm - -h / 2)
 
 # neutral axis:
 

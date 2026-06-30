@@ -93,9 +93,11 @@ def test_vectorized_function_of_array():
 
 def test_vectorize_wrapper_emitted():
     src = convert_file(REFERENCE, fmt="py")
-    assert "from mcad2py.runtime import col, vectorize" in src
+    import_line = next(l for l in src.splitlines() if "from mcad2py.runtime import" in l)
+    for helper in ("col", "vectorize"):
+        assert helper in import_line
     assert "A_s = vectorize(" in src
-    assert "import numpy as np" in src
+    assert "import numpy as np" in src  # np.minimum from the min/max clamps
 
 
 def test_range_emits_arange():
@@ -203,6 +205,32 @@ def test_solve_block_emits_fsolve_helper():
     assert "def _residuals_e_1_k_1(_x):" in src
     assert "e, k = _x" in src
     assert "e_1, k_1 = solve_block(_residuals_e_1_k_1, [e, k])" in src
+
+
+def _exec_full() -> dict:
+    """Execute the entire generated module (the whole sheet now runs)."""
+    src = convert_file(REFERENCE, fmt="py")
+    ns: dict = {}
+    with contextlib.redirect_stdout(io.StringIO()):
+        exec(compile(src, "<generated>", "exec"), ns)  # noqa: S102
+    return ns
+
+
+def test_unit_bearing_range():
+    """z_plot := -h/2, (-h/2 + 1mm) .. h/2 -> a Pint length array, inclusive."""
+    ns = _exec_full()
+    z = ns["z_plot"]
+    assert len(z) == 501
+    assert math.isclose(z[0].to("mm").magnitude, -250.0, rel_tol=1e-12)
+    assert math.isclose(z[-1].to("mm").magnitude, 250.0, rel_tol=1e-12)
+    assert math.isclose((z[1] - z[0]).to("mm").magnitude, 1.0, rel_tol=1e-9)
+
+
+def test_full_sheet_neutral_axis_matches_mathcad():
+    """The whole sheet runs; the neutral axis x = h/2 + e_1/k_1 matches cache."""
+    ns = _exec_full()
+    x = ns["x"].to("mm").magnitude
+    assert math.isclose(x, 118.05393640377021, rel_tol=1e-5)
 
 
 def test_matrix_region_parsed_as_vector():

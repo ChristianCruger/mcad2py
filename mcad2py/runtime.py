@@ -149,6 +149,26 @@ def solve_block(residual, guesses):
     ]
 
 
+def arange(start, stop, step):
+    """Inclusive numeric range (Mathcad ``start, next .. stop``), unit-aware.
+
+    Plain ``np.arange`` can't build an array from Pint quantities, so when the
+    bounds carry units we step over magnitudes (in ``start``'s unit) and
+    reattach the unit. The ``+ step/2`` nudge makes the inclusive Mathcad
+    endpoint land in the array without a spurious extra point, for either
+    ascending or descending ranges.
+    """
+    unit = getattr(start, "units", None)
+    if unit is not None:
+        reg = start._REGISTRY
+        lo = start.to(unit).magnitude
+        hi = stop.to(unit).magnitude
+        d = step.to(unit).magnitude
+        return reg.Quantity(np.arange(lo, hi + d / 2, d), unit)
+    lo, hi, d = float(start), float(stop), float(step)
+    return np.arange(lo, hi + d / 2, d)
+
+
 def vectorize(value: object) -> object:
     """Mathcad's element-wise 'arrow'.
 
