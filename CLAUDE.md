@@ -39,7 +39,7 @@ When adding features, respect this boundary — parsers produce IR, backends con
 | [parser/regions.py](mcad2py/parser/regions.py) | Worksheet→ordered regions; **sort by (top, left)** for reading order |
 | [ir.py](mcad2py/ir.py) | Backend-agnostic node dataclasses |
 | [mapping.py](mcad2py/mapping.py) | Data tables: operators, builtins, constants, Greek, unit aliases |
-| [runtime.py](mcad2py/runtime.py) | Helpers imported by generated code: angle-aware `sin/cos/tan/cot`, `col`/`arange`/`vectorize`/`transpose`, `linterp` (unit-aware linear interp), `integral` (scipy `quad`), `summation`, `solve_block` (scipy `fsolve`), `sample`/`plot_axis` (matplotlib plots) |
+| [runtime.py](mcad2py/runtime.py) | Helpers imported by generated code: angle-aware `sin/cos/tan/cot`, `col`/`arange`/`index_build`/`vectorize`/`transpose`, `linterp` (unit-aware linear interp), `integral` (scipy `quad`), `summation`, `solve_block` (scipy `fsolve`), `sample`/`plot_axis` (matplotlib plots) |
 | [emit/codegen.py](mcad2py/emit/codegen.py) | Precedence-aware expression printer; shared by both backends |
 | [emit/notebook_backend.py](mcad2py/emit/notebook_backend.py) | IR→`.ipynb`; region→cell; bare last line echoes result |
 | [emit/py_backend.py](mcad2py/emit/py_backend.py) | IR→`.py`; evaluations become `print(...)` |
@@ -71,6 +71,18 @@ When adding features, respect this boundary — parsers produce IR, backends con
   **Pint `Quantity` array** (when elements carry units, built *in the elements' own registry* — never a
   globally imported `Quantity`, or you get cross-registry errors). `<apply><indexer/> base idx>` →
   `base[idx]` (Mathcad indices are 0-based here). General `rows×cols` matrices are still a TODO.
+- **Range-indexed vector assignment** — a `<ml:define>` whose *target* is an `<apply><indexer/> X i>`
+  (not an `<ml:id>`) where `i` is a range variable (`i := 1 .. n`): `X[i] := expr` → `ir.IndexAssign`,
+  emitted as `X = index_build(i, lambda i: <expr>)`. Mathcad iterates `i` over its range and builds
+  the 0-based vector `X`, **zero-filling** any lower index never written (so `T_Ed[i] := 400` with
+  `i := 1 .. 1` yields `[0, 400]`). The lambda's `i` is the *scalar* loop index, so the RHS — including
+  `X[i]` reads of other vectors — uses the ordinary scalar codegen (`math.ceil`, the inline-`if`
+  ternary, `np.minimum` all work on scalars); the outer `i` stays an **integer** range array (see
+  `arange`) so the evaluation reads `X[i] =` fancy-index into 1-element vectors, matching Mathcad's
+  cached `1×1` matrices. `index_build` (runtime) handles plain/Pint/string element types. An inline
+  `=` after the assignment echoes `X[i]` (`IndexAssign.evaluate`/`display_unit` mirror `Define`).
+- `arange` returns an **integer** array when start/stop/step are all integral (an index variable like
+  `i := 1 .. n`), so it can index NumPy/Pint vectors directly; non-integral bounds stay float.
 - `<apply><vectorize/> expr>` = the element-wise "arrow" → `vectorize(expr)`, a runtime **identity**
   pass-through. The real element-wise behaviour comes from vectors being NumPy/Pint arrays plus
   `min`/`max` → `np.minimum`/`np.maximum` (2-arg clamps that broadcast). The one case the identity
@@ -192,12 +204,13 @@ shrinkage): the `linterp`/`transpose` pair (`k_h` interpolates and extrapolates,
 a Given/Find block whose solver region is a *function definition* `f(a, b) := find(x)` (the constraint
 `a·x²−b = cos(x)` closing over the params) — it asserts the emitted `def f(a, b):`, that `f(1, 3)`
 recovers the cached root `1.6957…`, and that `f` is reusable with other arguments.
-[tests/test_beton_vridning.py](tests/test_beton_vridning.py) covers the leaf features of
-`references/Beton_Vridning.mcdx` (torsion): the stepless range `i := 1 .. n` (→ `arange(1, n, 1)`),
-the `ceil`/`floor`/`round` builtins, and an inline `if(cond, "ok", "tværsnit overudnyttet")` rendered
-as a ternary with string literals. It asserts the generated source, not execution — the whole sheet
-needs the range-indexed vector backbone (see "Not yet supported") before an execute-vs-`result.xml`
-test is possible.
+[tests/test_beton_vridning.py](tests/test_beton_vridning.py) covers `references/Beton_Vridning.mcdx`
+(torsion): the **range-indexed vector backbone** — it executes the whole sheet and checks the
+`index_build` vectors (`T_Ed`/`A_sl`/`n_sl`/`s_t`/`k`/`accept`) against Mathcad's cached `1×1`
+matrices, that `T_Ed` is 0-based and zero-filled (`[0, 400]`), and that the index variable `i` is an
+integer array. Plus the supporting leaf features asserted on the generated source: the stepless range
+`i := 1 .. n` (→ `arange(1, n, 1)`), `ceil`/`floor`/`round`, and an inline
+`if(cond, "ok", "tværsnit overudnyttet")` rendered as a ternary with string literals.
 
 **Reference files are test fixtures — don't edit them.** Tests compare generated output against each
 `.mcdx`'s cached `result.xml`; changing a worksheet (e.g. a `phi` value) silently shifts every
@@ -205,13 +218,6 @@ dependent cached number and breaks the hardcoded expected values.
 
 ## Not yet supported (next targets)
 
-**Range-indexed vector assignment** (the `Beton_Vridning.mcdx` backbone): a `Define` whose *target*
-is an `<ml:indexer>` (`T_Ed[i] := 400`, `A_sl[i] := …`) with `i` a range — Mathcad loops `i` over the
-range and **builds a vector** (0-based origin, so `i := 1 .. n` leaves index 0 defaulted). Currently
-the indexer target is mis-read as a scalar name (`T_Edi`) and downstream `X[i]` reads dangle. The
-stepless range, `ceil`, inline `if`, and string literals it also uses *are* done (see
-[tests/test_beton_vridning.py](tests/test_beton_vridning.py)); the whole-sheet
-execute-and-compare-to-`result.xml` test lands with this vector backbone.
 General `rows×cols` matrices (vectors + transpose work). `find` solve blocks work;
 `minerr`/`maximize`/`minimize` don't yet.
 A *branching* program applied to an array still needs `np.vectorize(fn)` (the `vectorize()` identity

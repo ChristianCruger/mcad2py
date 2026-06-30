@@ -116,6 +116,37 @@ def linterp(vx, vy, x):
     return (float(y) * y_unit) if y_unit is not None else float(y)
 
 
+def index_build(idx, fn):
+    """Build a 0-based Mathcad vector by iterating an index range.
+
+    Mathcad's ``X[i] := expr`` (with ``i`` a range variable) writes ``expr`` at
+    each index ``i`` and zero-fills any lower index never assigned. ``idx`` is
+    the integer index array; ``fn`` maps a scalar index to the element value, so
+    the right-hand side -- including ``X[i]`` reads of other vectors -- evaluates
+    per-element with ordinary scalar semantics. Elements may be plain numbers,
+    Pint quantities (the vector then carries their unit), or strings (built as an
+    object array).
+    """
+    keys = [int(k) for k in np.atleast_1d(getattr(idx, "magnitude", idx))]
+    results = {k: fn(k) for k in keys}
+    n = max(keys) + 1
+    sample = results[keys[0]]
+
+    if hasattr(sample, "units"):
+        reg = sample._REGISTRY
+        unit = sample.units
+        mags = np.zeros(n, dtype=float)
+        for k, v in results.items():
+            mags[k] = v.to(unit).magnitude
+        return reg.Quantity(mags, unit)
+
+    dtype = object if isinstance(sample, str) else float
+    vec = np.zeros(n, dtype=dtype)
+    for k, v in results.items():
+        vec[k] = v
+    return vec
+
+
 def integral(func, lower, upper):
     """Definite numeric integral (Mathcad ``∫…=``) via ``scipy.integrate.quad``.
 
@@ -216,6 +247,10 @@ def arange(start, stop, step):
         d = step.to(unit).magnitude
         return reg.Quantity(np.arange(lo, hi + d / 2, d), unit)
     lo, hi, d = float(start), float(stop), float(step)
+    # An all-integer range (e.g. an index variable ``i := 1 .. n``) returns an
+    # *integer* array so it can index NumPy/Pint vectors directly.
+    if lo.is_integer() and hi.is_integer() and d.is_integer():
+        return np.arange(int(lo), int(hi) + 1, int(d))
     return np.arange(lo, hi + d / 2, d)
 
 

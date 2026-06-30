@@ -9,6 +9,7 @@ from .codegen import (
     echo_expr,
     expr_to_str,
     header_lines,
+    index_assign_line,
     plot_lines,
     solve_block_lines,
     symbolic_eval_expr,
@@ -34,6 +35,13 @@ def _render_region(region: ir.Region) -> list[str]:
 
     if isinstance(region, ir.Define):
         out = ["", assignment_line(region)]
+        echo = echo_expr(region)
+        if echo is not None:
+            out.append(f"print({echo})")
+        return out
+
+    if isinstance(region, ir.IndexAssign):
+        out = ["", index_assign_line(region)]
         echo = echo_expr(region)
         if echo is not None:
             out.append(f"print({echo})")

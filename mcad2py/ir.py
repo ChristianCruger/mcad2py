@@ -267,6 +267,25 @@ class Evaluate(Region):
 
 
 @dataclass
+class IndexAssign(Region):
+    """A range-indexed vector assignment: ``X[i] := expr`` with ``i`` a range.
+
+    Mathcad iterates ``index`` over its range and *builds* the 0-based vector
+    ``target``, zero-filling any lower index never written. Emitted as
+    ``X = index_build(i, lambda i: expr)`` -- the lambda's ``i`` is a *scalar*
+    index, so the right-hand side (and any ``X[i]`` reads inside it) evaluates
+    per-element with the ordinary scalar codegen. ``evaluate``/``display_unit``
+    mirror :class:`Define` for an inline ``=`` that shows ``X[i]``.
+    """
+
+    target: Name
+    index: Name
+    value: Expr
+    evaluate: bool = False
+    display_unit: Expr | None = None
+
+
+@dataclass
 class SymbolDeclarations(Region):
     """Declare free identifiers as SymPy ``Symbol``s before symbolic regions.
 

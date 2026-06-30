@@ -138,6 +138,19 @@ def _parse_define(define_elem: ET.Element) -> ir.Region:
     children = list(define_elem)
     target_elem, value_elem = children[0], children[1]
 
+    # ``X[i] := ...``: the target is <apply><indexer/> base index> -- a
+    # range-indexed vector assignment (Mathcad iterates the index range and
+    # builds the vector). Routes to IndexAssign, not a scalar Define.
+    indexed = _parse_index_target(target_elem)
+    if indexed is not None:
+        base, index = indexed
+        if localname(value_elem.tag) == "eval":
+            value, unit = parse_eval(value_elem)
+            return ir.IndexAssign(
+                target=base, index=index, value=value, evaluate=True, display_unit=unit
+            )
+        return ir.IndexAssign(target=base, index=index, value=parse_expr(value_elem))
+
     # ``f(x) := ...``: the target is <ml:function> with a name and bound vars.
     if localname(target_elem.tag) == "function":
         target, params = _parse_function_header(target_elem)
@@ -399,6 +412,20 @@ def _parse_target(id_elem: ET.Element) -> ir.Name:
         original=display,
         role=id_elem.get("labels", "VARIABLE"),
     )
+
+
+def _parse_index_target(elem: ET.Element) -> tuple[ir.Name, ir.Name] | None:
+    """If ``elem`` is an indexed-assignment target ``X[i]``, return ``(X, i)``.
+
+    The target is ``<apply><indexer/> <id base> <id index>``; both the vector
+    name and the index variable are plain ids. Returns None for any other shape.
+    """
+    if localname(elem.tag) != "apply":
+        return None
+    kids = list(elem)
+    if len(kids) < 3 or localname(kids[0].tag) != "indexer":
+        return None
+    return _parse_target(kids[1]), _parse_target(kids[2])
 
 
 def _parse_function_header(func_elem: ET.Element) -> tuple[ir.Name, list[str]]:

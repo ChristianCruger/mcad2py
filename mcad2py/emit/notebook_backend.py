@@ -18,6 +18,7 @@ from .codegen import (
     echo_expr,
     expr_to_str,
     header_lines,
+    index_assign_line,
     plot_lines,
     solve_block_lines,
     symbolic_eval_expr,
@@ -55,6 +56,13 @@ def _render_region(region: ir.Region) -> nbformat.NotebookNode | None:
 
     if isinstance(region, ir.Define):
         lines = [assignment_line(region)]
+        echo = echo_expr(region)
+        if echo is not None:
+            lines.append(echo)  # bare last line -> inline result, like Mathcad "="
+        return nbformat.v4.new_code_cell("\n".join(lines))
+
+    if isinstance(region, ir.IndexAssign):
+        lines = [index_assign_line(region)]
         echo = echo_expr(region)
         if echo is not None:
             lines.append(echo)  # bare last line -> inline result, like Mathcad "="

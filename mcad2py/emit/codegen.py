@@ -162,6 +162,16 @@ def assignment_line(define: ir.Define) -> str:
     return f"{prefix}{define.target.py} = {rhs}"
 
 
+def index_assign_line(region: ir.IndexAssign) -> str:
+    """``X = index_build(i, lambda i: expr)`` for a range-indexed assignment.
+
+    The lambda parameter reuses the index variable's name so ``X[i]`` reads in
+    the right-hand side resolve against the *scalar* loop index.
+    """
+    idx = region.index.py
+    return f"{region.target.py} = index_build({idx}, lambda {idx}: {expr_to_str(region.value)})"
+
+
 def _program_def(define: ir.Define) -> str:
     """Emit a ``def`` with if/elif/else returns for a program-bodied function."""
     params = ", ".join(define.params)
@@ -201,6 +211,15 @@ def echo_expr(region: ir.Region) -> str | None:
         return target
     if isinstance(region, ir.Evaluate):
         base = expr_to_str(region.value)
+        if region.display_unit is not None:
+            return _display(f"({base})", region.display_unit)
+        return base
+    if isinstance(region, ir.IndexAssign):
+        if not region.evaluate:
+            return None
+        # Mathcad's inline ``=`` after ``X[i] := …`` shows the vector read at the
+        # range index -- a sub-vector (``X[i]`` with ``i`` the integer range).
+        base = f"{region.target.py}[{region.index.py}]"
         if region.display_unit is not None:
             return _display(f"({base})", region.display_unit)
         return base
@@ -377,8 +396,8 @@ def header_lines(ws: ir.Worksheet) -> list[str]:
     if runtime:
         order = [
             *RUNTIME_IMPORTS,
-            "col", "arange", "vectorize", "transpose", "integral", "summation",
-            "solve_block", "sample", "plot_axis",
+            "col", "arange", "index_build", "vectorize", "transpose",
+            "integral", "summation", "solve_block", "sample", "plot_axis",
         ]
         names = ", ".join(n for n in order if n in runtime)
         lines.append(f"from mcad2py.runtime import {names}")
@@ -421,6 +440,8 @@ def _used_runtime(ws: ir.Worksheet) -> set[str]:
     for region in ws.regions:
         if isinstance(region, ir.SolveBlock):
             found.add("solve_block")
+        if isinstance(region, ir.IndexAssign):
+            found.add("index_build")
         if isinstance(region, ir.Plot):
             found.update(("sample", "plot_axis"))
         for node in _region_exprs(region):
@@ -445,7 +466,7 @@ def _used_runtime(ws: ir.Worksheet) -> set[str]:
 def _region_exprs(region: ir.Region) -> list[ir.Expr]:
     if isinstance(region, ir.Define):
         return [region.value]
-    if isinstance(region, ir.Evaluate):
+    if isinstance(region, (ir.Evaluate, ir.IndexAssign)):
         return [region.value]
     if isinstance(region, ir.SymbolicEquation):
         return [region.equation]
