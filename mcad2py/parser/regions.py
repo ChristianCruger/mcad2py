@@ -94,7 +94,7 @@ def _parse_math(math_elem: ET.Element) -> ir.Region:
     if tag == "apply":
         head = next(iter(inner), None)
         if head is not None and localname(head.tag) == "equal":
-            return ir.SymbolicEquation(equation=parse_expr(inner))
+            return ir.SymbolicEquation(equation=_to_equation(parse_expr(inner)))
 
     # Other bare expression region -> treat as evaluation.
     return ir.Evaluate(value=parse_expr(inner), display_unit=None)
@@ -115,8 +115,9 @@ def _parse_sym_eval(elem: ET.Element) -> ir.Region:
             res = next(iter(child), None)
             result = parse_expr(res) if res is not None else None
         elif expr is None:
-            # The first non-command/result child is the input expression.
-            expr = parse_expr(child)
+            # The first non-command/result child is the input expression; a
+            # top-level equality is a symbolic equation (e.g. for ``solve``).
+            expr = _to_equation(parse_expr(child))
 
     canonical = SYMBOLIC_COMMANDS.get(command_name)
     if expr is None or canonical is None:
@@ -157,6 +158,11 @@ def _parse_define(define_elem: ET.Element) -> ir.Region:
     else:
         target = _parse_target(target_elem)
         params = []
+
+    # A native ComboBox row-selector: assign the selected row's value(s) to the
+    # target(s) (a single id or a matrix of ids).
+    if localname(value_elem.tag).endswith("ComboBoxControl"):
+        return _parse_combobox(target_elem, value_elem)
 
     # A scriptable control (e.g. a ListBox) drives the value via an embedded
     # JScript we don't transpile -- we emit its cached output value instead.
@@ -212,6 +218,68 @@ def _parse_scriptable_control(
     return ir.Define(
         target=target, value=value, evaluate=False, params=params, comment=comment
     )
+
+
+def _parse_combobox(target_elem: ET.Element, control: ET.Element) -> ir.Region:
+    """A ``<ml:ComboBoxControl>``: assign the selected row's value(s).
+
+    The control is a ``rows×cols`` table (``<ml:ComboBoxValues>``, row-major)
+    with named rows (``<ml:ComboBoxRowNames>``); ``SelectedRow`` (0-based, per the
+    worksheet's ``array-origin``) picks the row. Its ``cols`` value(s) map onto
+    the LHS target(s) -- a single id or a ``<ml:matrix>`` of ids. A control with
+    no values yields the selected row *name* as a string (e.g. a Ja/Nej flag).
+    """
+    if localname(target_elem.tag) == "matrix":
+        targets = [_parse_target(c) for c in target_elem if localname(c.tag) == "id"]
+    else:
+        targets = [_parse_target(target_elem)]
+
+    cols = int(control.get("cols", "1") or 1)
+    sel = int(control.get("SelectedRow", "0") or 0)
+
+    def _children(suffix: str) -> list[ET.Element]:
+        parent = next(
+            (c for c in control if localname(c.tag).endswith(suffix)), None
+        )
+        return list(parent) if parent is not None else []
+
+    names = [
+        (n.text or "").strip()
+        for n in _children("RowNames")
+        if localname(n.tag) == "rowName"
+    ]
+    reals = [
+        (v.text or "").strip()
+        for v in _children("Values")
+        if localname(v.tag) == "real"
+    ]
+    chosen = names[sel] if 0 <= sel < len(names) else "?"
+
+    if reals:
+        row = reals[sel * cols : sel * cols + cols]
+        values: list[ir.Expr] = [ir.Number(v) for v in row]
+    else:
+        # No value table -> the selected row name is the (string) output.
+        values = [ir.Str(chosen)]
+
+    comment = (
+        f'Mathcad ComboBoxControl: selected "{chosen}"'
+        + (f" (options: {', '.join(names)})." if names else ".")
+    )
+    return ir.ComboBoxAssign(targets=targets, values=values, comment=comment)
+
+
+def _to_equation(expr: ir.Expr) -> ir.Expr:
+    """Coerce a top-level equality into an :class:`ir.Equation` (SymPy ``Eq``).
+
+    ``<ml:equal/>`` parses as a ``==`` comparison (``BinOp`` ``eq``) for boolean
+    use in program tests; when it heads a *symbolic* region (a standalone
+    equation, a ``solve`` input, or a solve-block constraint) it means an
+    equation instead, so the symbolic parsers route it through here.
+    """
+    if isinstance(expr, ir.BinOp) and expr.op == "eq":
+        return ir.Equation(lhs=expr.left, rhs=expr.right)
+    return expr
 
 
 def _decode_control_result(rl: str | None) -> ir.Expr | None:
@@ -352,7 +420,7 @@ def _parse_solveblock(elem: ET.Element) -> ir.Region:
             if isinstance(parsed, ir.Define):
                 guesses.append(parsed)
         elif category == "constraint":
-            eq = parse_expr(inner)
+            eq = _to_equation(parse_expr(inner))
             if isinstance(eq, ir.Equation):
                 constraints.append(eq)
         elif category == "solver":

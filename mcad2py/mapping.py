@@ -19,14 +19,21 @@ OPERATOR_TAGS = {
     "greaterThan": "gt",
     "lessOrEqual": "le",
     "greaterOrEqual": "ge",
+    "equal": "eq",
+    # Boolean connectives (program tests, e.g. ``rho <= x and revne = "Ja"``).
+    "and": "and_",
+    "or": "or_",
 }
 
 # Canonical op -> (python infix symbol, precedence). Higher binds tighter.
 BINARY_OPS = {
+    "or_": ("or", -2),
+    "and_": ("and", -1),
     "lt": ("<", 0),
     "gt": (">", 0),
     "le": ("<=", 0),
     "ge": (">=", 0),
+    "eq": ("==", 0),
     "add": ("+", 1),
     "sub": ("-", 1),
     "mul": ("*", 2),

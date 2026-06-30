@@ -286,6 +286,23 @@ class IndexAssign(Region):
 
 
 @dataclass
+class ComboBoxAssign(Region):
+    """A Mathcad ``<ml:ComboBoxControl>`` row-selector assignment.
+
+    A native (non-scripted) control: the user picks a row (``SelectedRow``) from
+    a table of named rows, and the row's column value(s) are assigned to the
+    left-hand-side target(s) -- a single ``<ml:id>`` or a ``<ml:matrix>`` of ids.
+    A control with no ``<ml:ComboBoxValues>`` yields the selected row *name* (a
+    string). ``targets`` and ``values`` are parallel; ``comment`` documents the
+    selection (the embedded option list isn't otherwise represented).
+    """
+
+    targets: list[Name]
+    values: list[Expr]
+    comment: str | None = None
+
+
+@dataclass
 class SymbolDeclarations(Region):
     """Declare free identifiers as SymPy ``Symbol``s before symbolic regions.
 

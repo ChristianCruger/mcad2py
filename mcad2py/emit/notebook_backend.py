@@ -14,6 +14,7 @@ import nbformat
 from .. import ir
 from .codegen import (
     assignment_line,
+    combobox_assign_lines,
     declaration_lines,
     echo_expr,
     expr_to_str,
@@ -60,6 +61,9 @@ def _render_region(region: ir.Region) -> nbformat.NotebookNode | None:
         if echo is not None:
             lines.append(echo)  # bare last line -> inline result, like Mathcad "="
         return nbformat.v4.new_code_cell("\n".join(lines))
+
+    if isinstance(region, ir.ComboBoxAssign):
+        return nbformat.v4.new_code_cell("\n".join(combobox_assign_lines(region)))
 
     if isinstance(region, ir.IndexAssign):
         lines = [index_assign_line(region)]

@@ -91,7 +91,10 @@ When adding features, respect this boundary — parsers produce IR, backends con
   `<ml:program>`) = a Mathcad *block* program → `ir.Program` (branch list). A `Define` whose value is
   a `Program` **and has params** (`σ_c(e) := …`) emits a real `def` with `if/elif/else return`s (not
   a `lambda`) to preserve branching; a `Program` assigned to a plain variable (no params) emits an
-  inline conditional-expression chain instead.
+  inline conditional-expression chain instead. `<ml:alsoif>` (Prime's "also if") is an `elif` — a
+  sibling carrying its own `<ml:test>`/`<ml:then>`, handled like `<ml:elseif>`. A bare `<ml:program>`
+  used directly as a value (`σ_nd := <program with if>`) is unwrapped to its single statement's
+  expression.
 - Mathcad's **inline** `if(cond, then, else)` is a different construct: `<ml:apply>` with an
   `<ml:id labels="KEYWORD">if</ml:id>` head and a `<ml:sequence>` of the three args. It's parsed into
   the same `ir.Program` (branches `[(cond, then), (None, else)]`) so it renders as a ternary
@@ -112,8 +115,15 @@ When adding features, respect this boundary — parsers produce IR, backends con
   sum (no scipy). `<ml:lambda>` (a `<ml:boundVars>` + body) → `ir.Lambda` → `lambda …: …`.
   **Rule (mirrors `solve`):** Mathcad's `=`/numeric forms route to scipy/numeric Python; the `→`
   symbolic arrow forms route to SymPy. A symbolic `∫…→` would be a SymPy `Integrate`, not handled yet.
-- Comparison ops (`lessThan`/`greaterThan`/`lessOrEqual`/`greaterOrEqual`) live in `OPERATOR_TAGS`
-  and emit `< > <= >=` (used in program tests).
+- Comparison ops (`lessThan`/`greaterThan`/`lessOrEqual`/`greaterOrEqual`/`equal`) live in
+  `OPERATOR_TAGS` and emit `< > <= >= ==`; boolean connectives `and`/`or` (in `OPERATOR_TAGS` as
+  `and_`/`or_`) emit `and`/`or` (used in program tests, e.g. `rho <= x and revne == "Ja"`).
+- `<ml:equal/>` is **context-dependent**: by default it parses as a `==` comparison (`BinOp` `eq`) for
+  boolean use in tests/inline-`if`. In a genuinely *symbolic* region — a standalone equation, a
+  `solve` input, or a solve-block constraint — it means an equation, so those three parsers route it
+  through `_to_equation`, which lifts a top-level `eq` `BinOp` into an `ir.Equation` (SymPy `Eq`).
+  (Don't make `equal` an `Equation` at parse time, or a boolean `=` in a non-symbolic sheet emits a
+  bare `Eq(...)` with no SymPy imported → `NameError`.)
 - Subscripts: `f<pw:Subscript>cd</pw:Subscript>` → `f_cd`. Greek is literal unicode.
 - Text regions: content is in `mathcad/xaml/FlowDocumentN.XamlPackage` (a nested zip),
   linked via `item-idref` → `worksheet.xml.rels`. See [text.py](mcad2py/text.py).
@@ -162,6 +172,15 @@ When adding features, respect this boundary — parsers produce IR, backends con
   (`SelectedIndex` into `<ml:vals>`) and option list are written as a leading `#` comment via the new
   `Define.comment` field. (Worksheets with controls carry `mathcad/integration.xml` and a
   `msg-id="ScriptableWarning"`.)
+- `<ml:ComboBoxControl>` as a `Define` value → `ir.ComboBoxAssign`. A **native** (non-scripted)
+  row-selector: a `rows×cols` table (`<ml:ComboBoxValues>`, row-major; named by `<ml:ComboBoxRowNames>`)
+  with a `SelectedRow` (0-based, per `array-origin`). The selected row's `cols` value(s) map onto the
+  LHS target(s) — a single `<ml:id>` or a `<ml:matrix>` of ids (`[f_ck; f_ctk] := …`). A control with
+  **no** `<ml:ComboBoxValues>` yields the selected row *name* as a string (a Ja/Nej flag → `revne := "Ja"`).
+  Emits one `target = value` per column plus a `#` comment documenting the pick; `ComboBoxScaleFactors`
+  (all placeholders in samples seen) are ignored. (`Beton_Bæreevne_støbeskel.mcdx`’s cached `result.xml`
+  is internally **stale** — `ν_v`’s `0.525` implies an old C35 pick while `τ_Rd` reflects the live C40
+  `SelectedRow=6`; we reproduce the live selection, which `τ_Rd`/`f_yd` corroborate.)
 - Echo display units (`echo_expr` → `_display`): a real unit override emits `x.to(<unit>)`, but a
   **pure numeric scale** (Mathcad showing a dimensionless result as e.g. `×10**-6`, with no `UnitRef`
   in the override) emits `x / (<scale>)` instead — `.to` only applies to a dimensioned quantity.
@@ -211,6 +230,13 @@ matrices, that `T_Ed` is 0-based and zero-filled (`[0, 400]`), and that the inde
 integer array. Plus the supporting leaf features asserted on the generated source: the stepless range
 `i := 1 .. n` (→ `arange(1, n, 1)`), `ceil`/`floor`/`round`, and an inline
 `if(cond, "ok", "tværsnit overudnyttet")` rendered as a ternary with string literals.
+[tests/test_beton_baereevne.py](tests/test_beton_baereevne.py) covers
+`references/Beton_Bæreevne_støbeskel.mcdx` (joint shear capacity): the native `<ml:ComboBoxControl>`
+row-selector — single- and multi-column picks (`[f_ck; f_ctk]`, `c`/`μ`) and the empty-values
+name-as-string case (`revne := "Ja"`) — plus a `<ml:program>`-as-value becoming an inline ternary
+(with `alsoif`/`and`) and a boolean `=` emitting `==` (not a SymPy `Eq`). Executes the whole sheet and
+matches the cache for `f_yd`/`τ_Rd`/`τ_Sd`/`Accept`; `ν_v` is asserted at the live-`f_ck=40` value
+`0.5` (the cache's `0.525` is a documented stale leftover, see the `ComboBoxControl` schema note).
 
 **Reference files are test fixtures — don't edit them.** Tests compare generated output against each
 `.mcdx`'s cached `result.xml`; changing a worksheet (e.g. a `phi` value) silently shifts every

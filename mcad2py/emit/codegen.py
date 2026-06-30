@@ -162,6 +162,14 @@ def assignment_line(define: ir.Define) -> str:
     return f"{prefix}{define.target.py} = {rhs}"
 
 
+def combobox_assign_lines(region: ir.ComboBoxAssign) -> list[str]:
+    """Emit the selected-row assignment(s) for a ComboBox, documenting the pick."""
+    lines = [f"# {line}" for line in (region.comment or "").splitlines()]
+    for target, value in zip(region.targets, region.values):
+        lines.append(f"{target.py} = {expr_to_str(value)}")
+    return lines
+
+
 def index_assign_line(region: ir.IndexAssign) -> str:
     """``X = index_build(i, lambda i: expr)`` for a range-indexed assignment.
 
@@ -468,6 +476,8 @@ def _region_exprs(region: ir.Region) -> list[ir.Expr]:
         return [region.value]
     if isinstance(region, (ir.Evaluate, ir.IndexAssign)):
         return [region.value]
+    if isinstance(region, ir.ComboBoxAssign):
+        return list(region.values)
     if isinstance(region, ir.SymbolicEquation):
         return [region.equation]
     if isinstance(region, ir.SymbolicEval):

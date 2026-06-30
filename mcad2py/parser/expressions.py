@@ -88,6 +88,16 @@ def parse_expr(elem: ET.Element) -> ir.Expr:
     if tag == "if":
         return _parse_if(elem)
 
+    if tag == "program":
+        # A program used as a *value* (e.g. ``σ_nd := <program with if>``). A
+        # single-statement program reduces to that statement's expression; a
+        # genuinely multi-line program (local assigns + return) isn't an
+        # expression we can inline yet.
+        kids = list(elem)
+        if len(kids) == 1:
+            return parse_expr(kids[0])
+        return ir.Unsupported(note="multi-line program", raw=_summarize(elem))
+
     if tag == "range":
         return _parse_range(elem)
 
@@ -157,10 +167,6 @@ def _parse_apply(elem: ET.Element) -> ir.Expr:
         value = parse_expr(rest[0])
         unit = parse_expr(rest[1])
         return ir.Quantity(value=value, unit=unit)
-
-    # Symbolic equation: <apply><equal/> <lhs/> <rhs/>  (Mathcad boolean ``=``).
-    if head_tag == "equal":
-        return ir.Equation(lhs=parse_expr(rest[0]), rhs=parse_expr(rest[1]))
 
     # nth root: <apply><nthRoot/> <degree-or-placeholder/> <operand/>
     if head_tag == "nthRoot":
@@ -273,7 +279,9 @@ def _collect_branches(
             test = parse_expr(child[0]) if len(child) else None
         elif ctag == "then":
             branches.append((test, _unwrap_program(child)))
-        elif ctag == "elseif":
+        elif ctag in ("elseif", "alsoif"):
+            # ``alsoif`` is Prime's "also if" (an elif): a sibling carrying its
+            # own test + then.
             _collect_branches(child, branches)
         elif ctag == "else":
             branches.append((None, _unwrap_program(child)))

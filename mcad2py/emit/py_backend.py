@@ -5,6 +5,7 @@ from __future__ import annotations
 from .. import ir
 from .codegen import (
     assignment_line,
+    combobox_assign_lines,
     declaration_lines,
     echo_expr,
     expr_to_str,
@@ -39,6 +40,9 @@ def _render_region(region: ir.Region) -> list[str]:
         if echo is not None:
             out.append(f"print({echo})")
         return out
+
+    if isinstance(region, ir.ComboBoxAssign):
+        return ["", *combobox_assign_lines(region)]
 
     if isinstance(region, ir.IndexAssign):
         out = ["", index_assign_line(region)]
