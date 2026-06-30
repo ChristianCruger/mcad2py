@@ -66,6 +66,56 @@ def col(*elements: object) -> object:
     return np.array(elements)
 
 
+def _magnitudes(v):
+    """A plain float NumPy array of ``v``'s magnitudes (Pint or already plain)."""
+    if hasattr(v, "magnitude"):
+        return np.asarray(v.magnitude, dtype=float)
+    return np.asarray(v, dtype=float)
+
+
+def transpose(x):
+    """Mathcad matrix/vector transpose, unit-aware.
+
+    For the 1-D vectors built by ``col()`` this is effectively identity (NumPy
+    treats a 1-D array's transpose as itself), which is exactly what feeding a
+    transposed data column to ``linterp`` needs; a true 2-D matrix transposes
+    normally. Pint quantities keep their units.
+    """
+    if hasattr(x, "magnitude"):
+        return x._REGISTRY.Quantity(np.transpose(x.magnitude), x.units)
+    return np.transpose(np.asarray(x))
+
+
+def linterp(vx, vy, x):
+    """Linear interpolation ``linterp(vx, vy, x)`` (Mathcad builtin).
+
+    ``vx`` (knot abscissae, increasing) and ``vy`` (knot ordinates) are vectors;
+    ``x`` is the query point. Note the argument order differs from
+    ``np.interp(x, xp, fp)``. Beyond the data range Mathcad *extrapolates* along
+    the first/last segment (``np.interp`` only clamps), so the ends are extended
+    by hand. Unit-aware: ``x`` is converted into ``vx``'s unit and the result
+    carries ``vy``'s unit.
+    """
+    x_unit = getattr(vx, "units", None)
+    y_unit = getattr(vy, "units", None)
+    xs = _magnitudes(vx)
+    ys = _magnitudes(vy)
+    if x_unit is not None and hasattr(x, "to"):
+        xq = float(x.to(x_unit).magnitude)
+    else:
+        xq = float(getattr(x, "magnitude", x))
+
+    if xq <= xs[0]:
+        slope = (ys[1] - ys[0]) / (xs[1] - xs[0])
+        y = ys[0] + slope * (xq - xs[0])
+    elif xq >= xs[-1]:
+        slope = (ys[-1] - ys[-2]) / (xs[-1] - xs[-2])
+        y = ys[-1] + slope * (xq - xs[-1])
+    else:
+        y = float(np.interp(xq, xs, ys))
+    return (float(y) * y_unit) if y_unit is not None else float(y)
+
+
 def integral(func, lower, upper):
     """Definite numeric integral (Mathcad ``∫…=``) via ``scipy.integrate.quad``.
 

@@ -58,8 +58,10 @@ FUNCTIONS = {
     "max": "np.maximum",
 }
 
-# Trig helpers that must be imported from the runtime into generated code.
-RUNTIME_IMPORTS = ("sin", "cos", "tan", "cot")
+# Runtime helpers that are *called by name* in generated code (so a Call to one
+# triggers its import): the angle-aware trig wrappers plus ``linterp`` (Mathcad's
+# linear interpolation, which reorders args and is unit-aware -- see runtime.py).
+RUNTIME_IMPORTS = ("sin", "cos", "tan", "cot", "linterp")
 
 # Mathcad symbolic command keyword (first id of a <ml:command> sequence) ->
 # SymPy callable. Symbolic regions emit ``<callable>(expr, *args)``.

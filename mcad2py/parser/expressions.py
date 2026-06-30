@@ -128,6 +128,14 @@ def _parse_apply(elem: ET.Element) -> ir.Expr:
     if head_tag == "vectorize":
         return ir.Vectorize(operand=parse_expr(rest[0]))
 
+    # Matrix/vector transpose: <apply><transpose/> <operand/>.
+    if head_tag == "transpose":
+        return ir.Transpose(operand=parse_expr(rest[0]))
+
+    # Percent postfix: <apply><percent/> <operand/>  ==  operand / 100.
+    if head_tag == "percent":
+        return ir.BinOp(op="div", left=parse_expr(rest[0]), right=ir.Number("100"))
+
     # Definite numeric integral / discrete summation: a <ml:lambda> integrand
     # or summand plus <ml:lowerBound>/<ml:upperBound>.
     if head_tag in ("integral", "summation"):

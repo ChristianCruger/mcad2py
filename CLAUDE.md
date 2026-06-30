@@ -39,7 +39,7 @@ When adding features, respect this boundary — parsers produce IR, backends con
 | [parser/regions.py](mcad2py/parser/regions.py) | Worksheet→ordered regions; **sort by (top, left)** for reading order |
 | [ir.py](mcad2py/ir.py) | Backend-agnostic node dataclasses |
 | [mapping.py](mcad2py/mapping.py) | Data tables: operators, builtins, constants, Greek, unit aliases |
-| [runtime.py](mcad2py/runtime.py) | Helpers imported by generated code: angle-aware `sin/cos/tan/cot`, `col`/`arange`/`vectorize`, `integral` (scipy `quad`), `summation`, `solve_block` (scipy `fsolve`), `sample`/`plot_axis` (matplotlib plots) |
+| [runtime.py](mcad2py/runtime.py) | Helpers imported by generated code: angle-aware `sin/cos/tan/cot`, `col`/`arange`/`vectorize`/`transpose`, `linterp` (unit-aware linear interp), `integral` (scipy `quad`), `summation`, `solve_block` (scipy `fsolve`), `sample`/`plot_axis` (matplotlib plots) |
 | [emit/codegen.py](mcad2py/emit/codegen.py) | Precedence-aware expression printer; shared by both backends |
 | [emit/notebook_backend.py](mcad2py/emit/notebook_backend.py) | IR→`.ipynb`; region→cell; bare last line echoes result |
 | [emit/py_backend.py](mcad2py/emit/py_backend.py) | IR→`.py`; evaluations become `print(...)` |
@@ -115,6 +115,27 @@ When adding features, respect this boundary — parsers produce IR, backends con
   The `solve_block` runtime helper wraps `scipy.optimize.fsolve` and does all the Pint bookkeeping
   (unknowns solved as magnitudes in their guess units, residuals compared in base units, units
   restored on the result). Only `find` is wired; `minerr`/`maximize`/`minimize` are future.
+- `<apply><percent/> x>` = Mathcad's `%` postfix → `x / 100` (a `BinOp` div; `80%` → `80 / 100`,
+  `100%` → `100 / 100`). Dimensionless, so no Pint involved.
+- `<apply><transpose/> m>` → `ir.Transpose` → `transpose(...)`, a unit-aware runtime helper. For the
+  1-D vectors `col()` builds, transpose is effectively identity (NumPy treats a 1-D array's
+  transpose as itself), which is all that feeding a transposed data column to `linterp` needs; a
+  real 2-D matrix transposes normally. General 2-D matrices are still a TODO.
+- `linterp` (Mathcad linear interpolation) is a **runtime helper**, not a `FUNCTIONS` entry, because
+  it (a) reorders args — Mathcad `linterp(vx, vy, x)` vs `np.interp(x, xp, fp)` — and (b) is
+  unit-aware and **extrapolates** linearly beyond the knots along the first/last segment (`np.interp`
+  only clamps). It lives in `RUNTIME_IMPORTS` so a `Call` to it triggers its import.
+- `<ml:ListBoxScriptableControl>` (and any `…ScriptableControl`) as a `Define` value → we **do not
+  transpile its embedded JScript** (the `Script` attr, gzip+base64; arbitrarily complex). Instead we
+  recover the control's **cached output value** from the `RL` attribute (base64 s-expression, e.g.
+  `(op_matrix … (list (number 3:0x..) (number 0.13:0x..)))` → `col(3, 0.13)`), the same value
+  downstream cells consume. `_decode_control_result` regex-parses the numbers/dims; the selection
+  (`SelectedIndex` into `<ml:vals>`) and option list are written as a leading `#` comment via the new
+  `Define.comment` field. (Worksheets with controls carry `mathcad/integration.xml` and a
+  `msg-id="ScriptableWarning"`.)
+- Echo display units (`echo_expr` → `_display`): a real unit override emits `x.to(<unit>)`, but a
+  **pure numeric scale** (Mathcad showing a dimensionless result as e.g. `×10**-6`, with no `UnitRef`
+  in the override) emits `x / (<scale>)` instead — `.to` only applies to a dimensioned quantity.
 - Worksheet settings live in `mathcad/settings/calculation.xml`: `array-origin="0"` (confirms our
   0-based indexing), `convergence-tolerance` = Mathcad `TOL`, `constraint-tolerance` = `CTOL` (both
   per-file, default `0.001`). Not consumed yet — `TOL`/`CTOL` will drive `find`/`quad` tolerances
@@ -123,7 +144,8 @@ When adding features, respect this boundary — parsers produce IR, backends con
 ## Conventions
 
 - Generated trig uses runtime helpers (`tan(phi)`), not `math.tan(phi.to('rad').magnitude)`.
-- Display units come from `unitOverride`; emit `x.to(ureg.<unit>)` for the echo.
+- Display units come from `unitOverride`; emit `x.to(ureg.<unit>)` for the echo (or `x / (<scale>)`
+  when the override is a pure numeric scale like `10**-6` — see `_display`).
 - Unknown/unsupported constructs emit a visible `# TODO unsupported: <note>` so output still
   loads — never silently drop a region.
 - Add new builtins/units/constants to [mapping.py](mcad2py/mapping.py) (data, not code).
@@ -144,6 +166,11 @@ on the kinked integrand vs Mathcad's own quadrature at its 1e-3 solution differ 
 end-to-end: the unit-bearing `z_plot` range and the neutral axis `x` are checked too, and both
 `<xyPlot>` figures are rendered (matplotlib `Agg`) and their traces/labels asserted. Plus direct
 unit tests of the `integral`/`summation` runtime helpers.
+[tests/test_shrinkage.py](tests/test_shrinkage.py) covers `references/shrinkage.mcdx` (EN 1992
+shrinkage): the `linterp`/`transpose` pair (`k_h` interpolates and extrapolates, cached `0.7`),
+`percent` (`80%` → `0.8`), and the `ListBoxScriptableControl` recovering its cached `[3, 0.13]`
+("Class S") output without transpiling the JScript. The whole sheet runs and matches the cache;
+`ε_cd`/`ε_cs` use rel_tol 1e-4 because Pint's Julian year (365.25 d) differs from Mathcad's mean year.
 
 **Reference files are test fixtures — don't edit them.** Tests compare generated output against each
 `.mcdx`'s cached `result.xml`; changing a worksheet (e.g. a `phi` value) silently shifts every
@@ -151,12 +178,15 @@ dependent cached number and breaks the hardcoded expected values.
 
 ## Not yet supported (next targets)
 
-General `rows×cols` matrices (vectors work). `find` solve blocks work;
+General `rows×cols` matrices (vectors + transpose work). `find` solve blocks work;
 `minerr`/`maximize`/`minimize` don't yet.
 A *branching* program applied to an array still needs `np.vectorize(fn)` (the `vectorize()` identity
 helper only covers arithmetic + `min`/`max`). Known gap: square roots emit `math.sqrt(x)` (fine for
 dimensionless args); switch to `x ** 0.5` when a unit-bearing root appears so Pint handles units.
 `TOL`/`CTOL` from `calculation.xml` aren't consumed yet (solve uses fsolve defaults).
+Scriptable-control JScript is **intentionally** not transpiled — we surface the control's cached
+output value (the `RL` attribute) instead, which is faithful as long as the worksheet was last saved
+with the desired selection. A control with no cached `RL` falls back to a `# TODO unsupported` region.
 
 Nice-to-have: an opt-in `--externalize-images` (or `--media-dir`) flag that writes picture
 regions as sidecar files next to the output notebook and references them with a relative link,

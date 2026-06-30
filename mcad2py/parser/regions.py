@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import re
 import xml.etree.ElementTree as ET
 from typing import Callable
 
@@ -143,6 +145,11 @@ def _parse_define(define_elem: ET.Element) -> ir.Region:
         target = _parse_target(target_elem)
         params = []
 
+    # A scriptable control (e.g. a ListBox) drives the value via an embedded
+    # JScript we don't transpile -- we emit its cached output value instead.
+    if localname(value_elem.tag).endswith("ScriptableControl"):
+        return _parse_scriptable_control(target, value_elem, params)
+
     if localname(value_elem.tag) == "eval":
         value, unit = parse_eval(value_elem)
         return ir.Define(
@@ -151,6 +158,74 @@ def _parse_define(define_elem: ET.Element) -> ir.Region:
     return ir.Define(
         target=target, value=parse_expr(value_elem), evaluate=False, params=params
     )
+
+
+def _parse_scriptable_control(
+    target: ir.Name, control: ET.Element, params: list[str]
+) -> ir.Region:
+    """A Mathcad scriptable control (``<ml:...ScriptableControl>``).
+
+    The control's behaviour is an embedded JScript (the ``Script`` attribute) we
+    deliberately don't transpile -- it can be arbitrarily complex. Instead we
+    emit the control's *cached output value* (the ``RL`` attribute, the same
+    result downstream cells consume), documenting the selection in a comment.
+    """
+    value = _decode_control_result(control.get("RL"))
+    if value is None:
+        return ir.UnsupportedRegion(
+            note=f"{localname(control.tag)} (no cached value to recover)"
+        )
+
+    vals_elem = next((c for c in control if localname(c.tag) == "vals"), None)
+    options = (
+        [(v.text or "").strip() for v in vals_elem if localname(v.tag) == "val"]
+        if vals_elem is not None
+        else []
+    )
+    try:
+        sel = int(control.get("SelectedIndex", "0") or 0)
+    except ValueError:
+        sel = 0
+
+    kind = localname(control.tag)
+    comment = f"Mathcad {kind}: not transpiled; using its cached output value."
+    if options:
+        chosen = options[sel] if 0 <= sel < len(options) else "?"
+        comment = (
+            f'Mathcad {kind}: selected "{chosen}" '
+            f"(options: {', '.join(options)}).\n"
+            "Embedded JScript not transpiled; using the cached output value."
+        )
+    return ir.Define(
+        target=target, value=value, evaluate=False, params=params, comment=comment
+    )
+
+
+def _decode_control_result(rl: str | None) -> ir.Expr | None:
+    """Decode a control's base64 ``RL`` cached result into an IR value.
+
+    The payload is an s-expression, e.g. a 2x1 matrix
+    ``(op_matrix:0x.. (unboxed 2) (unboxed 1) (list (number 3:0x..) (number 0.13:0x..)))``
+    or a bare ``(number 0.8:0x..)``. Returns a :class:`ir.MatrixLiteral` (vector)
+    or :class:`ir.Number`, or None when there is nothing to recover.
+    """
+    if not rl:
+        return None
+    try:
+        raw = base64.b64decode(rl).decode("ascii", "replace")
+    except Exception:
+        return None
+    nums = re.findall(r"\(number\s+([-+0-9.eE]+)", raw)
+    if not nums:
+        return None
+    if "op_matrix" in raw:
+        dims = re.findall(r"\(unboxed\s+(\d+)\)", raw)
+        rows = int(dims[0]) if len(dims) > 0 else len(nums)
+        cols = int(dims[1]) if len(dims) > 1 else 1
+        return ir.MatrixLiteral(
+            rows=rows, cols=cols, elements=[ir.Number(n) for n in nums]
+        )
+    return ir.Number(nums[0])
 
 
 def _parse_plot(plot_elem: ET.Element) -> ir.Region:

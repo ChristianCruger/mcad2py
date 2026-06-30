@@ -126,6 +126,19 @@ class Vectorize(Expr):
 
 
 @dataclass
+class Transpose(Expr):
+    """Mathcad matrix/vector transpose (``<ml:transpose>``).
+
+    Emitted as ``transpose(<operand>)``; the runtime helper is unit-aware and,
+    for the 1-D vectors we build with ``col()``, is effectively identity (a row
+    vector and a column vector are the same NumPy 1-D array) -- enough for the
+    common case of feeding ``linterp`` a transposed data column.
+    """
+
+    operand: Expr
+
+
+@dataclass
 class Range(Expr):
     """A Mathcad range ``start, next .. stop`` -> ``np.arange`` (inclusive)."""
 
@@ -226,7 +239,8 @@ class Define(Region):
     ``unitOverride``) -- a single unit or a compound like ``kN*m`` -- or None
     for automatic units. ``params`` is non-empty for a function definition
     (``f(x) := ...``), in which case ``value`` is the body and the define emits
-    a ``lambda``.
+    a ``lambda``. ``comment`` is an optional note rendered as ``#`` lines above
+    the assignment (used to document a scriptable control's cached value).
     """
 
     target: Name
@@ -234,6 +248,7 @@ class Define(Region):
     evaluate: bool = False
     display_unit: Expr | None = None
     params: list[str] = field(default_factory=list)
+    comment: str | None = None
 
 
 @dataclass
@@ -379,6 +394,8 @@ def child_exprs(node: object) -> list[Expr]:
     if isinstance(node, Index):
         return [node.base, node.index]
     if isinstance(node, Vectorize):
+        return [node.operand]
+    if isinstance(node, Transpose):
         return [node.operand]
     if isinstance(node, Range):
         return [node.start, node.stop] + ([node.step] if node.step is not None else [])

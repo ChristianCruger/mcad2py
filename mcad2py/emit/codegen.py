@@ -81,6 +81,9 @@ def _emit(node: ir.Expr) -> tuple[str, int]:
     if isinstance(node, ir.Vectorize):
         return f"vectorize({expr_to_str(node.operand)})", _ATOM
 
+    if isinstance(node, ir.Transpose):
+        return f"transpose({expr_to_str(node.operand)})", _ATOM
+
     if isinstance(node, ir.Lambda):
         return f"lambda {', '.join(node.params)}: {expr_to_str(node.body)}", 0
 
@@ -142,12 +145,15 @@ def assignment_line(define: ir.Define) -> str:
     multi-line ``def`` so the branching is preserved; other functions become a
     ``lambda``; plain definitions become an assignment.
     """
+    prefix = ""
+    if define.comment:
+        prefix = "".join(f"# {line}\n" for line in define.comment.splitlines())
     if isinstance(define.value, ir.Program):
-        return _program_def(define)
+        return prefix + _program_def(define)
     rhs = expr_to_str(define.value)
     if define.params:
-        return f"{define.target.py} = lambda {', '.join(define.params)}: {rhs}"
-    return f"{define.target.py} = {rhs}"
+        return f"{prefix}{define.target.py} = lambda {', '.join(define.params)}: {rhs}"
+    return f"{prefix}{define.target.py} = {rhs}"
 
 
 def _program_def(define: ir.Define) -> str:
@@ -185,14 +191,34 @@ def echo_expr(region: ir.Region) -> str | None:
             return None
         target = region.target.py
         if region.display_unit is not None:
-            return f"{target}.to({expr_to_str(region.display_unit)})"
+            return _display(target, region.display_unit)
         return target
     if isinstance(region, ir.Evaluate):
         base = expr_to_str(region.value)
         if region.display_unit is not None:
-            return f"({base}).to({expr_to_str(region.display_unit)})"
+            return _display(f"({base})", region.display_unit)
         return base
     return None
+
+
+def _display(value: str, unit: ir.Expr) -> str:
+    """Render a value in its display unit.
+
+    A real unit (``mm``, ``kN*m``) uses ``.to(<unit>)``; a pure numeric scale
+    (Mathcad showing a dimensionless result as e.g. ``×10**-6``) divides instead,
+    since ``.to`` only applies to a dimensioned quantity.
+    """
+    unit_s = expr_to_str(unit)
+    if _has_unit(unit):
+        return f"{value}.to({unit_s})"
+    return f"{value} / ({unit_s})"
+
+
+def _has_unit(node: ir.Expr) -> bool:
+    """True if the expression references any unit (vs. a bare numeric scale)."""
+    if isinstance(node, ir.UnitRef):
+        return True
+    return any(_has_unit(child) for child in ir.child_exprs(node))
 
 
 def declaration_lines(region: ir.SymbolDeclarations) -> list[str]:
@@ -318,8 +344,8 @@ def header_lines(ws: ir.Worksheet) -> list[str]:
     if runtime:
         order = [
             *RUNTIME_IMPORTS,
-            "col", "arange", "vectorize", "integral", "summation", "solve_block",
-            "sample", "plot_axis",
+            "col", "arange", "vectorize", "transpose", "integral", "summation",
+            "solve_block", "sample", "plot_axis",
         ]
         names = ", ".join(n for n in order if n in runtime)
         lines.append(f"from mcad2py.runtime import {names}")
@@ -374,6 +400,8 @@ def _used_runtime(ws: ir.Worksheet) -> set[str]:
                     found.add("arange")
                 elif isinstance(sub, ir.Vectorize):
                     found.add("vectorize")
+                elif isinstance(sub, ir.Transpose):
+                    found.add("transpose")
                 elif isinstance(sub, ir.Integral):
                     found.add("integral")
                 elif isinstance(sub, ir.Summation):
