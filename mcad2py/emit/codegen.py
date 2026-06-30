@@ -206,6 +206,67 @@ def symbolic_eval_expr(region: ir.SymbolicEval) -> str:
     return f"{region.command}({', '.join(parts)})"
 
 
+def plot_lines(region: ir.Plot) -> list[str]:
+    """Emit a matplotlib figure for an X-Y plot.
+
+    Each trace's non-domain expression is sampled element-wise over the domain
+    array (``sample(lambda d: expr, d)``) so branching programs and units work;
+    ``plot_axis`` applies Mathcad's value/unit axis scaling.
+    """
+    domain = region.domain
+    lines = ["_fig, _ax = plt.subplots()"]
+    for trace in region.traces:
+        x = _plot_axis_call(trace.x, trace.x_unit, domain)
+        y = _plot_axis_call(trace.y, trace.y_unit, domain)
+        series = trace.y if _is_domain(trace.x, domain) else trace.x
+        label = expr_to_str(series)
+        color = f", color={trace.color!r}" if trace.color else ""
+        lines.append(f"_ax.plot({x}, {y}, label={label!r}{color})")
+    lines.append("_ax.axhline(0, color='0.6', linewidth=0.8)")
+    lines.append("_ax.axvline(0, color='0.6', linewidth=0.8)")
+    lines.append("_ax.grid(True, alpha=0.3)")
+    lines.append(f"_ax.set_xlabel({_axis_label(region, axis='x')!r})")
+    lines.append(f"_ax.set_ylabel({_axis_label(region, axis='y')!r})")
+    lines.append("_ax.legend()")
+    lines.append("plt.show()")
+    return lines
+
+
+def _is_domain(expr: ir.Expr, domain: str | None) -> bool:
+    return isinstance(expr, ir.Name) and expr.py == domain
+
+
+def _plot_axis_call(expr: ir.Expr, unit: ir.Expr | None, domain: str | None) -> str:
+    """``plot_axis(<data>, <unit>)`` where data is the domain array directly or
+    the expression sampled element-wise over the domain."""
+    if _is_domain(expr, domain) or domain is None:
+        data = expr_to_str(expr)
+    else:
+        data = f"sample(lambda {domain}: {expr_to_str(expr)}, {domain})"
+    unit_s = expr_to_str(unit) if unit is not None else "None"
+    return f"plot_axis({data}, {unit_s})"
+
+
+def _axis_label(region: ir.Plot, *, axis: str) -> str:
+    """A short axis label: the domain name, or the shared unit of that axis."""
+    exprs = [(t.x, t.x_unit) for t in region.traces] if axis == "x" else [
+        (t.y, t.y_unit) for t in region.traces
+    ]
+    expr, unit = exprs[0]
+    unit_text = _unit_label(unit)
+    if _is_domain(expr, region.domain):
+        return f"{expr_to_str(expr)} ({unit_text})" if unit_text else expr_to_str(expr)
+    return f"({unit_text})" if unit_text else ""
+
+
+def _unit_label(unit: ir.Expr | None) -> str:
+    if unit is None:
+        return ""
+    if isinstance(unit, ir.UnitRef):
+        return unit.name
+    return expr_to_str(unit)
+
+
 def solve_block_lines(region: ir.SolveBlock) -> list[str]:
     """Emit a numeric solve block: guesses, a residual function, solve_block().
 
@@ -243,6 +304,8 @@ def header_lines(ws: ir.Worksheet) -> list[str]:
     lines = ["import math"]
     if _uses_numpy(ws):
         lines.append("import numpy as np")
+    if any(isinstance(r, ir.Plot) for r in ws.regions):
+        lines.append("import matplotlib.pyplot as plt")
     lines.append("import pint")
     sympy_names = _sympy_imports(ws)
     if sympy_names:
@@ -256,6 +319,7 @@ def header_lines(ws: ir.Worksheet) -> list[str]:
         order = [
             *RUNTIME_IMPORTS,
             "col", "arange", "vectorize", "integral", "summation", "solve_block",
+            "sample", "plot_axis",
         ]
         names = ", ".join(n for n in order if n in runtime)
         lines.append(f"from mcad2py.runtime import {names}")
@@ -298,6 +362,8 @@ def _used_runtime(ws: ir.Worksheet) -> set[str]:
     for region in ws.regions:
         if isinstance(region, ir.SolveBlock):
             found.add("solve_block")
+        if isinstance(region, ir.Plot):
+            found.update(("sample", "plot_axis"))
         for node in _region_exprs(region):
             for sub in _walk(node):
                 if isinstance(sub, ir.Call) and sub.func in RUNTIME_IMPORTS:
@@ -329,6 +395,11 @@ def _region_exprs(region: ir.Region) -> list[ir.Expr]:
         for c in region.constraints:
             exprs += [c.lhs, c.rhs]
         return exprs
+    if isinstance(region, ir.Plot):
+        plot_exprs: list[ir.Expr] = []
+        for t in region.traces:
+            plot_exprs += [t.x, t.y]
+        return plot_exprs
     return []
 
 

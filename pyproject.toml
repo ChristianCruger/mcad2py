@@ -15,6 +15,7 @@ dependencies = [
     "Pillow>=10",
     "numpy>=1.24",
     "scipy>=1.10",
+    "matplotlib>=3.7",
 ]
 
 [project.optional-dependencies]
@@ -22,6 +23,11 @@ dev = ["pytest>=7"]
 
 [project.scripts]
 mcad2py = "mcad2py.cli:main"
+
+[tool.pytest.ini_options]
+# Generated plot code calls plt.show(); under the headless Agg backend used in
+# tests that emits a harmless "non-interactive" warning.
+filterwarnings = ["ignore:FigureCanvasAgg is non-interactive"]
 
 [tool.setuptools.packages.find]
 include = ["mcad2py*"]

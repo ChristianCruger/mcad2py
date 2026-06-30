@@ -66,6 +66,8 @@ def _parse_region(
             return _parse_picture(child, image_resolver)
         if tag == "solveblock":
             return _parse_solveblock(child)
+        if tag == "plot":
+            return _parse_plot(child)
     return None
 
 
@@ -149,6 +151,91 @@ def _parse_define(define_elem: ET.Element) -> ir.Region:
     return ir.Define(
         target=target, value=parse_expr(value_elem), evaluate=False, params=params
     )
+
+
+def _parse_plot(plot_elem: ET.Element) -> ir.Region:
+    """Parse a ``<plot><xyPlot>``: x/y axis equations paired into traces.
+
+    Each axis carries ``<plotEquations>``; each ``<plotEquation>`` is an
+    expression ``<math>`` plus a unit/scale ``<math>``. Traces pair the x and y
+    equations by index (the single-equation axis is shared across traces).
+    """
+    xy = next((c for c in plot_elem if localname(c.tag) == "xyPlot"), None)
+    axes = next((c for c in xy if localname(c.tag) == "axes"), None) if xy is not None else None
+    if axes is None:
+        return ir.UnsupportedRegion(note="plot (unrecognized structure)")
+
+    x_axis = next((c for c in axes if localname(c.tag) == "xAxis"), None)
+    y_axis = next((c for c in axes if localname(c.tag) == "yAxis"), None)
+    x_eqs = _parse_plot_equations(x_axis)
+    y_eqs = _parse_plot_equations(y_axis)
+    colors = _parse_trace_colors(xy)
+    if not x_eqs or not y_eqs:
+        return ir.UnsupportedRegion(note="plot (no equations)")
+
+    count = max(len(x_eqs), len(y_eqs))
+    traces: list[ir.PlotTrace] = []
+    for i in range(count):
+        xe, xu = x_eqs[i] if i < len(x_eqs) else x_eqs[0]
+        ye, yu = y_eqs[i] if i < len(y_eqs) else y_eqs[0]
+        color = colors[i] if i < len(colors) else None
+        traces.append(ir.PlotTrace(x=xe, y=ye, x_unit=xu, y_unit=yu, color=color))
+
+    domain = _detect_domain(x_eqs + y_eqs)
+    return ir.Plot(traces=traces, domain=domain)
+
+
+def _parse_plot_equations(
+    axis_elem: ET.Element | None,
+) -> list[tuple[ir.Expr, ir.Expr | None]]:
+    """Read an axis's ``<plotEquations>`` -> list of (expr, unit-or-None)."""
+    if axis_elem is None:
+        return []
+    container = next(
+        (c for c in axis_elem if localname(c.tag) == "plotEquations"), None
+    )
+    out: list[tuple[ir.Expr, ir.Expr | None]] = []
+    for pe in container if container is not None else []:
+        if localname(pe.tag) != "plotEquation":
+            continue
+        maths = [c for c in pe if localname(c.tag) == "math"]
+        expr = parse_expr(maths[0][0]) if maths and len(maths[0]) else ir.Placeholder()
+        unit: ir.Expr | None = None
+        if len(maths) > 1 and len(maths[1]):
+            sub = maths[1][0]
+            if localname(sub.tag) != "placeholder":
+                unit = parse_expr(sub)
+        out.append((expr, unit))
+    return out
+
+
+def _parse_trace_colors(xy_elem: ET.Element) -> list[str | None]:
+    """The trace line colors (Mathcad ``#AARRGGBB`` -> ``#RRGGBB``)."""
+    traces = next((c for c in xy_elem if localname(c.tag) == "traces"), None)
+    colors: list[str | None] = []
+    for tr in traces if traces is not None else []:
+        style = next((c for c in tr if localname(c.tag) == "traceStyle"), None)
+        argb = style.get("color") if style is not None else None
+        colors.append(_argb_to_rgb(argb))
+    return colors
+
+
+def _argb_to_rgb(argb: str | None) -> str | None:
+    """``#FF00008B`` -> ``#00008B`` (drop the alpha byte)."""
+    if not argb or not argb.startswith("#"):
+        return argb
+    digits = argb[1:]
+    if len(digits) == 8:
+        digits = digits[2:]
+    return "#" + digits
+
+
+def _detect_domain(eqs: list[tuple[ir.Expr, ir.Expr | None]]) -> str | None:
+    """The independent variable = the first bare-``Name`` axis equation."""
+    for expr, _unit in eqs:
+        if isinstance(expr, ir.Name):
+            return expr.py
+    return None
 
 
 def _parse_solveblock(elem: ET.Element) -> ir.Region:

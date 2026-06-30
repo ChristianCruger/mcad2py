@@ -9,6 +9,7 @@ from .codegen import (
     echo_expr,
     expr_to_str,
     header_lines,
+    plot_lines,
     solve_block_lines,
     symbolic_eval_expr,
 )
@@ -54,6 +55,9 @@ def _render_region(region: ir.Region) -> list[str]:
 
     if isinstance(region, ir.SolveBlock):
         return ["", *solve_block_lines(region)]
+
+    if isinstance(region, ir.Plot):
+        return ["", *plot_lines(region)]
 
     if isinstance(region, ir.UnsupportedRegion):
         return ["", f"# TODO unsupported region: {region.note}"]

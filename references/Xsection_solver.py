@@ -1,9 +1,10 @@
 """Auto-generated from a Mathcad worksheet by mcad2py."""
 import math
 import numpy as np
+import matplotlib.pyplot as plt
 import pint
 
-from mcad2py.runtime import col, arange, vectorize, integral, summation, solve_block
+from mcad2py.runtime import col, arange, vectorize, integral, summation, solve_block, sample, plot_axis
 ureg = pint.UnitRegistry()
 
 
@@ -25,7 +26,7 @@ f_ctm = 2.9 * ureg.MPa
 
 # creep factor:
 
-phi = 0
+phi = 1
 
 E_c = 30 * ureg.GPa
 
@@ -43,6 +44,17 @@ def sigma_c(e):
 # Plot:
 
 e_plot = arange(-0.0035, 0.001, -0.00345 - -0.0035)
+
+_fig, _ax = plt.subplots()
+_ax.plot(plot_axis(e_plot, 10**-3), plot_axis(sample(lambda e_plot: sigma_c(e_plot / (1 + phi)), e_plot), ureg.MPa), label='sigma_c(e_plot / (1 + phi))', color='#000000')
+_ax.plot(plot_axis(e_plot, 10**-3), plot_axis(sample(lambda e_plot: sigma_c(e_plot), e_plot), ureg.MPa), label='sigma_c(e_plot)', color='#00008B')
+_ax.axhline(0, color='0.6', linewidth=0.8)
+_ax.axvline(0, color='0.6', linewidth=0.8)
+_ax.grid(True, alpha=0.3)
+_ax.set_xlabel('e_plot (10**-3)')
+_ax.set_ylabel('(MPa)')
+_ax.legend()
+plt.show()
 
 # Steel
 
@@ -125,6 +137,17 @@ print((M_int(e_1, k_1)).to(ureg.kN * ureg.m))
 # Plot:
 
 z_plot = arange(-h / 2, h / 2, -h / 2 + 1 * ureg.mm - -h / 2)
+
+_fig, _ax = plt.subplots()
+_ax.plot(plot_axis(sample(lambda z_plot: sigma(z_plot, e_1, k_1), z_plot), ureg.MPa), plot_axis(z_plot, None), label='sigma(z_plot, e_1, k_1)', color='#00008B')
+_ax.plot(plot_axis(sample(lambda z_plot: epsilon(z_plot, e_1, k_1), z_plot), 10**-3), plot_axis(z_plot, None), label='epsilon(z_plot, e_1, k_1)', color='#000000')
+_ax.axhline(0, color='0.6', linewidth=0.8)
+_ax.axvline(0, color='0.6', linewidth=0.8)
+_ax.grid(True, alpha=0.3)
+_ax.set_xlabel('(MPa)')
+_ax.set_ylabel('z_plot')
+_ax.legend()
+plt.show()
 
 # neutral axis:
 

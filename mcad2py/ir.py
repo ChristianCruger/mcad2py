@@ -298,6 +298,30 @@ class SolveBlock(Region):
 
 
 @dataclass
+class PlotTrace:
+    """One curve of an X-Y plot: paired x/y expressions and their axis units."""
+
+    x: Expr
+    y: Expr
+    x_unit: Expr | None = None
+    y_unit: Expr | None = None
+    color: str | None = None
+
+
+@dataclass
+class Plot(Region):
+    """A Mathcad X-Y plot (``<xyPlot>``) → a matplotlib figure.
+
+    ``domain`` is the independent array variable (the bare-``Name`` axis, e.g.
+    ``e_plot``/``z_plot``); trace expressions are sampled element-wise over it
+    so branching programs and units survive.
+    """
+
+    traces: list[PlotTrace]
+    domain: str | None = None
+
+
+@dataclass
 class TextRegion(Region):
     """A text/comment region."""
 

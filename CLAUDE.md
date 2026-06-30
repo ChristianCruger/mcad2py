@@ -14,7 +14,7 @@ tree into an IR and emits Python from it.
 ## Commands
 
 ```bash
-pip install -e .                                    # install (deps: pint, nbformat, sympy, numpy, scipy, Pillow; pytest for tests)
+pip install -e .                                    # install (deps: pint, nbformat, sympy, numpy, scipy, matplotlib, Pillow; pytest for tests)
 mcad2py convert file.mcdx                           # -> file.ipynb
 mcad2py convert file.mcdx -f py -o -                # -> stdout as .py
 python -m mcad2py.cli convert file.mcdx   # same, without console-script install
@@ -39,7 +39,7 @@ When adding features, respect this boundary — parsers produce IR, backends con
 | [parser/regions.py](mcad2py/parser/regions.py) | Worksheet→ordered regions; **sort by (top, left)** for reading order |
 | [ir.py](mcad2py/ir.py) | Backend-agnostic node dataclasses |
 | [mapping.py](mcad2py/mapping.py) | Data tables: operators, builtins, constants, Greek, unit aliases |
-| [runtime.py](mcad2py/runtime.py) | Helpers imported by generated code: angle-aware `sin/cos/tan/cot`, `col`/`arange`/`vectorize`, `integral` (scipy `quad`), `summation`, `solve_block` (scipy `fsolve`) |
+| [runtime.py](mcad2py/runtime.py) | Helpers imported by generated code: angle-aware `sin/cos/tan/cot`, `col`/`arange`/`vectorize`, `integral` (scipy `quad`), `summation`, `solve_block` (scipy `fsolve`), `sample`/`plot_axis` (matplotlib plots) |
 | [emit/codegen.py](mcad2py/emit/codegen.py) | Precedence-aware expression printer; shared by both backends |
 | [emit/notebook_backend.py](mcad2py/emit/notebook_backend.py) | IR→`.ipynb`; region→cell; bare last line echoes result |
 | [emit/py_backend.py](mcad2py/emit/py_backend.py) | IR→`.py`; evaluations become `print(...)` |
@@ -99,6 +99,14 @@ When adding features, respect this boundary — parsers produce IR, backends con
   its `.png` is often BMP). The notebook embeds it as a **stored `image/png` cell output** (plus
   re-runnable `Image(...)` source), converting non-web formats to PNG via Pillow — *not* a
   markdown `data:` URI, which VS Code/others sanitize or truncate. `.py` emits a comment.
+- `<plot><xyPlot>` region → `ir.Plot` → a matplotlib figure. Each axis carries `<plotEquations>`
+  (an expression `<math>` + a unit/scale `<math>`); traces pair the x/y equations by index, the
+  single-equation axis being shared. The bare-`Name` axis is the **domain** (`e_plot`/`z_plot`);
+  every non-domain trace expression is emitted as `sample(lambda <domain>: <expr>, <domain>)` so it's
+  evaluated **element-wise** — this is how a *branching* program (`σ_c`'s `if`) gets applied across the
+  array (the one case `vectorize()` couldn't cover). `plot_axis(data, unit)` applies Mathcad's
+  value/unit axis scaling (`data / unit`; a placeholder unit → base SI units, e.g. `z_plot` in metres).
+  Trace colors are `#AARRGGBB` → `#RRGGBB`. Emits `plt.show()`.
 - `<solveblock>` region (numeric Given/Find) → `ir.SolveBlock`. Sub-regions carry
   `solve-block-category`: `guess-value` (a `Define` seeding an unknown), `constraint` (a numeric
   `<ml:equal>` → `ir.Equation`, emitted as a `lhs - rhs` residual — *not* a SymPy `Eq`), and
@@ -133,12 +141,17 @@ the vectorized `F_s`, and `N_int`/`M_int` (concrete integral + steel summation) 
 cached solve point `e_1`/`k_1` against Mathcad's cached force/moment checks (rel_tol 1e-4 — `quad`
 on the kinked integrand vs Mathcad's own quadrature at its 1e-3 solution differ ~1e-5), and the
 `find` solve block recovering Mathcad's cached `e_1`/`k_1` via `fsolve`. The whole sheet now runs
-end-to-end: the unit-bearing `z_plot` range and the neutral axis `x` are checked too. Plus direct
+end-to-end: the unit-bearing `z_plot` range and the neutral axis `x` are checked too, and both
+`<xyPlot>` figures are rendered (matplotlib `Agg`) and their traces/labels asserted. Plus direct
 unit tests of the `integral`/`summation` runtime helpers.
+
+**Reference files are test fixtures — don't edit them.** Tests compare generated output against each
+`.mcdx`'s cached `result.xml`; changing a worksheet (e.g. a `phi` value) silently shifts every
+dependent cached number and breaks the hardcoded expected values.
 
 ## Not yet supported (next targets)
 
-General `rows×cols` matrices (vectors work), plots. `find` solve blocks work;
+General `rows×cols` matrices (vectors work). `find` solve blocks work;
 `minerr`/`maximize`/`minimize` don't yet.
 A *branching* program applied to an array still needs `np.vectorize(fn)` (the `vectorize()` identity
 helper only covers arithmetic + `min`/`max`). Known gap: square roots emit `math.sqrt(x)` (fine for

@@ -169,6 +169,31 @@ def arange(start, stop, step):
     return np.arange(lo, hi + d / 2, d)
 
 
+def sample(func, xs):
+    """Evaluate ``func`` element-wise over the array ``xs``, rebuilding a vector.
+
+    Unlike ``np.vectorize`` this preserves Pint units and copes with *branching*
+    functions (a Mathcad program's ``if``/``elif`` can't take an array), so it's
+    how plot trace expressions are applied to the domain array.
+    """
+    return col(*[func(x) for x in xs])
+
+
+def plot_axis(data, unit=None):
+    """Magnitudes for a plot axis, applying Mathcad's value/unit scaling.
+
+    ``unit`` may be a Pint unit (``ureg.MPa``) or a plain scale (``10**-3``);
+    the axis shows ``data / unit``. A missing unit (Mathcad placeholder) falls
+    back to base SI units, matching Mathcad's auto display.
+    """
+    if unit is None:
+        if hasattr(data, "to_base_units"):
+            data = data.to_base_units()
+        return np.asarray(getattr(data, "magnitude", data), dtype=float)
+    ratio = data / unit
+    return np.asarray(getattr(ratio, "magnitude", ratio), dtype=float)
+
+
 def vectorize(value: object) -> object:
     """Mathcad's element-wise 'arrow'.
 
