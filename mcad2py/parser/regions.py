@@ -325,6 +325,7 @@ def _parse_solveblock(elem: ET.Element) -> ir.Region:
     targets: list[ir.Name] = []
     command = "find"
     display_unit: ir.Expr | None = None
+    params: list[str] = []
 
     regions_elem = next((c for c in elem if localname(c.tag) == "regions"), None)
     for sub in regions_elem if regions_elem is not None else []:
@@ -342,7 +343,7 @@ def _parse_solveblock(elem: ET.Element) -> ir.Region:
             if isinstance(eq, ir.Equation):
                 constraints.append(eq)
         elif category == "solver":
-            command, unknowns, targets, display_unit = _parse_solver(inner)
+            command, unknowns, targets, display_unit, params = _parse_solver(inner)
 
     if not targets:
         return ir.UnsupportedRegion(note="solve block (no solver region)")
@@ -353,25 +354,42 @@ def _parse_solveblock(elem: ET.Element) -> ir.Region:
         targets=targets,
         command=command,
         display_unit=display_unit,
+        params=params,
     )
 
 
 def _parse_solver(
     define_elem: ET.Element,
-) -> tuple[str, list[ir.Name], list[ir.Name], ir.Expr | None]:
-    """Parse the ``[targets] := find(unknowns)`` region of a solve block."""
+) -> tuple[str, list[ir.Name], list[ir.Name], ir.Expr | None, list[str]]:
+    """Parse the solver region of a solve block.
+
+    Two forms: ``[targets] := find(unknowns)`` (targets is a matrix of ids) and
+    ``f(a, b) := find(unknowns)`` (the target is an ``<ml:function>`` header, so
+    the solve block defines a function -- ``targets`` is just ``[f]`` and the
+    bound vars become ``params``). The ``find(...)`` value may be wrapped in an
+    ``<ml:eval>`` (with a display unit) or be a bare ``<ml:apply>``.
+    """
     children = list(define_elem)
     target_elem, value_elem = children[0], children[1]
-    targets = [
-        _parse_target(c) for c in target_elem if localname(c.tag) == "id"
-    ]
-    value, display_unit = parse_eval(value_elem)
+
+    params: list[str] = []
+    if localname(target_elem.tag) == "function":
+        fname, params = _parse_function_header(target_elem)
+        targets = [fname]
+    else:
+        targets = [_parse_target(c) for c in target_elem if localname(c.tag) == "id"]
+
+    if localname(value_elem.tag) == "eval":
+        value, display_unit = parse_eval(value_elem)
+    else:
+        value, display_unit = parse_expr(value_elem), None
+
     command = "find"
     unknowns: list[ir.Name] = []
     if isinstance(value, ir.Call):
         command = value.func
         unknowns = [a for a in value.args if isinstance(a, ir.Name)]
-    return command, unknowns, targets, display_unit
+    return command, unknowns, targets, display_unit, params
 
 
 def _parse_target(id_elem: ET.Element) -> ir.Name:

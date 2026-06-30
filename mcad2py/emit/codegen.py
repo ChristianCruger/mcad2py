@@ -299,11 +299,43 @@ def solve_block_lines(region: ir.SolveBlock) -> list[str]:
     ``[e_1; k_1] := find(e, k)`` with constraints ``N_int(e,k)=N_ext`` etc.
     becomes guess assignments, a ``def`` returning the constraint residuals
     (``lhs - rhs``), and a ``solve_block`` call destructured into the targets.
+
+    When the block *defines a function* (``f(a, b) := find(x)``, ``region.params``
+    set), the same machinery is emitted inside ``def f(a, b):`` so the
+    constraints close over the parameters, and the solved unknown(s) are returned.
     """
     unknowns = [u.py for u in region.unknowns]
-    targets = [t.py for t in region.targets]
-    resid = "_residuals_" + "_".join(targets)
+    body = _solve_block_body(region, unknowns)
+    call = f"solve_block({_resid_name(region, unknowns)}, [{', '.join(unknowns)}])"
 
+    if region.params:
+        fname = region.targets[0].py
+        ret = f"{call}[0]" if len(unknowns) == 1 else call
+        return (
+            [f"def {fname}({', '.join(region.params)}):"]
+            + [f"    {line}" for line in body]
+            + [f"    return {ret}"]
+        )
+
+    targets = [t.py for t in region.targets]
+    if len(targets) == 1:
+        tail = f"{targets[0]} = {call}[0]"
+    else:
+        tail = f"{', '.join(targets)} = {call}"
+    return body + [tail]
+
+
+def _resid_name(region: ir.SolveBlock, unknowns: list[str]) -> str:
+    """The residual function's name: from the unknowns for a function-defining
+    block, from the targets otherwise (preserving the established naming)."""
+    if region.params:
+        return "_residuals_" + "_".join(unknowns)
+    return "_residuals_" + "_".join(t.py for t in region.targets)
+
+
+def _solve_block_body(region: ir.SolveBlock, unknowns: list[str]) -> list[str]:
+    """Guess assignments plus the ``def _residuals(_x)`` returning lhs - rhs."""
+    resid = _resid_name(region, unknowns)
     lines = [assignment_line(g) for g in region.guesses]
     lines.append(f"def {resid}(_x):")
     unpack = ", ".join(unknowns)
@@ -312,11 +344,6 @@ def solve_block_lines(region: ir.SolveBlock) -> list[str]:
     for c in region.constraints:
         lines.append(f"        {expr_to_str(c.lhs)} - ({expr_to_str(c.rhs)}),")
     lines.append("    ]")
-    call = f"solve_block({resid}, [{', '.join(unknowns)}])"
-    if len(targets) == 1:
-        lines.append(f"{targets[0]} = {call}[0]")
-    else:
-        lines.append(f"{', '.join(targets)} = {call}")
     return lines
 
 

@@ -115,6 +115,12 @@ When adding features, respect this boundary — parsers produce IR, backends con
   The `solve_block` runtime helper wraps `scipy.optimize.fsolve` and does all the Pint bookkeeping
   (unknowns solved as magnitudes in their guess units, residuals compared in base units, units
   restored on the result). Only `find` is wired; `minerr`/`maximize`/`minimize` are future.
+  - The solver region may instead be a **function definition** — `f(a, b) := find(x)`, where the
+    target is an `<ml:function>` header and a constraint depends on the bound vars. Then `SolveBlock.params`
+    is the bound-var list, `targets` is just `[f]`, and the whole solve is emitted **inside** `def f(a, b):`
+    so the constraints close over the parameters, returning the solved unknown(s). The `find(...)` value
+    here is a bare `<ml:apply>` (not `<ml:eval>`-wrapped), so `_parse_solver` handles both. The residual
+    helper is named from the unknowns (`_residuals_x`) in this form, vs. the targets otherwise.
 - `<apply><percent/> x>` = Mathcad's `%` postfix → `x / 100` (a `BinOp` div; `80%` → `80 / 100`,
   `100%` → `100 / 100`). Dimensionless, so no Pint involved.
 - `<apply><transpose/> m>` → `ir.Transpose` → `transpose(...)`, a unit-aware runtime helper. For the
@@ -171,6 +177,10 @@ shrinkage): the `linterp`/`transpose` pair (`k_h` interpolates and extrapolates,
 `percent` (`80%` → `0.8`), and the `ListBoxScriptableControl` recovering its cached `[3, 0.13]`
 ("Class S") output without transpiling the JScript. The whole sheet runs and matches the cache;
 `ε_cd`/`ε_cs` use rel_tol 1e-4 because Pint's Julian year (365.25 d) differs from Mathcad's mean year.
+[tests/test_solve_function.py](tests/test_solve_function.py) covers `references/solve_as_function.mcdx`:
+a Given/Find block whose solver region is a *function definition* `f(a, b) := find(x)` (the constraint
+`a·x²−b = cos(x)` closing over the params) — it asserts the emitted `def f(a, b):`, that `f(1, 3)`
+recovers the cached root `1.6957…`, and that `f` is reusable with other arguments.
 
 **Reference files are test fixtures — don't edit them.** Tests compare generated output against each
 `.mcdx`'s cached `result.xml`; changing a worksheet (e.g. a `phi` value) silently shifts every

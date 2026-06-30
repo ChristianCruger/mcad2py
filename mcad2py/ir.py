@@ -302,6 +302,11 @@ class SolveBlock(Region):
     solution must satisfy; ``unknowns`` are the variables passed to ``find``;
     ``targets`` are where the result is stored (``[e_1; k_1] := find(e, k)``).
     Emits a ``scipy.optimize`` solve via the ``solve_block`` runtime helper.
+
+    ``params`` is non-empty when the solver region *defines a function* —
+    ``f(a, b) := find(x)`` — in which case ``targets`` holds the single function
+    name and the whole solve is emitted inside ``def f(a, b):`` so the
+    constraints close over the parameters, returning the solved unknown(s).
     """
 
     guesses: list[Define]
@@ -310,6 +315,7 @@ class SolveBlock(Region):
     targets: list[Name]
     command: str = "find"
     display_unit: Expr | None = None
+    params: list[str] = field(default_factory=list)
 
 
 @dataclass
