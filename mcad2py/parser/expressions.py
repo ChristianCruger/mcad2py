@@ -64,6 +64,9 @@ def parse_expr(elem: ET.Element) -> ir.Expr:
     if tag == "real":
         return ir.Number((elem.text or "0").strip())
 
+    if tag == "str":
+        return ir.Str(elem.text or "")
+
     if tag == "id":
         return _parse_id(elem)
 
@@ -118,6 +121,14 @@ def _parse_apply(elem: ET.Element) -> ir.Expr:
         # (``σ_s`` -> ``sigma_s``) matches its definition. Builtins are ASCII,
         # so sanitize leaves them unchanged for the FUNCTIONS lookup.
         name = sanitize(read_identifier(head))
+        # Mathcad's inline ``if(cond, then, else)`` (a KEYWORD-labelled head) is
+        # a conditional *expression*, not a call -> reuse the Program/ternary IR.
+        if name == "if":
+            args = _call_args(rest)
+            branches: list[tuple[ir.Expr | None, ir.Expr]] = [(args[0], args[1])]
+            if len(args) > 2:
+                branches.append((None, args[2]))
+            return ir.Program(branches=branches)
         return ir.Call(func=name, args=_call_args(rest), role=head.get("labels", "FUNCTION"))
 
     # Element access: <apply><indexer/> <base/> <index/>  (0-based).
@@ -280,12 +291,21 @@ def _unwrap_program(elem: ET.Element) -> ir.Expr:
 
 
 def _parse_range(elem: ET.Element) -> ir.Expr:
-    """Parse ``<ml:range>``: a ``start[, next]`` sequence then a stop value.
+    """Parse ``<ml:range>`` into a start/stop (and optional step).
 
-    The step is ``next - start`` (1 if no explicit ``next``).
+    Two XML shapes occur:
+      * explicit step -- a ``<sequence>`` holding ``start, next`` followed by the
+        stop value; the step is ``next - start``;
+      * implicit step (``i := 1 .. n``) -- two bare children ``start, stop`` with
+        no ``<sequence>``; the step defaults to 1.
     """
     seq = next((c for c in elem if localname(c.tag) == "sequence"), None)
-    seq_items = list(seq) if seq is not None else []
+    if seq is None:
+        kids = list(elem)
+        start = parse_expr(kids[0]) if kids else ir.Placeholder()
+        stop = parse_expr(kids[1]) if len(kids) > 1 else ir.Placeholder()
+        return ir.Range(start=start, stop=stop, step=None)
+    seq_items = list(seq)
     after = [c for c in elem if localname(c.tag) != "sequence"]
     start = parse_expr(seq_items[0]) if seq_items else ir.Placeholder()
     stop = parse_expr(after[0]) if after else ir.Placeholder()

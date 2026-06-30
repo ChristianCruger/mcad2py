@@ -113,6 +113,9 @@ def _emit(node: ir.Expr) -> tuple[str, int]:
         # value is emitted as a multi-line ``def`` by ``assignment_line``.
         return _program_ternary(node.branches), _ATOM
 
+    if isinstance(node, ir.Str):
+        return repr(node.value), _ATOM
+
     if isinstance(node, ir.Placeholder):
         return "None  # placeholder", _ATOM
 
@@ -148,7 +151,10 @@ def assignment_line(define: ir.Define) -> str:
     prefix = ""
     if define.comment:
         prefix = "".join(f"# {line}\n" for line in define.comment.splitlines())
-    if isinstance(define.value, ir.Program):
+    # A program-bodied *function* (``σ_c(e) := <if/elif/else>``) becomes a
+    # multi-line ``def``; a program assigned to a plain variable (e.g. an inline
+    # ``if(cond, a, b)``) has no params and emits an inline conditional instead.
+    if isinstance(define.value, ir.Program) and define.params:
         return prefix + _program_def(define)
     rhs = expr_to_str(define.value)
     if define.params:

@@ -52,6 +52,9 @@ FUNCTIONS = {
     "sqrt": "math.sqrt",
     "abs": "abs",
     "length": "len",
+    "ceil": "math.ceil",
+    "floor": "math.floor",
+    "round": "round",
     # Element-wise (2-arg) min/max so they broadcast over arrays under a
     # vectorize 'arrow'; ``np.minimum``/``np.maximum`` also work on scalars.
     "min": "np.minimum",

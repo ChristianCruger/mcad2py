@@ -76,11 +76,22 @@ When adding features, respect this boundary — parsers produce IR, backends con
   `min`/`max` → `np.minimum`/`np.maximum` (2-arg clamps that broadcast). The one case the identity
   can't fix — a *branching* program applied to an array — would need `np.vectorize(fn)`; not yet done.
 - `<ml:if>` (with `<ml:test>`/`<ml:then>`/`<ml:elseif>`/`<ml:else>`, branch bodies wrapped in
-  `<ml:program>`) = a Mathcad program → `ir.Program` (branch list). A `Define` whose value is a
-  `Program` emits a real `def` with `if/elif/else return`s (not a `lambda`) to preserve branching.
+  `<ml:program>`) = a Mathcad *block* program → `ir.Program` (branch list). A `Define` whose value is
+  a `Program` **and has params** (`σ_c(e) := …`) emits a real `def` with `if/elif/else return`s (not
+  a `lambda`) to preserve branching; a `Program` assigned to a plain variable (no params) emits an
+  inline conditional-expression chain instead.
+- Mathcad's **inline** `if(cond, then, else)` is a different construct: `<ml:apply>` with an
+  `<ml:id labels="KEYWORD">if</ml:id>` head and a `<ml:sequence>` of the three args. It's parsed into
+  the same `ir.Program` (branches `[(cond, then), (None, else)]`) so it renders as a ternary
+  (`then if cond else else`) — *not* a call to a Python `if`.
+- `<ml:str>` = a Mathcad string literal → `ir.Str` → a Python `str` (emitted via `repr`, so unicode
+  like `"tværsnit overudnyttet"` survives). No units.
 - `<ml:range>` = `start, next .. stop` → `arange(start, stop, step)` (step = `next - start`), a
   unit-aware, **inclusive** range runtime helper. Plain numbers → a NumPy array; unit-bearing bounds
   (`z_plot := -h/2, … .. h/2`) → a Pint array (steps over magnitudes in `start`'s unit, reattaches it).
+  Two XML shapes: an explicit step wraps `start, next` in a `<ml:sequence>` (stop follows); a
+  **stepless** range (`i := 1 .. n`) is just two bare children `start, stop` with no `<sequence>` →
+  step defaults to 1.
 - `<ml:apply><ml:integral/> <ml:lambda> <ml:lowerBound> <ml:upperBound>>` = a definite **numeric**
   integral (`∫…=`) → `integral(lambda z: <body>, lo, hi)`, a unit-aware `scipy.integrate.quad`
   wrapper (integrates magnitudes, reattaches `integrand_unit * var_unit`; assumes a consistent
@@ -181,6 +192,12 @@ shrinkage): the `linterp`/`transpose` pair (`k_h` interpolates and extrapolates,
 a Given/Find block whose solver region is a *function definition* `f(a, b) := find(x)` (the constraint
 `a·x²−b = cos(x)` closing over the params) — it asserts the emitted `def f(a, b):`, that `f(1, 3)`
 recovers the cached root `1.6957…`, and that `f` is reusable with other arguments.
+[tests/test_beton_vridning.py](tests/test_beton_vridning.py) covers the leaf features of
+`references/Beton_Vridning.mcdx` (torsion): the stepless range `i := 1 .. n` (→ `arange(1, n, 1)`),
+the `ceil`/`floor`/`round` builtins, and an inline `if(cond, "ok", "tværsnit overudnyttet")` rendered
+as a ternary with string literals. It asserts the generated source, not execution — the whole sheet
+needs the range-indexed vector backbone (see "Not yet supported") before an execute-vs-`result.xml`
+test is possible.
 
 **Reference files are test fixtures — don't edit them.** Tests compare generated output against each
 `.mcdx`'s cached `result.xml`; changing a worksheet (e.g. a `phi` value) silently shifts every
@@ -188,6 +205,13 @@ dependent cached number and breaks the hardcoded expected values.
 
 ## Not yet supported (next targets)
 
+**Range-indexed vector assignment** (the `Beton_Vridning.mcdx` backbone): a `Define` whose *target*
+is an `<ml:indexer>` (`T_Ed[i] := 400`, `A_sl[i] := …`) with `i` a range — Mathcad loops `i` over the
+range and **builds a vector** (0-based origin, so `i := 1 .. n` leaves index 0 defaulted). Currently
+the indexer target is mis-read as a scalar name (`T_Edi`) and downstream `X[i]` reads dangle. The
+stepless range, `ceil`, inline `if`, and string literals it also uses *are* done (see
+[tests/test_beton_vridning.py](tests/test_beton_vridning.py)); the whole-sheet
+execute-and-compare-to-`result.xml` test lands with this vector backbone.
 General `rows×cols` matrices (vectors + transpose work). `find` solve blocks work;
 `minerr`/`maximize`/`minimize` don't yet.
 A *branching* program applied to an array still needs `np.vectorize(fn)` (the `vectorize()` identity

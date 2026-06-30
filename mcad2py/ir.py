@@ -209,6 +209,13 @@ class Equation(Expr):
 
 
 @dataclass
+class Str(Expr):
+    """A Mathcad string literal (``<ml:str>``) -> a Python ``str``."""
+
+    value: str
+
+
+@dataclass
 class Placeholder(Expr):
     """An empty Mathcad placeholder slot."""
 
