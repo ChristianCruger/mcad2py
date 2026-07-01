@@ -93,10 +93,14 @@ class Parens(Expr):
 
 @dataclass
 class MatrixLiteral(Expr):
-    """A Mathcad matrix/vector literal, stored row-major.
+    """A Mathcad matrix/vector literal.
 
-    Column and row vectors (``rows == 1`` or ``cols == 1``) emit a 1-D NumPy /
-    Pint array so they index, broadcast, and ``len()`` like Mathcad vectors.
+    ``elements`` is stored in the XML's own order, which is **column-major**
+    (confirmed against Prime's ``<ml:matrix>``: the first ``rows`` elements
+    are column 0, the next ``rows`` are column 1, etc.) -- the ``matrix()``
+    runtime helper reshapes accordingly. Column and row vectors (``rows == 1``
+    or ``cols == 1``) emit a 1-D NumPy/Pint array instead, via ``col()``, so
+    they index, broadcast, and ``len()`` like Mathcad vectors.
     """
 
     rows: int
@@ -383,6 +387,31 @@ class Plot(Region):
 
     traces: list[PlotTrace]
     domain: str | None = None
+
+
+@dataclass
+class GridPlot(Region):
+    """A Mathcad contour or 3D plot (``<contourPlot>``/``<plot3D>``) -> a
+    matplotlib ``contourf``/``plot_surface`` (or scatter) figure.
+
+    Unlike ``<xyPlot>``, there's a single plot equation resolving to the whole
+    surface, in one of two shapes (see ``resolve_plot_grid`` in runtime.py):
+    an expression referencing exactly two *range* variables (defined earlier
+    in the sheet as ``<ml:range>``s, not plain vectors), anywhere in it --
+    a direct call (``f(x0, y0)``) or a composition (``sigma(epsilon(x0*mm,
+    y0*mm))``) alike -- since Mathcad takes the ranges' outer product rather
+    than zipping them; ``mesh_names`` holds ``(x_name, y_name)`` (in order of
+    first appearance) for this case, and codegen wraps the whole expression in
+    ``mesh_grid(lambda x, y: <expr>, x, y)``. Or a bare matrix/mesh reference
+    (``mesh_names`` is ``None``, ``expr`` is evaluated as-is and resolved at
+    runtime). ``threed`` distinguishes ``<plot3D>`` (``mplot3d``) from
+    ``<contourPlot>``.
+    """
+
+    expr: Expr
+    z_unit: Expr | None = None
+    mesh_names: tuple[str, str] | None = None
+    threed: bool = False
 
 
 @dataclass

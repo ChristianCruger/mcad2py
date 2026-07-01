@@ -69,9 +69,10 @@ FUNCTIONS = {
 }
 
 # Runtime helpers that are *called by name* in generated code (so a Call to one
-# triggers its import): the angle-aware trig wrappers plus ``linterp`` (Mathcad's
-# linear interpolation, which reorders args and is unit-aware -- see runtime.py).
-RUNTIME_IMPORTS = ("sin", "cos", "tan", "cot", "linterp")
+# triggers its import): the angle-aware trig wrappers, ``linterp`` (Mathcad's
+# linear interpolation, which reorders args and is unit-aware), and
+# ``CreateMesh`` (a 3D-plot grid builder) -- see runtime.py.
+RUNTIME_IMPORTS = ("sin", "cos", "tan", "cot", "linterp", "CreateMesh")
 
 # Mathcad symbolic command keyword (first id of a <ml:command> sequence) ->
 # SymPy callable. Symbolic regions emit ``<callable>(expr, *args)``.

@@ -10,6 +10,7 @@ first. This keeps generated code clean (``tan(phi)`` instead of
 from __future__ import annotations
 
 import math
+from typing import NamedTuple
 
 import numpy as np
 
@@ -64,6 +65,26 @@ def col(*elements: object) -> object:
         ]
         return reg.Quantity(np.array(mags, dtype=float), unit)
     return np.array(elements)
+
+
+def matrix(rows: int, cols: int, *elements: object) -> object:
+    """Build a genuine ``rows``x``cols`` Mathcad matrix (both > 1).
+
+    ``elements`` arrive in Prime's own ``<ml:matrix>`` order, which is
+    column-major, hence ``order="F"`` on the reshape. Unit handling mirrors
+    ``col()``: Mathcad requires one consistent unit across an entire matrix
+    (there's no per-column unit), so a single unit conversion covers it.
+    """
+    first = next((e for e in elements if hasattr(e, "units")), None)
+    if first is not None:
+        reg = first._REGISTRY
+        unit = first.units
+        mags = [
+            (e.to(unit).magnitude if hasattr(e, "units") else e) for e in elements
+        ]
+        arr = np.array(mags, dtype=float).reshape((rows, cols), order="F")
+        return reg.Quantity(arr, unit)
+    return np.array(elements, dtype=float).reshape((rows, cols), order="F")
 
 
 def _magnitudes(v):
@@ -176,6 +197,57 @@ def integral(func, lower, upper):
     return value
 
 
+def double_integral(func, x_lower, x_upper, y_lower, y_upper):
+    """Definite rectangular double integral (nested Mathcad ``∫∫…=``) via
+    ``scipy.integrate.dblquad``.
+
+    ``func(x, y)`` is the integrand; ``x`` ranges ``[x_lower, x_upper]`` and
+    ``y`` ranges ``[y_lower, y_upper]`` -- constant bounds, i.e. a rectangular
+    domain (the only shape Mathcad's nested-``∫`` UI can express, since the
+    inner integral's bounds can't reference the outer variable). Pint-aware
+    like :func:`integral`: magnitudes are integrated in ``x_lower``/``y_lower``'s
+    units and ``integrand_unit * x_unit * y_unit`` is reattached.
+    """
+    from scipy.integrate import dblquad
+
+    x_unit = getattr(x_lower, "units", None)
+    y_unit = getattr(y_lower, "units", None)
+    if x_unit is not None or y_unit is not None:
+        xlo = x_lower.to(x_unit).magnitude if x_unit is not None else float(x_lower)
+        xhi = x_upper.to(x_unit).magnitude if x_unit is not None else float(x_upper)
+        ylo = y_lower.to(y_unit).magnitude if y_unit is not None else float(y_lower)
+        yhi = y_upper.to(y_unit).magnitude if y_unit is not None else float(y_upper)
+
+        def _dequantize(x, y):
+            xq = x * x_unit if x_unit is not None else x
+            yq = y * y_unit if y_unit is not None else y
+            return xq, yq
+
+        probe = func(*_dequantize(xlo, ylo))
+        f_unit = getattr(probe, "units", None)
+        if f_unit is not None:
+            reg = probe._REGISTRY
+            value, _ = dblquad(
+                lambda y, x: func(*_dequantize(x, y)).to(f_unit).magnitude,
+                xlo, xhi, ylo, yhi,
+            )
+            unit = f_unit
+            if x_unit is not None:
+                unit = unit * x_unit
+            if y_unit is not None:
+                unit = unit * y_unit
+            return reg.Quantity(value, unit)
+        value, _ = dblquad(
+            lambda y, x: float(func(*_dequantize(x, y))), xlo, xhi, ylo, yhi
+        )
+        return value
+    value, _ = dblquad(
+        lambda y, x: float(func(x, y)),
+        float(x_lower), float(x_upper), float(y_lower), float(y_upper),
+    )
+    return value
+
+
 def summation(func, lower, upper):
     """Inclusive discrete sum ``Σ_{i=lower}^{upper} func(i)`` (Mathcad sum).
 
@@ -191,6 +263,35 @@ def summation(func, lower, upper):
     return total
 
 
+def _coarse_presearch(wrapped, x0, n_samples=15, seed=0):
+    """Find a better `fsolve` seed by sampling broadly around ``x0``.
+
+    Some solve blocks land their initial guess deep inside a flat plateau of
+    a piecewise model (e.g. every point of a stress-strain law's saturated
+    branch, all across the domain) where every unknown's finite-difference
+    derivative is exactly zero -- ``fsolve``'s local Newton step can't move
+    at all from there. Mathcad's own solver uses a more global algorithm and
+    escapes such regions; this widened random search (kept at ``x0`` if
+    nothing better turns up) is a cheap approximation, and only runs once
+    ``fsolve`` has already failed from ``x0`` itself.
+
+    Each sample costs one full residual evaluation, which for a residual
+    built from double integrals can itself take a few seconds (Pint's
+    per-call overhead over the tens of thousands of quadrature points a
+    nested/``dblquad`` integration needs), so ``n_samples`` is kept modest --
+    a worst case of a few minutes total, not tens.
+    """
+    rng = np.random.default_rng(seed)
+    scale = np.maximum(np.abs(x0), 1e-6) * 10
+    best_x, best_cost = x0, math.inf
+    for _ in range(n_samples):
+        trial = x0 + rng.uniform(-1.0, 1.0, size=x0.shape) * scale
+        cost = sum(v * v for v in wrapped(trial))
+        if cost < best_cost:
+            best_cost, best_x = cost, trial
+    return best_x
+
+
 def solve_block(residual, guesses):
     """Numeric solve block (Mathcad Given/Find) via ``scipy.optimize.fsolve``.
 
@@ -200,14 +301,24 @@ def solve_block(residual, guesses):
     unknowns are solved as bare magnitudes in their guess units, residuals are
     compared in base units, and the solution is returned with units restored --
     so generated code can pass quantities straight through.
+
+    If ``fsolve`` doesn't land on an actual root of ``guesses`` (e.g. the guess
+    sits on a flat plateau with a locally zero Jacobian -- ``fsolve`` can
+    report success there too, converged only in the sense that it stopped
+    moving, not that the residual is small), :func:`_coarse_presearch` looks
+    for a better starting point and ``fsolve`` is retried from there once. If
+    that still doesn't confirm convergence, the best candidate found is
+    returned anyway with a printed warning, rather than retrying further --
+    each attempt can itself take a couple of minutes for solve blocks built
+    on double integrals, so this is capped at one retry to keep a bad case
+    bounded at a few minutes instead of open-ended.
     """
     from scipy.optimize import fsolve
 
     units = [getattr(g, "units", None) for g in guesses]
-    x0 = [
-        float(g.magnitude) if u is not None else float(g)
-        for g, u in zip(guesses, units)
-    ]
+    x0 = np.array(
+        [float(g.magnitude) if u is not None else float(g) for g, u in zip(guesses, units)]
+    )
 
     def _wrapped(x):
         vals = [
@@ -223,7 +334,35 @@ def solve_block(residual, guesses):
             )
         return out
 
-    solution = np.atleast_1d(fsolve(_wrapped, x0))
+    def _cost(x):
+        return sum(v * v for v in _wrapped(x))
+
+    threshold = 1e-8 * max(_cost(x0), 1.0)
+
+    solution, _, ier, _ = fsolve(_wrapped, x0, full_output=True)
+    best_x, best_cost = solution, _cost(solution)
+
+    if ier != 1 or best_cost > threshold:
+        print(
+            "solve_block: initial guess didn't converge to an actual root "
+            "(likely a flat region of the model); searching for a better "
+            "starting point. This can take a few minutes for solve blocks "
+            "built on double integrals -- it hasn't frozen.",
+            flush=True,
+        )
+        seeded = _coarse_presearch(_wrapped, x0)
+        candidate, _, _, _ = fsolve(_wrapped, seeded, full_output=True)
+        cost = _cost(candidate)
+        if cost < best_cost:
+            best_x, best_cost = candidate, cost
+        if best_cost > threshold:
+            print(
+                "solve_block: could not confirm convergence after retrying; "
+                "returning the best candidate found.",
+                flush=True,
+            )
+
+    solution = np.atleast_1d(best_x)
     return [
         (float(s) * u) if u is not None else float(s)
         for s, u in zip(solution, units)
@@ -277,6 +416,79 @@ def plot_axis(data, unit=None):
         return np.asarray(getattr(data, "magnitude", data), dtype=float)
     ratio = data / unit
     return np.asarray(getattr(ratio, "magnitude", ratio), dtype=float)
+
+
+class Mesh(NamedTuple):
+    """An (X, Y, Z) grid, as built by :func:`mesh_grid`/:func:`CreateMesh`.
+
+    A distinct type (rather than a bare tuple) so :func:`resolve_plot_grid`
+    can tell "already a grid" apart from "a matrix that still needs
+    resolving" without any ambiguity.
+    """
+
+    X: object
+    Y: object
+    Z: object
+
+
+def mesh_grid(func, xs, ys):
+    """Evaluate ``func(x, y)`` over every combination of ``xs``/``ys``.
+
+    Mathcad's contour/3D plots accept a function applied directly to two
+    *range* variables (not two matching-length vectors): the ranges are
+    implicitly combined as an outer product (a grid), not zipped elementwise.
+    Element-wise like :func:`sample` -- needed since a branching program
+    can't take an array -- but over the 2-D grid.
+    """
+    X, Y = np.meshgrid(xs, ys)
+    rows = [[func(x, y) for x in xs] for y in ys]
+    Z = col(*[v for row in rows for v in row])
+    if hasattr(Z, "units"):
+        Z = Z._REGISTRY.Quantity(Z.magnitude.reshape(len(ys), len(xs)), Z.units)
+    else:
+        Z = Z.reshape(len(ys), len(xs))
+    return Mesh(X, Y, Z)
+
+
+def CreateMesh(f, xlow, xhigh, ylow, yhigh, xdiv, ydiv):
+    """Mathcad's ``CreateMesh`` builtin: sample ``f`` over a regular grid.
+
+    ``xdiv``/``ydiv`` are the number of *divisions* (Mathcad's convention),
+    so each axis gets ``div + 1`` sample points.
+    """
+    xs = np.linspace(float(xlow), float(xhigh), int(xdiv) + 1)
+    ys = np.linspace(float(ylow), float(yhigh), int(ydiv) + 1)
+    return mesh_grid(f, xs, ys)
+
+
+def resolve_plot_grid(value):
+    """Resolve a contour/3D plot equation's value into ``(X, Y, Z, kind)``.
+
+    A Mathcad contour/3D plot's single equation can be: an already-built
+    :class:`Mesh` (from ``mesh_grid``/``CreateMesh``); a matrix with *exactly
+    3 columns*, Mathcad's documented convention for an irregular ``(x, y, z)``
+    point list (``kind="scatter"``); or any other matrix, treated as a grid of
+    z-values with the row/column index as the x/y coordinate
+    (``kind="grid"``).
+    """
+    if isinstance(value, Mesh):
+        return value.X, value.Y, value.Z, "grid"
+    mag = np.asarray(getattr(value, "magnitude", value))
+    if mag.ndim != 2:
+        raise ValueError(
+            "contour/3D plot equation resolved to a "
+            f"{mag.ndim}-D value; expected a Mesh or a 2-D matrix "
+            "(an (x,y,z) point list or a z-value grid)."
+        )
+    if mag.shape[1] == 3:
+        unit = getattr(value, "units", None)
+        cols = [
+            (value[:, i] if unit is not None else mag[:, i]) for i in range(3)
+        ]
+        return cols[0], cols[1], cols[2], "scatter"
+    rows, ncols = mag.shape
+    X, Y = np.meshgrid(np.arange(ncols), np.arange(rows))
+    return X, Y, value, "grid"
 
 
 def vectorize(value: object) -> object:

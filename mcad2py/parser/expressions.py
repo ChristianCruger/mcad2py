@@ -258,7 +258,8 @@ def _parse_integral_like(head_tag: str, rest: list[ET.Element]) -> ir.Expr:
 def _parse_matrix(elem: ET.Element) -> ir.Expr:
     rows = int(elem.get("rows", "0") or 0)
     cols = int(elem.get("cols", "0") or 0)
-    elements = [parse_expr(c) for c in elem]
+    # <ml:display> is a display-formatting hint, not a data element -- skip it.
+    elements = [parse_expr(c) for c in elem if localname(c.tag) != "display"]
     return ir.MatrixLiteral(rows=rows, cols=cols, elements=elements)
 
 

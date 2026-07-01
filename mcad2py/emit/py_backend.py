@@ -9,6 +9,7 @@ from .codegen import (
     declaration_lines,
     echo_expr,
     expr_to_str,
+    grid_plot_lines,
     header_lines,
     index_assign_line,
     plot_lines,
@@ -70,6 +71,9 @@ def _render_region(region: ir.Region) -> list[str]:
 
     if isinstance(region, ir.Plot):
         return ["", *plot_lines(region)]
+
+    if isinstance(region, ir.GridPlot):
+        return ["", *grid_plot_lines(region)]
 
     if isinstance(region, ir.UnsupportedRegion):
         return ["", f"# TODO unsupported region: {region.note}"]

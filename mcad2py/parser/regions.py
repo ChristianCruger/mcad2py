@@ -45,9 +45,15 @@ def parse_worksheet(
     def position(region: ET.Element) -> tuple[float, float]:
         return (_to_float(region.get("top")), _to_float(region.get("left")))
 
+    # Names defined as a Mathcad *range* (``x0 := -50, -49 .. 50``), tracked as
+    # we go so a later contour/3D plot equation can tell "``f(x0, y0)`` over two
+    # ranges" (needs an outer-product grid) apart from a plain call.
+    range_names: set[str] = set()
     for region in sorted(regions_elem, key=position):
-        parsed = _parse_region(region, text_resolver, image_resolver)
+        parsed = _parse_region(region, text_resolver, image_resolver, range_names)
         if parsed is not None:
+            if isinstance(parsed, ir.Define) and isinstance(parsed.value, ir.Range):
+                range_names.add(parsed.target.py)
             ws.regions.append(parsed)
     _inject_symbol_declarations(ws)
     return ws
@@ -57,6 +63,7 @@ def _parse_region(
     region: ET.Element,
     text_resolver: TextResolver | None,
     image_resolver: ImageResolver | None,
+    range_names: set[str],
 ) -> ir.Region | None:
     for child in region:
         tag = localname(child.tag)
@@ -69,7 +76,7 @@ def _parse_region(
         if tag == "solveblock":
             return _parse_solveblock(child)
         if tag == "plot":
-            return _parse_plot(child)
+            return _parse_plot(child, range_names)
     return None
 
 
@@ -309,15 +316,31 @@ def _decode_control_result(rl: str | None) -> ir.Expr | None:
     return ir.Number(nums[0])
 
 
-def _parse_plot(plot_elem: ET.Element) -> ir.Region:
-    """Parse a ``<plot><xyPlot>``: x/y axis equations paired into traces.
+def _parse_plot(plot_elem: ET.Element, range_names: set[str]) -> ir.Region:
+    """Parse a ``<plot>``: ``<xyPlot>``, ``<contourPlot>``, or ``<plot3D>``."""
+    xy = next((c for c in plot_elem if localname(c.tag) == "xyPlot"), None)
+    if xy is not None:
+        return _parse_xy_plot(xy)
+
+    contour = next((c for c in plot_elem if localname(c.tag) == "contourPlot"), None)
+    if contour is not None:
+        return _parse_grid_plot(contour, range_names, threed=False)
+
+    plot3d = next((c for c in plot_elem if localname(c.tag) == "plot3D"), None)
+    if plot3d is not None:
+        return _parse_grid_plot(plot3d, range_names, threed=True)
+
+    return ir.UnsupportedRegion(note="plot (unrecognized structure)")
+
+
+def _parse_xy_plot(xy: ET.Element) -> ir.Region:
+    """Parse an ``<xyPlot>``: x/y axis equations paired into traces.
 
     Each axis carries ``<plotEquations>``; each ``<plotEquation>`` is an
     expression ``<math>`` plus a unit/scale ``<math>``. Traces pair the x and y
     equations by index (the single-equation axis is shared across traces).
     """
-    xy = next((c for c in plot_elem if localname(c.tag) == "xyPlot"), None)
-    axes = next((c for c in xy if localname(c.tag) == "axes"), None) if xy is not None else None
+    axes = next((c for c in xy if localname(c.tag) == "axes"), None)
     if axes is None:
         return ir.UnsupportedRegion(note="plot (unrecognized structure)")
 
@@ -339,6 +362,77 @@ def _parse_plot(plot_elem: ET.Element) -> ir.Region:
 
     domain = _detect_domain(x_eqs + y_eqs)
     return ir.Plot(traces=traces, domain=domain)
+
+
+def _parse_grid_plot(
+    elem: ET.Element, range_names: set[str], *, threed: bool
+) -> ir.Region:
+    """Parse a ``<contourPlot>``/``<plot3D>``'s single plot equation.
+
+    ``<contourPlot>`` has one ``<plotEquation>`` directly inside it;
+    ``<plot3D>`` wraps it (and, in principle, siblings for multiple traces --
+    not seen in practice) in ``<plotEquations>``. Either way there's a single
+    expression plus an optional unit-override ``<math>``, unlike ``<xyPlot>``'s
+    per-axis equations.
+    """
+    pe = next((c for c in elem if localname(c.tag) == "plotEquation"), None)
+    if pe is None:
+        container = next(
+            (c for c in elem if localname(c.tag) == "plotEquations"), None
+        )
+        pe = (
+            next((c for c in container if localname(c.tag) == "plotEquation"), None)
+            if container is not None
+            else None
+        )
+    if pe is None:
+        return ir.UnsupportedRegion(note="plot (no equation)")
+
+    maths = [c for c in pe if localname(c.tag) == "math"]
+    if not maths or not len(maths[0]):
+        return ir.UnsupportedRegion(note="plot (no equation)")
+    expr = parse_expr(maths[0][0])
+    z_unit: ir.Expr | None = None
+    if len(maths) > 1 and len(maths[1]):
+        sub = maths[1][0]
+        if localname(sub.tag) != "placeholder":
+            z_unit = parse_expr(sub)
+
+    # An expression referencing exactly two ranges anywhere in it -- a direct
+    # call (f(x0, y0)) or a composition (sigma(epsilon(x0*mm, y0*mm))) alike
+    # -- needs a grid built from their outer product, not a plain call/zip.
+    free_ranges = _free_range_names(expr, range_names)
+    mesh_names: tuple[str, str] | None = (
+        (free_ranges[0], free_ranges[1]) if len(free_ranges) == 2 else None
+    )
+
+    # Anything besides the two shapes we actually know how to resolve at
+    # runtime -- an expression over exactly two ranges, or a bare Name (a
+    # matrix/Mesh variable, for resolve_plot_grid) -- is a plot equation we
+    # can't safely turn into a grid.
+    if mesh_names is None and not isinstance(expr, ir.Name):
+        return ir.UnsupportedRegion(note="plot (unrecognized structure)")
+
+    return ir.GridPlot(
+        expr=expr, z_unit=z_unit, mesh_names=mesh_names, threed=threed
+    )
+
+
+def _free_range_names(expr: ir.Expr, range_names: set[str]) -> list[str]:
+    """Distinct range-typed ``Name``s referenced in ``expr``, in order of
+    first appearance (pre-order) -- e.g. ``sigma(epsilon(x0*mm, y0*mm))``
+    over ``range_names={"x0", "y0"}`` -> ``["x0", "y0"]``.
+    """
+    seen: list[str] = []
+
+    def walk(node: ir.Expr) -> None:
+        if isinstance(node, ir.Name) and node.py in range_names and node.py not in seen:
+            seen.append(node.py)
+        for child in ir.child_exprs(node):
+            walk(child)
+
+    walk(expr)
+    return seen
 
 
 def _parse_plot_equations(

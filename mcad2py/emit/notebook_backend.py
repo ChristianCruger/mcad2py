@@ -18,6 +18,7 @@ from .codegen import (
     declaration_lines,
     echo_expr,
     expr_to_str,
+    grid_plot_lines,
     header_lines,
     index_assign_line,
     plot_lines,
@@ -91,6 +92,9 @@ def _render_region(region: ir.Region) -> nbformat.NotebookNode | None:
 
     if isinstance(region, ir.Plot):
         return nbformat.v4.new_code_cell("\n".join(plot_lines(region)))
+
+    if isinstance(region, ir.GridPlot):
+        return nbformat.v4.new_code_cell("\n".join(grid_plot_lines(region)))
 
     if isinstance(region, ir.UnsupportedRegion):
         return nbformat.v4.new_markdown_cell(f"> **TODO** unsupported region: {region.note}")

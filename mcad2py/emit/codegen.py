@@ -72,7 +72,7 @@ def _emit(node: ir.Expr) -> tuple[str, int]:
         elems = ", ".join(expr_to_str(e) for e in node.elements)
         if node.rows <= 1 or node.cols <= 1:  # vector -> 1-D array
             return f"col({elems})", _ATOM
-        return f"np.array([{elems}])  # TODO {node.rows}x{node.cols} matrix", _ATOM
+        return f"matrix({node.rows}, {node.cols}, {elems})", _ATOM
 
     if isinstance(node, ir.Index):
         base = _wrap(node.base, _ATOM, is_left=True, right_assoc=False)
@@ -88,6 +88,17 @@ def _emit(node: ir.Expr) -> tuple[str, int]:
         return f"lambda {', '.join(node.params)}: {expr_to_str(node.body)}", 0
 
     if isinstance(node, ir.Integral):
+        inner = _nested_double_integral(node)
+        if inner is not None:
+            outer_param = node.func.params[0]  # type: ignore[union-attr]
+            inner_param = inner.func.params[0]  # type: ignore[union-attr]
+            return (
+                f"double_integral(lambda {inner_param}, {outer_param}: "
+                f"{expr_to_str(inner.func.body)}, "  # type: ignore[union-attr]
+                f"{expr_to_str(inner.lower)}, {expr_to_str(inner.upper)}, "
+                f"{expr_to_str(node.lower)}, {expr_to_str(node.upper)})",
+                _ATOM,
+            )
         return (
             f"integral({expr_to_str(node.func)}, "
             f"{expr_to_str(node.lower)}, {expr_to_str(node.upper)})",
@@ -291,6 +302,58 @@ def plot_lines(region: ir.Plot) -> list[str]:
     return lines
 
 
+def grid_plot_lines(region: ir.GridPlot) -> list[str]:
+    """Emit a matplotlib figure for a contour (``<contourPlot>``) or 3D
+    (``<plot3D>``) plot.
+
+    The plot equation resolves to ``(X, Y, Z, kind)`` at runtime via
+    ``resolve_plot_grid`` -- ``kind`` is ``"grid"`` (a regular surface:
+    ``contourf``/``plot_surface``) or ``"scatter"`` (an irregular ``(x,y,z)``
+    point list -- Mathcad's 3-column-matrix convention -- rendered with
+    ``tricontourf``/a bare 3D scatter). An expression over two *ranges*
+    (``mesh_names`` set) is wrapped in a lambda over those two names and
+    passed to ``mesh_grid``, which takes their outer product first, since
+    Mathcad doesn't zip ranges elementwise -- this covers both a direct call
+    (``f(x0, y0)``) and a composition (``sigma(epsilon(x0*mm, y0*mm))``).
+    """
+    if region.mesh_names is not None:
+        x_name, y_name = region.mesh_names
+        value = (
+            f"mesh_grid(lambda {x_name}, {y_name}: {expr_to_str(region.expr)}, "
+            f"{x_name}, {y_name})"
+        )
+    else:
+        value = expr_to_str(region.expr)
+    z_unit = expr_to_str(region.z_unit) if region.z_unit is not None else "None"
+
+    lines = [
+        f"_X, _Y, _Z, _kind = resolve_plot_grid({value})",
+        f"_Xs, _Ys, _Zs = plot_axis(_X), plot_axis(_Y), plot_axis(_Z, {z_unit})",
+    ]
+    if region.threed:
+        lines += [
+            "_fig = plt.figure()",
+            "_ax = _fig.add_subplot(projection='3d')",
+            "if _kind == 'scatter':",
+            "    _ax.scatter(_Xs, _Ys, _Zs)",
+            "else:",
+            "    _ax.plot_surface(_Xs, _Ys, _Zs, cmap='viridis')",
+        ]
+    else:
+        lines += [
+            "_fig, _ax = plt.subplots()",
+            "if _kind == 'scatter':",
+            "    _cs = _ax.tricontourf(_Xs, _Ys, _Zs)",
+            "    _ax.tricontour(_Xs, _Ys, _Zs, colors='k', linewidths=0.5)",
+            "else:",
+            "    _cs = _ax.contourf(_Xs, _Ys, _Zs)",
+            "    _ax.contour(_Xs, _Ys, _Zs, colors='k', linewidths=0.5)",
+            "plt.colorbar(_cs, ax=_ax)",
+        ]
+    lines.append("plt.show()")
+    return lines
+
+
 def _is_domain(expr: ir.Expr, domain: str | None) -> bool:
     return isinstance(expr, ir.Name) and expr.py == domain
 
@@ -390,7 +453,7 @@ def header_lines(ws: ir.Worksheet) -> list[str]:
     lines = ["import math"]
     if _uses_numpy(ws):
         lines.append("import numpy as np")
-    if any(isinstance(r, ir.Plot) for r in ws.regions):
+    if any(isinstance(r, (ir.Plot, ir.GridPlot)) for r in ws.regions):
         lines.append("import matplotlib.pyplot as plt")
     lines.append("import pint")
     sympy_names = _sympy_imports(ws)
@@ -404,8 +467,9 @@ def header_lines(ws: ir.Worksheet) -> list[str]:
     if runtime:
         order = [
             *RUNTIME_IMPORTS,
-            "col", "arange", "index_build", "vectorize", "transpose",
-            "integral", "summation", "solve_block", "sample", "plot_axis",
+            "col", "matrix", "arange", "index_build", "vectorize", "transpose",
+            "integral", "double_integral", "summation", "solve_block",
+            "sample", "plot_axis", "mesh_grid", "resolve_plot_grid",
         ]
         names = ", ".join(n for n in order if n in runtime)
         lines.append(f"from mcad2py.runtime import {names}")
@@ -414,14 +478,16 @@ def header_lines(ws: ir.Worksheet) -> list[str]:
 
 
 def _uses_numpy(ws: ir.Worksheet) -> bool:
-    """True if the generated module needs ``np`` (arrays, ranges, np.* calls)."""
+    """True if the generated module needs ``np`` directly (``np.*`` calls).
+
+    Matrices/vectors/ranges go through the ``matrix()``/``col()``/``arange()``
+    runtime helpers, which hide NumPy internally -- the generated script only
+    needs a bare ``np.`` for things like the ``min``/``max`` builtins mapping
+    to ``np.minimum``/``np.maximum``.
+    """
     for region in ws.regions:
         for node in _region_exprs(region):
             for sub in _walk(node):
-                # General rows×cols matrices emit a bare ``np.array([...])``;
-                # vectors/ranges go through the col()/arange() helpers instead.
-                if isinstance(sub, ir.MatrixLiteral) and min(sub.rows, sub.cols) > 1:
-                    return True
                 if isinstance(sub, ir.Call) and FUNCTIONS.get(sub.func, "").startswith("np."):
                     return True
     return False
@@ -445,6 +511,7 @@ def _sympy_imports(ws: ir.Worksheet) -> set[str]:
 def _used_runtime(ws: ir.Worksheet) -> set[str]:
     """Runtime-helper names the generated module imports (trig, col, vectorize)."""
     found: set[str] = set()
+    integrals: list[ir.Integral] = []
     for region in ws.regions:
         if isinstance(region, ir.SolveBlock):
             found.add("solve_block")
@@ -452,12 +519,16 @@ def _used_runtime(ws: ir.Worksheet) -> set[str]:
             found.add("index_build")
         if isinstance(region, ir.Plot):
             found.update(("sample", "plot_axis"))
+        if isinstance(region, ir.GridPlot):
+            found.update(("resolve_plot_grid", "plot_axis"))
+            if region.mesh_names is not None:
+                found.add("mesh_grid")
         for node in _region_exprs(region):
             for sub in _walk(node):
                 if isinstance(sub, ir.Call) and sub.func in RUNTIME_IMPORTS:
                     found.add(sub.func)
                 elif isinstance(sub, ir.MatrixLiteral):
-                    found.add("col")
+                    found.add("col" if sub.rows <= 1 or sub.cols <= 1 else "matrix")
                 elif isinstance(sub, ir.Range):
                     found.add("arange")
                 elif isinstance(sub, ir.Vectorize):
@@ -465,9 +536,18 @@ def _used_runtime(ws: ir.Worksheet) -> set[str]:
                 elif isinstance(sub, ir.Transpose):
                     found.add("transpose")
                 elif isinstance(sub, ir.Integral):
-                    found.add("integral")
+                    integrals.append(sub)
                 elif isinstance(sub, ir.Summation):
                     found.add("summation")
+    # A nested (rectangular double) Integral emits one double_integral() call,
+    # not two integral() calls -- so its inner Integral isn't independently used.
+    nested = {id(n): _nested_double_integral(n) for n in integrals}
+    absorbed = {id(inner) for inner in nested.values() if inner is not None}
+    for n in integrals:
+        if nested[id(n)] is not None:
+            found.add("double_integral")
+        elif id(n) not in absorbed:
+            found.add("integral")
     return found
 
 
@@ -492,6 +572,8 @@ def _region_exprs(region: ir.Region) -> list[ir.Expr]:
         for t in region.traces:
             plot_exprs += [t.x, t.y]
         return plot_exprs
+    if isinstance(region, ir.GridPlot):
+        return [region.expr]
     return []
 
 
@@ -501,3 +583,32 @@ def _walk(node: ir.Expr) -> list[ir.Expr]:
     for child in ir.child_exprs(node):
         out.extend(_walk(child))
     return out
+
+
+def _nested_double_integral(node: ir.Integral) -> ir.Integral | None:
+    """If ``node`` is a rectangular double integral -- its integrand is itself
+    a definite :class:`ir.Integral` whose bounds don't reference the outer
+    integration variable -- return that inner ``Integral``; else ``None``.
+
+    Mathcad's nested-``∫`` UI can only express constant (variable-independent)
+    bounds for the inner integral, so this is the only shape a nested Integral
+    can take; when it holds we emit a single ``double_integral(...)`` call
+    (``scipy.integrate.dblquad``) instead of nested ``integral(lambda …)``.
+    """
+    if not isinstance(node.func, ir.Lambda) or len(node.func.params) != 1:
+        return None
+    inner = node.func.body
+    if not isinstance(inner, ir.Integral):
+        return None
+    if not isinstance(inner.func, ir.Lambda) or len(inner.func.params) != 1:
+        return None
+    outer_var = node.func.params[0]
+    if _references_name(inner.lower, outer_var) or _references_name(
+        inner.upper, outer_var
+    ):
+        return None
+    return inner
+
+
+def _references_name(node: ir.Expr, name: str) -> bool:
+    return any(isinstance(n, ir.Name) and n.py == name for n in _walk(node))
