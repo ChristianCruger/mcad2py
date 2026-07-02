@@ -121,12 +121,22 @@ def test_matrix_display_hint_is_not_a_data_element():
 
 
 def test_only_z_column_has_units_on_m2():
+    # M2 tags only its z column with units (m); x/y are bare numbers. A matrix
+    # with genuinely mixed unit-ness is kept *per element* (an object array), as
+    # Mathcad does -- the same behaviour a strain matrix ``[1, x, y]`` relies on.
+    # It still resolves to a scatter and plots correctly (see the scatter tests).
+    import numpy as np
+    from mcad2py.runtime import resolve_plot_grid
+
     ns = _exec()
     M2 = ns["M2"]
-    assert hasattr(M2, "units")  # matrix() needs one consistent unit overall
-    ureg = M2._REGISTRY
-    m = M2.to(ureg.m).magnitude
-    assert list(m[:, 0]) == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    assert M2.dtype == object and M2.shape == (10, 3)
+    _X, _Y, Z, kind = resolve_plot_grid(M2)
+    assert kind == "scatter"
+    # x/y columns are bare numbers; the z column carries metres.
+    assert list(np.asarray(M2[:, 0])) == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    ureg = ns["ureg"]
+    assert Z[0].to(ureg.m).magnitude == 3
 
 
 def test_three_column_matrix_resolves_to_scatter():

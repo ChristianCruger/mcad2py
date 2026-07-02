@@ -67,8 +67,9 @@ def test_inline_eval_uses_display_unit():
     ws = convert_worksheet(load_mcdx(REFERENCE))
     nb = to_notebook(ws)
     f_cd_cell = next(c for c in nb.cells if c.source.startswith("f_cd ="))
-    # define on first line, bare unit-converted echo on the last line (Mathcad "=")
-    assert f_cd_cell.source.splitlines()[-1] == "f_cd.to(ureg.MPa)"
+    # define on first line, bare unit-converted echo on the last line (Mathcad "=").
+    # ``disp`` converts to the display unit but tolerates a loose override.
+    assert f_cd_cell.source.splitlines()[-1] == "disp(f_cd, ureg.MPa)"
 
 
 def test_missing_file_raises():

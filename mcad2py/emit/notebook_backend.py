@@ -21,8 +21,10 @@ from .codegen import (
     grid_plot_lines,
     header_lines,
     index_assign_line,
+    multi_assign_lines,
     plot_lines,
     solve_block_lines,
+    status_control_line,
     symbolic_eval_expr,
 )
 
@@ -63,6 +65,13 @@ def _render_region(region: ir.Region) -> nbformat.NotebookNode | None:
             lines.append(echo)  # bare last line -> inline result, like Mathcad "="
         return nbformat.v4.new_code_cell("\n".join(lines))
 
+    if isinstance(region, ir.MultiAssign):
+        lines = multi_assign_lines(region)
+        echo = echo_expr(region)
+        if echo is not None:
+            lines.append(echo)
+        return nbformat.v4.new_code_cell("\n".join(lines))
+
     if isinstance(region, ir.ComboBoxAssign):
         return nbformat.v4.new_code_cell("\n".join(combobox_assign_lines(region)))
 
@@ -76,6 +85,9 @@ def _render_region(region: ir.Region) -> nbformat.NotebookNode | None:
     if isinstance(region, ir.Evaluate):
         echo = echo_expr(region)
         return nbformat.v4.new_code_cell(echo) if echo is not None else None
+
+    if isinstance(region, ir.StatusControl):
+        return nbformat.v4.new_code_cell(status_control_line(region))
 
     if isinstance(region, ir.SymbolDeclarations):
         return nbformat.v4.new_code_cell("\n".join(declaration_lines(region)))

@@ -89,14 +89,16 @@ def parse_expr(elem: ET.Element) -> ir.Expr:
         return _parse_if(elem)
 
     if tag == "program":
-        # A program used as a *value* (e.g. ``σ_nd := <program with if>``). A
-        # single-statement program reduces to that statement's expression; a
-        # genuinely multi-line program (local assigns + return) isn't an
-        # expression we can inline yet.
+        # A program used as a *value*. A single-expression program (e.g.
+        # ``σ_nd := <program with one if>``) reduces to that expression (a
+        # ternary); a genuinely imperative program (local assigns, loops,
+        # ``return``, ``tryCatch``) becomes a ProgramBlock emitted as a ``def``.
         kids = list(elem)
+        if any(localname(k.tag) in _STMT_TAGS for k in kids) or len(kids) > 1:
+            return _parse_program_block(elem)
         if len(kids) == 1:
             return parse_expr(kids[0])
-        return ir.Unsupported(note="multi-line program", raw=_summarize(elem))
+        return ir.Placeholder()
 
     if tag == "range":
         return _parse_range(elem)
@@ -141,9 +143,18 @@ def _parse_apply(elem: ET.Element) -> ir.Expr:
             return ir.Program(branches=branches)
         return ir.Call(func=name, args=_call_args(rest), role=head.get("labels", "FUNCTION"))
 
-    # Element access: <apply><indexer/> <base/> <index/>  (0-based).
+    # Element access: <apply><indexer/> <base/> <index/>  (0-based). A
+    # ``<sequence>`` of two indices is a matrix element ``M[i, j]``.
     if head_tag == "indexer":
-        return ir.Index(base=parse_expr(rest[0]), index=parse_expr(rest[1]))
+        base = parse_expr(rest[0])
+        idx_elem = rest[1]
+        if localname(idx_elem.tag) == "sequence":
+            parts = list(idx_elem)
+            if len(parts) == 2:
+                return ir.Index2D(
+                    base=base, row=parse_expr(parts[0]), col=parse_expr(parts[1])
+                )
+        return ir.Index(base=base, index=parse_expr(idx_elem))
 
     # Element-wise 'arrow': <apply><vectorize/> <expr/>.
     if head_tag == "vectorize":
@@ -152,6 +163,10 @@ def _parse_apply(elem: ET.Element) -> ir.Expr:
     # Matrix/vector transpose: <apply><transpose/> <operand/>.
     if head_tag == "transpose":
         return ir.Transpose(operand=parse_expr(rest[0]))
+
+    # Column extraction A^<i>: <apply><matcol/> <base/> <index/>.
+    if head_tag == "matcol":
+        return ir.MatCol(base=parse_expr(rest[0]), index=parse_expr(rest[1]))
 
     # Percent postfix: <apply><percent/> <operand/>  ==  operand / 100.
     if head_tag == "percent":
@@ -165,6 +180,11 @@ def _parse_apply(elem: ET.Element) -> ir.Expr:
     # Unit scaling: <apply><scale/> <value/> <unit/>
     if head_tag == "scale":
         value = parse_expr(rest[0])
+        # A placeholder unit (Mathcad's "no unit" slot, e.g. a dimensionless data
+        # table column of strings/numbers) means the value stands alone -- wrapping
+        # it in a Quantity would emit ``<value> * None``.
+        if localname(rest[1].tag) == "placeholder":
+            return value
         unit = parse_expr(rest[1])
         return ir.Quantity(value=value, unit=unit)
 
@@ -251,6 +271,10 @@ def _parse_integral_like(head_tag: str, rest: list[ET.Element]) -> ir.Expr:
             upper = parse_expr(child[0])
     if func is None:
         return ir.Unsupported(note=f"apply/{head_tag} (no integrand)")
+    # A bare ``Σ`` with no index variable and no bounds (empty placeholders) sums
+    # every element of an already-built vector -> a VectorSum, not an indexed sum.
+    if head_tag == "summation" and not func.params:
+        return ir.VectorSum(operand=func.body)
     cls = ir.Integral if head_tag == "integral" else ir.Summation
     return cls(func=func, lower=lower, upper=upper)
 
@@ -322,6 +346,73 @@ def _parse_range(elem: ET.Element) -> ir.Expr:
     if len(seq_items) > 1:
         step = ir.BinOp(op="sub", left=parse_expr(seq_items[1]), right=start)
     return ir.Range(start=start, stop=stop, step=step)
+
+
+# Program-body child tags that mark an *imperative* (multi-line) program, as
+# opposed to a single value expression (which reduces to a ternary).
+_STMT_TAGS = frozenset({"localDefine", "for", "return", "tryCatch"})
+
+
+def _parse_program_block(elem: ET.Element) -> ir.ProgramBlock:
+    """Parse an imperative ``<ml:program>`` into a :class:`ir.ProgramBlock`."""
+    return ir.ProgramBlock(statements=[_parse_stmt(c) for c in elem])
+
+
+def _parse_stmt(child: ET.Element) -> ir.Stmt:
+    tag = localname(child.tag)
+    if tag == "localDefine":
+        kids = list(child)
+        return ir.LocalAssign(target=parse_expr(kids[0]), value=parse_expr(kids[1]))
+    if tag == "for":
+        kids = list(child)
+        var = _parse_id(kids[0])
+        return ir.ForLoop(
+            var=var,  # type: ignore[arg-type]
+            iterable=parse_expr(kids[1]),
+            body=_parse_program_block(kids[2]),
+        )
+    if tag == "if":
+        branches: list[tuple[ir.Expr | None, ir.ProgramBlock]] = []
+        _collect_stmt_branches(child, branches)
+        return ir.IfStmt(branches=branches)
+    if tag == "return":
+        kids = list(child)
+        return ir.Return(value=parse_expr(kids[0]) if kids else ir.Placeholder())
+    if tag == "tryCatch":
+        kids = list(child)
+        return ir.TryCatch(
+            body=_parse_program_block(kids[0]),
+            handler=_parse_program_block(kids[1]),
+        )
+    # A bare expression as a statement is the program's (or branch's) value --
+    # Mathcad's implicit return.
+    return ir.Return(value=parse_expr(child))
+
+
+def _collect_stmt_branches(
+    elem: ET.Element, branches: list[tuple[ir.Expr | None, ir.ProgramBlock]]
+) -> None:
+    """Collect statement-form if/elseif/else branches (bodies are blocks)."""
+    test: ir.Expr | None = None
+    for child in elem:
+        ctag = localname(child.tag)
+        if ctag == "test":
+            test = parse_expr(child[0]) if len(child) else None
+        elif ctag == "then":
+            branches.append((test, _stmt_block(child)))
+        elif ctag in ("elseif", "alsoif"):
+            _collect_stmt_branches(child, branches)
+        elif ctag == "else":
+            branches.append((None, _stmt_block(child)))
+
+
+def _stmt_block(elem: ET.Element) -> ir.ProgramBlock:
+    """The block inside a ``<ml:then>``/``<ml:else>`` (wrapped in a program)."""
+    inner = elem[0] if len(elem) else None
+    if inner is not None and localname(inner.tag) == "program":
+        return _parse_program_block(inner)
+    stmts = [ir.Return(value=parse_expr(inner))] if inner is not None else []
+    return ir.ProgramBlock(statements=stmts)
 
 
 def _summarize(elem: ET.Element) -> str:

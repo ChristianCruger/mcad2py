@@ -12,8 +12,10 @@ from .codegen import (
     grid_plot_lines,
     header_lines,
     index_assign_line,
+    multi_assign_lines,
     plot_lines,
     solve_block_lines,
+    status_control_line,
     symbolic_eval_expr,
 )
 
@@ -42,6 +44,13 @@ def _render_region(region: ir.Region) -> list[str]:
             out.append(f"print({echo})")
         return out
 
+    if isinstance(region, ir.MultiAssign):
+        out = ["", *multi_assign_lines(region)]
+        echo = echo_expr(region)
+        if echo is not None:
+            out.append(f"print({echo})")
+        return out
+
     if isinstance(region, ir.ComboBoxAssign):
         return ["", *combobox_assign_lines(region)]
 
@@ -55,6 +64,9 @@ def _render_region(region: ir.Region) -> list[str]:
     if isinstance(region, ir.Evaluate):
         echo = echo_expr(region)
         return ["", f"print({echo})"] if echo is not None else []
+
+    if isinstance(region, ir.StatusControl):
+        return ["", status_control_line(region)]
 
     if isinstance(region, ir.SymbolDeclarations):
         return ["", *declaration_lines(region)]

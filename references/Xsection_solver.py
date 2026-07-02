@@ -4,7 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pint
 
-from mcad2py.runtime import col, arange, vectorize, integral, summation, solve_block, sample, plot_axis
+from mcad2py.runtime import disp, elementwise, mc_min, mc_max, col, arange, vectorize, integral, summation, solve_block, sample, plot_axis
 ureg = pint.UnitRegistry()
 
 
@@ -40,6 +40,7 @@ def sigma_c(e):
     elif e < 0:
         return -f_cd * (1 - (1 - e / epsilon_c2)**2)
     return 0 * ureg.MPa
+sigma_c = elementwise(sigma_c)
 
 # Plot:
 
@@ -73,18 +74,19 @@ n = len(Ø)
 print(n)
 
 A_s = vectorize(Ø**2 * (math.pi / 4 * (w / s)))
-print(A_s.to(ureg.mm**2))
+print(disp(A_s, ureg.mm**2))
 
 f_yk = 500 * ureg.MPa
 
 f_yd = f_yk / gamma_s
-print(f_yd.to(ureg.MPa))
+print(disp(f_yd, ureg.MPa))
 
 E_s = 200 * ureg.GPa
 
 # steel stress-strain relation:
 
-sigma_s = lambda e: np.maximum(np.minimum(E_s * e, f_yd), -f_yd)
+sigma_s = lambda e: mc_max(mc_min(E_s * e, f_yd), -f_yd)
+sigma_s = elementwise(sigma_s)
 
 # Strain function incl creep
 
@@ -130,9 +132,9 @@ e_1, k_1 = solve_block(_residuals_e_1_k_1, [e, k])
 
 # check:
 
-print((N_int(e_1, k_1)).to(ureg.kN))
+print(disp((N_int(e_1, k_1)), ureg.kN))
 
-print((M_int(e_1, k_1)).to(ureg.kN * ureg.m))
+print(disp((M_int(e_1, k_1)), ureg.kN * ureg.m))
 
 # Plot:
 
@@ -152,8 +154,8 @@ plt.show()
 # neutral axis:
 
 x = h / 2 + e_1 / k_1
-print(x.to(ureg.mm))
+print(disp(x, ureg.mm))
 
 # Stress in steel:
 
-print((vectorize(sigma_s(epsilon(z_s, e_1, k_1)))).to(ureg.MPa))
+print(disp((vectorize(sigma_s(epsilon(z_s, e_1, k_1)))), ureg.MPa))

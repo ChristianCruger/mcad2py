@@ -51,10 +51,13 @@ def parse_worksheet(
     range_names: set[str] = set()
     for region in sorted(regions_elem, key=position):
         parsed = _parse_region(region, text_resolver, image_resolver, range_names)
-        if parsed is not None:
-            if isinstance(parsed, ir.Define) and isinstance(parsed.value, ir.Range):
-                range_names.add(parsed.target.py)
-            ws.regions.append(parsed)
+        # A data table (<spec-table>) expands to one region per column.
+        for item in parsed if isinstance(parsed, list) else [parsed]:
+            if item is None:
+                continue
+            if isinstance(item, ir.Define) and isinstance(item.value, ir.Range):
+                range_names.add(item.target.py)
+            ws.regions.append(item)
     _inject_symbol_declarations(ws)
     return ws
 
@@ -64,7 +67,7 @@ def _parse_region(
     text_resolver: TextResolver | None,
     image_resolver: ImageResolver | None,
     range_names: set[str],
-) -> ir.Region | None:
+) -> "ir.Region | list[ir.Region] | None":
     for child in region:
         tag = localname(child.tag)
         if tag == "math":
@@ -77,6 +80,13 @@ def _parse_region(
             return _parse_solveblock(child)
         if tag == "plot":
             return _parse_plot(child, range_names)
+        if tag == "spec-table":
+            # A data table: one <math> per column, each a define. Mathcad names
+            # the resulting vectors by their column headers -- expand to one
+            # region per column.
+            return [
+                _parse_math(m) for m in child if localname(m.tag) == "math" and len(m)
+            ]
     return None
 
 
@@ -96,6 +106,13 @@ def _parse_math(math_elem: ET.Element) -> ir.Region:
 
     if tag == "symEval":
         return _parse_sym_eval(inner)
+
+    # A standalone scriptable status control (e.g. a TextBoxScriptableControl
+    # displaying "OK!"/"All loadcases pass!"): the JScript isn't transpiled, but
+    # its PiggybackNode holds the real boolean expression that drives the
+    # message -- evaluate that, documenting the cached message.
+    if tag.endswith("ScriptableControl"):
+        return _parse_status_control(inner)
 
     # Bare symbolic equation (no define/eval wrapper): <apply><equal/> ...>.
     if tag == "apply":
@@ -159,6 +176,13 @@ def _parse_define(define_elem: ET.Element) -> ir.Region:
             )
         return ir.IndexAssign(target=base, index=index, value=parse_expr(value_elem))
 
+    # ``[a; b; c] := <expr>``: a matrix of ids on the left destructures a returned
+    # vector (a plain value, not a native control -- those are handled below).
+    if localname(target_elem.tag) == "matrix" and not localname(
+        value_elem.tag
+    ).endswith("Control"):
+        return _parse_multi_assign(target_elem, value_elem)
+
     # ``f(x) := ...``: the target is <ml:function> with a name and bound vars.
     if localname(target_elem.tag) == "function":
         target, params = _parse_function_header(target_elem)
@@ -184,6 +208,63 @@ def _parse_define(define_elem: ET.Element) -> ir.Region:
     return ir.Define(
         target=target, value=parse_expr(value_elem), evaluate=False, params=params
     )
+
+
+def _parse_status_control(control: ET.Element) -> ir.Region:
+    """A standalone scriptable status control (``<ml:...ScriptableControl>``).
+
+    Unlike a control that *drives a define's value* (see
+    :func:`_parse_scriptable_control`), this one stands alone and shows a
+    message. We don't transpile its JScript; instead we evaluate the expression
+    it carries in ``PiggybackNode > inputControlInputField`` -- any expression,
+    often a boolean like ``λ < λlim`` but possibly a plain variable the JScript
+    inspects -- and pair it with the cached ``vals`` message (see
+    :class:`ir.StatusControl`).
+    """
+    piggyback = next(
+        (c for c in control if localname(c.tag) == "PiggybackNode"), None
+    )
+    field = (
+        next(
+            (c for c in piggyback if localname(c.tag) == "inputControlInputField"),
+            None,
+        )
+        if piggyback is not None
+        else None
+    )
+    expr = (
+        parse_expr(list(field)[0])
+        if field is not None and len(field)
+        else None
+    )
+    if expr is None:
+        return ir.UnsupportedRegion(
+            note=f"{localname(control.tag)} (no piggyback expression)"
+        )
+
+    vals_elem = next((c for c in control if localname(c.tag) == "vals"), None)
+    messages = (
+        [(v.text or "").strip() for v in vals_elem if localname(v.tag) == "val"]
+        if vals_elem is not None
+        else []
+    )
+    try:
+        sel = int(control.get("SelectedIndex", "0") or 0)
+    except ValueError:
+        sel = 0
+    message = messages[sel] if 0 <= sel < len(messages) else (messages[0] if messages else "")
+    return ir.StatusControl(value=expr, message=message)
+
+
+def _parse_multi_assign(target_elem: ET.Element, value_elem: ET.Element) -> ir.Region:
+    """``[a; b; c] := <expr>`` -> a :class:`ir.MultiAssign` destructuring."""
+    targets = [_parse_target(c) for c in target_elem if localname(c.tag) == "id"]
+    if localname(value_elem.tag) == "eval":
+        value, unit = parse_eval(value_elem)
+        return ir.MultiAssign(
+            targets=targets, value=value, evaluate=True, display_unit=unit
+        )
+    return ir.MultiAssign(targets=targets, value=parse_expr(value_elem))
 
 
 def _parse_scriptable_control(
