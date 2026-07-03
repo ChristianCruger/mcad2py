@@ -797,6 +797,12 @@ def plot_axis(data, unit=None):
             data = data.to_base_units()
         return np.asarray(getattr(data, "magnitude", data), dtype=float)
     ratio = data / unit
+    # ``data`` and ``unit`` may carry different prefixes of the same dimension
+    # (e.g. a section outline in ``m`` shown in ``mm``): ``m / mm`` is
+    # dimensionless but Pint leaves it unreduced, so collapse it to a pure
+    # number before taking the magnitude (else ``0.65 m / mm`` reads ``0.65``).
+    if hasattr(ratio, "dimensionless") and ratio.dimensionless:
+        ratio = ratio.to("dimensionless")
     return np.asarray(getattr(ratio, "magnitude", ratio), dtype=float)
 
 

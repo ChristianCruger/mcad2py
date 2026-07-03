@@ -261,7 +261,14 @@ read this file when parsing a new schema construct or debugging a parser edge ca
   (`Fz := col(…) * ureg.kN`), preserving units; a mixed matrix keeps per-element units (object array)
   when a plain *nonzero* entry sits beside dimensioned ones (a strain matrix `[1, -l/2, -w/2]`), while
   a plain *zero* is absorbed into the prevailing unit (`[[w,0],[0,l]]`).
-- **Known limitation:** `LT91`'s section-outline / rebar-scatter plots are *parametric* (both axes are
-  data vectors, not `y = f(domain)`), which the domain-sampling `<xyPlot>` model renders degenerately;
-  the numeric conversion is unaffected. (Also: a solve block's guess/solution units stay unreduced,
-  e.g. a strain shows as `kN/m²/GPa` rather than a plain number — correct value, verbose unit.)
+- **Parametric `<xyPlot>`s** — a plot has a *sampling domain* only when one axis is a bare **range**
+  variable (`y = f(x)` over a range `x`, sampled element-wise with `sample(lambda x: …, x)`). When both
+  axes are plain data vectors (`LT91`'s section outline, rebar scatter, neutral-axis line — e.g. x =
+  `matcol(Contour, 0)`, y = `matcol(Contour, 1)`), there is no domain: each axis expression is emitted
+  directly (`plot_axis(matcol(Contour, 0), ureg.mm)`) and the traces are plotted point-by-point.
+  `_detect_domain` therefore only accepts a `Name` that is in `range_names`; a bare data-vector `Name`
+  (`X_s`, built by an imperative program) is *not* mistaken for a domain. `plot_axis` also reduces a
+  dimensionless-but-unreduced axis ratio (a section in `m` shown with an `mm` override → `m/mm`, which
+  must collapse to `650`, not read as `0.65`).
+- **Known limitation:** a solve block's guess/solution units stay unreduced, e.g. a strain shows as
+  `kN/m²/GPa` rather than a plain number — correct value, verbose unit.

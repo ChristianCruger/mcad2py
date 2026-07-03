@@ -401,7 +401,7 @@ def _parse_plot(plot_elem: ET.Element, range_names: set[str]) -> ir.Region:
     """Parse a ``<plot>``: ``<xyPlot>``, ``<contourPlot>``, or ``<plot3D>``."""
     xy = next((c for c in plot_elem if localname(c.tag) == "xyPlot"), None)
     if xy is not None:
-        return _parse_xy_plot(xy)
+        return _parse_xy_plot(xy, range_names)
 
     contour = next((c for c in plot_elem if localname(c.tag) == "contourPlot"), None)
     if contour is not None:
@@ -414,12 +414,17 @@ def _parse_plot(plot_elem: ET.Element, range_names: set[str]) -> ir.Region:
     return ir.UnsupportedRegion(note="plot (unrecognized structure)")
 
 
-def _parse_xy_plot(xy: ET.Element) -> ir.Region:
+def _parse_xy_plot(xy: ET.Element, range_names: set[str]) -> ir.Region:
     """Parse an ``<xyPlot>``: x/y axis equations paired into traces.
 
     Each axis carries ``<plotEquations>``; each ``<plotEquation>`` is an
     expression ``<math>`` plus a unit/scale ``<math>``. Traces pair the x and y
     equations by index (the single-equation axis is shared across traces).
+
+    Two flavours: a **function plot** ``y = f(x)`` where one axis is a bare
+    *range* variable (the domain, sampled element-wise), and a **parametric
+    plot** where both axes are data vectors (a section outline, a rebar
+    scatter) plotted point-by-point -- the latter has no scalar domain.
     """
     axes = next((c for c in xy if localname(c.tag) == "axes"), None)
     if axes is None:
@@ -441,7 +446,7 @@ def _parse_xy_plot(xy: ET.Element) -> ir.Region:
         color = colors[i] if i < len(colors) else None
         traces.append(ir.PlotTrace(x=xe, y=ye, x_unit=xu, y_unit=yu, color=color))
 
-    domain = _detect_domain(x_eqs + y_eqs)
+    domain = _detect_domain(x_eqs + y_eqs, range_names)
     return ir.Plot(traces=traces, domain=domain)
 
 
@@ -561,10 +566,17 @@ def _argb_to_rgb(argb: str | None) -> str | None:
     return "#" + digits
 
 
-def _detect_domain(eqs: list[tuple[ir.Expr, ir.Expr | None]]) -> str | None:
-    """The independent variable = the first bare-``Name`` axis equation."""
+def _detect_domain(
+    eqs: list[tuple[ir.Expr, ir.Expr | None]], range_names: set[str]
+) -> str | None:
+    """The independent variable = the first bare-``Name`` axis that is a *range*.
+
+    Only a range variable is a sampling domain (``y = f(x)`` over ``x``). A bare
+    ``Name`` that is a plain data vector (e.g. ``X_s`` in a parametric section
+    outline) is *not* a domain -- both axes there are vectors plotted directly.
+    """
     for expr, _unit in eqs:
-        if isinstance(expr, ir.Name):
+        if isinstance(expr, ir.Name) and expr.py in range_names:
             return expr.py
     return None
 

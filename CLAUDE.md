@@ -131,8 +131,11 @@ triple. Plus source assertions for the emitted constructs (`def _X_s_Y_s_n()` + 
 `def solve_strain(N, Mx, My)`), the data table (`Fz = col(...) * ureg.kN`; string columns clean), the
 `augment`/`matmul`/`matcol`/`total` leaves, the TextBox status controls
 (`print('<expr>', <expr>, '<message>')`), and that `A_smin = max(vector, scalar)` reduces to a **scalar**
-(Mathcad `max` flattens). The sheet's plot blocks are stripped in the exec (parametric section-outline
-plots aren't modelled by the domain-sampling plotter — see the schema note).
+(Mathcad `max` flattens). The **parametric plots** (section outline / rebar scatter / neutral-axis line,
+both axes data vectors) are asserted too: the emitted direct-axis form (`plot_axis(matcol(Contour, 0),
+ureg.mm)`, no `sample(lambda …)`) and a rendered check that the outline is a ±650 mm rectangle and the 12
+rebars sit at ±583 mm (i.e. the `m`→`mm` override reduced). The numeric tests still strip plot blocks in
+the exec purely for speed.
 
 **Reference files are test fixtures — don't edit them.** Tests compare generated output against each
 `.mcdx`'s cached `result.xml`; changing a worksheet (e.g. a `phi` value) silently shifts every
@@ -150,8 +153,9 @@ Multi-line **imperative programs** (loops, local `←` assigns, `return`, `tryCa
 vectors) are now supported (`ir.ProgramBlock` → a Python `def`; `X[i] :=` → `vec_set`); a single-arg
 branching/clamp function is wrapped `elementwise` so the vectorize arrow applies it per element (see the
 LT91 schema notes). Square roots now emit `nth_root(x, n)` (a *dimensioned* radicand keeps its unit; a
-dimensionless one reduces first). Remaining plot gap: *parametric* xy plots (both axes are data vectors,
-e.g. a section outline) are mis-handled by the domain-sampling `<xyPlot>` model.
+dimensionless one reduces first). Parametric xy plots (both axes are data vectors, e.g. a section
+outline) now render correctly — a sampling domain is only inferred when an axis is a bare *range* (see
+the schema note).
 `TOL`/`CTOL` from `calculation.xml` aren't consumed yet (solve uses fsolve defaults).
 Scriptable-control JScript is **intentionally** not transpiled — we surface the control's cached
 output value (the `RL` attribute) instead, which is faithful as long as the worksheet was last saved

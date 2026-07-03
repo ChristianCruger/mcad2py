@@ -15,7 +15,10 @@ them on the generated source and unit-tests the new runtime helpers directly:
   * **multi-target destructuring** ``[a; b; c] := <expr>`` -> tuple unpack;
   * **TextBoxScriptableControl** status widgets: the JScript isn't transpiled,
     but the real boolean expression from the control's ``PiggybackNode`` is
-    emitted (with the cached message as a comment).
+    emitted (with the cached message as a comment);
+  * **parametric plots** -- the section outline / rebar scatter / neutral-axis
+    lines whose *both* axes are data vectors (plotted point-by-point, no
+    ``y = f(domain)`` sampling), with the ``m -> mm`` axis override reduced.
 
 Numeric execute-and-compare against ``result.xml`` for the whole sheet arrives
 in Stage 2, once the imperative programs run.
@@ -180,10 +183,9 @@ def _dimensionless(x):
 
 
 def _exec_full():
-    # Execute the sheet's computation. The section-outline / rebar-scatter plots
-    # are *parametric* (both axes are data vectors, not y = f(domain)), which the
-    # domain-sampling plotter doesn't model -- a known plot limitation, unrelated
-    # to the numeric conversion -- so the plot blocks are stripped here.
+    # Execute the sheet's computation only. The plots render fine now (see
+    # ``test_parametric_plots_render``), but the numeric tests strip them so they
+    # stay fast and don't depend on a matplotlib backend.
     out, skip = [], False
     for line in _src().splitlines():
         s = line.strip()
@@ -227,3 +229,51 @@ def test_min_reinforcement_is_scalar_not_vector():
     # the vector argument and reduces to a scalar (not an element-wise vector).
     ns = _exec_full()
     assert getattr(ns["A_smin"], "shape", ()) == ()
+
+
+# ---------------------------------------------------------------------------
+# Parametric plots (section outline / rebar scatter / neutral axis)
+# ---------------------------------------------------------------------------
+
+
+def test_parametric_plots_emit_direct_axes():
+    # A parametric plot's axes are data vectors plotted point-by-point -- no
+    # ``sample(lambda ...)`` domain wrapping (that's only for ``y = f(range)``).
+    src = _src()
+    assert "_ax.plot(plot_axis(matcol(Contour, 0), ureg.mm), plot_axis(matcol(Contour, 1), ureg.mm)" in src
+    assert "_ax.plot(plot_axis(X_s, ureg.mm), plot_axis(Y_s, ureg.mm)" in src
+    # The rebar/outline vectors are *not* re-sampled over a bogus domain.
+    assert "sample(lambda X_s:" not in src
+
+
+def test_parametric_plots_render_with_section_geometry():
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    plt.close("all")
+    exec(compile(_src(), "<lt91-plots>", "exec"), {})  # noqa: S102
+
+    # Collect every real data trace (skip the axhline/axvline guides).
+    traces = {
+        ln.get_label(): ln
+        for fn in plt.get_fignums()
+        for ax in plt.figure(fn).axes
+        for ln in ax.get_lines()
+        if len(ln.get_xdata()) > 2
+    }
+    assert plt.get_fignums()  # figures were created
+
+    # The concrete section outline: a closed rectangle at +/-650 mm.
+    outline = traces["matcol(Contour, 0)"]
+    assert len(outline.get_xdata()) == 5  # 4 corners + closing point
+    assert math.isclose(float(np.max(np.abs(outline.get_xdata()))), 650.0, rel_tol=1e-6)
+    assert math.isclose(float(np.max(np.abs(outline.get_ydata()))), 650.0, rel_tol=1e-6)
+
+    # The 12 rebars sit at +/-583 mm (not normalized to +/-1: the m->mm axis
+    # override must reduce, else the outline would read +/-0.65).
+    rebars = traces["X_s"]
+    assert len(rebars.get_xdata()) == 12
+    assert math.isclose(float(np.max(np.abs(rebars.get_xdata()))), 583.0, rel_tol=1e-3)
+    plt.close("all")
