@@ -3,7 +3,7 @@ import math
 import numpy as np
 import pint
 
-from mcad2py.runtime import arange, index_build
+from mcad2py.runtime import ceil, disp, mc_min, mc_max, arange, index_build
 ureg = pint.UnitRegistry()
 
 
@@ -66,7 +66,7 @@ T_Ed = index_build(i, lambda i: 400)
 c = 75
 
 AS1_unused = 150.49 * ureg.cm**2 - (136 * ureg.cm**2 + 62 * ureg.cm**2) / 2
-print(AS1_unused.to(ureg.mm**2))
+print(disp(AS1_unused, ureg.mm**2))
 
 # Diameter på længdearmering
 
@@ -87,7 +87,7 @@ nu_t = 0.7 * (0.7 - f_ck / 200)
 
 # Tværsnitsparamtre
 
-t_ef = np.maximum(A / u, 2 * (c + phi_t + phi / 2))
+t_ef = mc_max(A / u, 2 * (c + phi_t + phi / 2))
 
 print(t_ef / 2)
 
@@ -111,11 +111,11 @@ T_Rdmax = 2 * nu_t * f_cd * t_ef * A_k * 10**-6 / (cottheta + 1 / cottheta)
 
 A_sl = index_build(i, lambda i: T_Ed[i] * 10**6 * u_k / (2 * A_k * f_yd) * cottheta)
 
-n_sl = index_build(i, lambda i: math.ceil(A_sl[i] / (math.pi / 4 * phi**2)))
+n_sl = index_build(i, lambda i: ceil(A_sl[i] / (math.pi / 4 * phi**2)))
 
 s = index_build(i, lambda i: 2 * A_t * A_k * f_yd * cottheta / (T_Ed[i] * 10**6))
 
-s_t = index_build(i, lambda i: np.minimum(u / 8, s[i]))
+s_t = index_build(i, lambda i: mc_min(u / 8, s[i]))
 print(s_t[i])
 
 k = index_build(i, lambda i: T_Ed[i] / T_Rdmax)

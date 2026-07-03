@@ -46,6 +46,131 @@ def cot(x: object) -> float:
     return 1.0 / math.tan(_radians(x))
 
 
+def elementwise(fn):
+    """Wrap a scalar (possibly *branching*) function so it also maps over a vector.
+
+    Mathcad's vectorize arrow applies such a function element-wise; a Python
+    ``def`` with ``if`` can't take an array, so for an array argument we apply
+    ``fn`` per element (unit-aware, via ``col``) and a scalar passes straight
+    through. This covers a piecewise stress-strain law ``σ(ε)`` sampled over a
+    vector of fiber strains.
+    """
+
+    def wrapped(x):
+        if _is_arraylike(x):
+            return col(*[fn(xi) for xi in x])
+        return fn(x)
+
+    return wrapped
+
+
+def _flatten_scalars(args):
+    """All scalar elements across ``args`` (scalars and/or vectors), unit-aware.
+
+    A Pint vector contributes its elements as Pint scalars; a plain vector its
+    numbers; a scalar contributes itself.
+    """
+    out = []
+    for a in args:
+        if _is_arraylike(a):
+            unit = getattr(a, "units", None)
+            mag = np.atleast_1d(getattr(a, "magnitude", a)).reshape(-1)
+            out.extend((m * unit) if unit is not None else m for m in mag)
+        else:
+            out.append(a)
+    return out
+
+
+def mc_max(*args):
+    """Mathcad ``max`` -- the single largest element across *all* arguments,
+    flattening vector arguments (a reduction to a scalar). Element-wise ``max``
+    is Mathcad's vectorize arrow, which codegen emits as ``np.maximum`` instead."""
+    return max(_flatten_scalars(args))
+
+
+def mc_min(*args):
+    """Mathcad ``min`` -- the single smallest element across all arguments
+    (flattening vectors); see :func:`mc_max`."""
+    return min(_flatten_scalars(args))
+
+
+def disp(value, unit):
+    """Render ``value`` in a display unit (Mathcad's inline ``=`` override).
+
+    Converts when dimensionally compatible; otherwise divides, giving the
+    residual-unit form Mathcad shows for a *loose* override (e.g. a ``kN·m``
+    moment displayed with a ``kN`` override shows as ``… m``). Never raises, so a
+    stray display override can't crash the computation.
+    """
+    try:
+        return value.to(unit)
+    except Exception:
+        return value / unit
+
+
+def nth_root(x, n):
+    """``x ** (1/n)`` so a unit-bearing radicand keeps its unit (Pint handles
+    ``(m**2) ** (1/2) = m``); ``math.sqrt`` would reject the unit.
+
+    A *dimensionless* radicand is reduced to a plain number first, so a ratio
+    Pint stores unreduced (``200 mm / d`` = ``mm/mm``) doesn't leave fractional
+    ``mm ** 0.5`` unit noise that then contaminates everything downstream.
+    """
+    return _reduce_dimensionless(x) ** (1.0 / n)
+
+
+def sqrt(x):
+    """Mathcad ``sqrt(x)`` builtin -> :func:`nth_root` with ``n = 2``."""
+    return nth_root(x, 2)
+
+
+def power(base, exp):
+    """``base ** exp`` for a *fractional* exponent, reducing a dimensionless base
+    first. A ratio Pint stores unreduced (``ρ = A/(b·d)`` = ``mm²/mm²``) raised to
+    ``1/3`` would otherwise leave fractional ``mm ** (2/3)`` unit noise (and even
+    floating-point ``m ** 1e-16`` residue that breaks a later ``< 1`` comparison).
+    A dimensioned base keeps its (fractional) unit, as Pint intends.
+    """
+    return _reduce_dimensionless(base) ** exp
+
+
+def _reduce_dimensionless(x):
+    """A dimensionless Pint quantity (even *unreduced*, e.g. ``m/mm``) -> a plain
+    float; a dimensioned quantity or plain number is returned unchanged.
+
+    Mathcad reduces ``l/s`` (both lengths) to a pure number before ``round`` etc.,
+    but Pint keeps ``1.3 m / (300 mm)`` as magnitude ``0.00433`` with unit
+    ``m/mm``, so rounding the raw magnitude would give ``0``. This collapses that.
+    """
+    if hasattr(x, "dimensionality") and x.dimensionless:
+        return float(x.to("dimensionless").magnitude)
+    return x
+
+
+def ceil(x):
+    """Mathcad ``ceil`` (dimensionless-aware; keeps a unit if dimensioned)."""
+    x = _reduce_dimensionless(x)
+    if hasattr(x, "units"):
+        return x._REGISTRY.Quantity(math.ceil(x.magnitude), x.units)
+    return math.ceil(x)
+
+
+def floor(x):
+    """Mathcad ``floor`` (dimensionless-aware; keeps a unit if dimensioned)."""
+    x = _reduce_dimensionless(x)
+    if hasattr(x, "units"):
+        return x._REGISTRY.Quantity(math.floor(x.magnitude), x.units)
+    return math.floor(x)
+
+
+def mround(x):
+    """Mathcad ``round`` (dimensionless-aware; keeps a unit if dimensioned)."""
+    x = _reduce_dimensionless(x)
+    if hasattr(x, "units"):
+        return x._REGISTRY.Quantity(round(x.magnitude), x.units)
+    return round(x)
+
+
 def col(*elements: object) -> object:
     """Build a 1-D vector (a Mathcad column/row vector) from scalar elements.
 
@@ -54,17 +179,7 @@ def col(*elements: object) -> object:
     is a plain NumPy array. Either way it indexes, broadcasts, and ``len()``
     like a Mathcad vector.
     """
-    first = next((e for e in elements if hasattr(e, "units")), None)
-    if first is not None:
-        # Build the array in the *elements'* registry (not a globally imported
-        # one) so it stays compatible with the rest of the generated module.
-        reg = first._REGISTRY
-        unit = first.units
-        mags = [
-            (e.to(unit).magnitude if hasattr(e, "units") else e) for e in elements
-        ]
-        return reg.Quantity(np.array(mags, dtype=float), unit)
-    return np.array(elements)
+    return _build_array(elements, shape=None)
 
 
 def matrix(rows: int, cols: int, *elements: object) -> object:
@@ -72,19 +187,65 @@ def matrix(rows: int, cols: int, *elements: object) -> object:
 
     ``elements`` arrive in Prime's own ``<ml:matrix>`` order, which is
     column-major, hence ``order="F"`` on the reshape. Unit handling mirrors
-    ``col()``: Mathcad requires one consistent unit across an entire matrix
-    (there's no per-column unit), so a single unit conversion covers it.
+    ``col()``: a matrix with one consistent unit is a fused Pint array, while a
+    heterogeneous one (mixed/plain units) becomes an object array of per-element
+    values.
     """
-    first = next((e for e in elements if hasattr(e, "units")), None)
-    if first is not None:
-        reg = first._REGISTRY
-        unit = first.units
+    return _build_array(elements, shape=(rows, cols))
+
+
+def _object_array(elements, shape):
+    """A 1-D (``shape=None``) or column-major 2-D object array holding each
+    element exactly as-is (Pint scalars, plain numbers, or nested vectors)."""
+    out = np.empty(len(elements), dtype=object)
+    for i, e in enumerate(elements):
+        out[i] = e
+    return out if shape is None else out.reshape(shape, order="F")
+
+
+def _build_array(elements, shape):
+    """Build a Mathcad vector/matrix from ``elements`` (column-major for 2-D).
+
+    A homogeneous, single-unit set becomes a fused Pint/NumPy array (so
+    ``.to(...)`` works on the whole thing); a *heterogeneous* set -- elements
+    that are themselves vectors (nested arrays), a mix of dimensioned and plain
+    (dimensionless) entries, or incompatible units -- becomes an object array of
+    the elements as-is, so each keeps its own unit and unit-aware ops (``matmul``,
+    ``total``) propagate per element. This matches Mathcad, which allows a
+    heterogeneous matrix (e.g. ``[1; -l/2; -w/2]`` = dimensionless + lengths, or
+    ``augment(ones, Xs, Ys)``).
+    """
+    # Nested arrays (a vector of vectors) -> object array.
+    if any(_is_arraylike(e) for e in elements):
+        return _object_array(elements, shape)
+
+    united = [e for e in elements if hasattr(e, "units")]
+    if not united:  # all plain
+        try:
+            arr = np.array(elements, dtype=float)
+        except (ValueError, TypeError):
+            arr = np.array(elements)  # non-numeric (e.g. a string column)
+        return arr if shape is None else arr.reshape(shape, order="F")
+
+    # A plain *nonzero* entry mixed with dimensioned ones is genuinely
+    # dimensionless (e.g. ``[1; -l/2; -w/2]``, the constant column of a strain
+    # matrix) -> keep each element as-is. A plain *zero* is unit-agnostic (``0``
+    # is ``0`` in any unit, as with the off-diagonal ``0``s of ``[[w,0],[0,l]]``),
+    # so it's absorbed into the prevailing unit below.
+    if any(not hasattr(e, "units") and e != 0 for e in elements):
+        return _object_array(elements, shape)
+
+    reg = united[0]._REGISTRY
+    unit = united[0].units
+    try:
         mags = [
             (e.to(unit).magnitude if hasattr(e, "units") else e) for e in elements
         ]
-        arr = np.array(mags, dtype=float).reshape((rows, cols), order="F")
-        return reg.Quantity(arr, unit)
-    return np.array(elements, dtype=float).reshape((rows, cols), order="F")
+    except Exception:
+        # Incompatible units (e.g. ``[strain; curvature]``).
+        return _object_array(elements, shape)
+    arr = np.array(mags, dtype=float)
+    return reg.Quantity(arr if shape is None else arr.reshape(shape, order="F"), unit)
 
 
 def _magnitudes(v):
@@ -105,6 +266,204 @@ def transpose(x):
     if hasattr(x, "magnitude"):
         return x._REGISTRY.Quantity(np.transpose(x.magnitude), x.units)
     return np.transpose(np.asarray(x))
+
+
+def _is_arraylike(x):
+    """True if ``x`` is a vector/matrix (ndim > 0) or a Python list/tuple.
+
+    Avoids ``np.asarray`` (which would call ``float()`` on a list of Pint
+    quantities and raise on a dimensioned one).
+    """
+    if isinstance(x, (list, tuple)):
+        return True
+    return getattr(getattr(x, "magnitude", x), "ndim", 0) > 0
+
+
+def _as_int(x):
+    return int(getattr(x, "magnitude", x))
+
+
+def _grow_1d(vec, n):
+    if vec is None:
+        out = np.empty(n, dtype=object)
+        out[:] = 0
+        return out
+    if len(vec) >= n:
+        return vec
+    out = np.empty(n, dtype=object)
+    out[:] = 0
+    out[: len(vec)] = vec
+    return out
+
+
+def _grow_2d(vec, rows, cols):
+    if vec is None:
+        out = np.empty((rows, cols), dtype=object)
+        out[:] = 0
+        return out
+    r, c = vec.shape
+    if r >= rows and c >= cols:
+        return vec
+    out = np.empty((max(r, rows), max(c, cols)), dtype=object)
+    out[:] = 0
+    out[:r, :c] = vec
+    return out
+
+
+def _explode(vec):
+    """An object-array copy of ``vec`` (Pint scalars kept), for growable editing.
+
+    A fused Pint/plain array is expanded into per-element objects so growth and
+    element assignment are uniform; an already-object array is returned as-is.
+    """
+    if vec is None:
+        return None
+    unit = getattr(vec, "units", None)
+    mag = np.atleast_1d(vec.magnitude if unit is not None else np.asarray(vec))
+    out = np.empty(mag.shape, dtype=object)
+    for idx in np.ndindex(mag.shape):
+        out[idx] = (mag[idx] * unit) if unit is not None else mag[idx]
+    return out
+
+
+def _consolidate(vec):
+    """Fuse a homogeneous object array back into a Pint (or plain) array.
+
+    When every element is a Pint scalar of one unit, return a fused Pint array
+    (so ``kx * X`` and the like broadcast correctly instead of Pint mis-wrapping
+    an object array); when every element is a plain number, a float array; a
+    heterogeneous/gappy array (mixed units, zero-fill gaps, nested sub-vectors)
+    stays as-is.
+    """
+    flat = list(vec.reshape(-1))
+    if not flat:
+        return vec
+    if all(hasattr(x, "units") for x in flat):
+        reg = flat[0]._REGISTRY
+        unit = flat[0].units
+        try:
+            mags = [float(x.to(unit).magnitude) for x in flat]
+        except Exception:
+            return vec
+        return reg.Quantity(np.array(mags).reshape(vec.shape), unit)
+    if all(
+        not hasattr(x, "units")
+        and not _is_arraylike(x)
+        and not isinstance(x, (list, tuple))
+        for x in flat
+    ):
+        try:
+            return np.array([float(x) for x in flat]).reshape(vec.shape)
+        except (ValueError, TypeError):
+            return vec
+    return vec
+
+
+def vec_set(vec, index, value):
+    """Assign into a growable Mathcad program vector/matrix (``X[i] := …``).
+
+    A Mathcad program auto-grows its vectors/matrices as elements are written,
+    zero-filling any gap. ``index`` is an ``int`` (1-D) or a ``(row, col)`` tuple
+    (2-D); ``vec`` starts as ``None`` (codegen pre-declares it) and is created on
+    first write. The possibly-reallocated array is returned so the caller rebinds
+    it (``X = vec_set(X, i, v)``). Growth happens on an object array (so units and
+    nested sub-vectors survive); the result is consolidated back to a fused Pint
+    array once it's homogeneous, so downstream ``kx * X`` broadcasts correctly.
+    """
+    vec = _explode(vec)
+    if isinstance(index, tuple):
+        i, k = _as_int(index[0]), _as_int(index[1])
+        vec = _grow_2d(vec, i + 1, k + 1)
+        vec[i, k] = value
+    else:
+        i = _as_int(index)
+        vec = _grow_1d(vec, i + 1)
+        vec[i] = value
+    return _consolidate(vec)
+
+
+def _to_object_matrix(x):
+    """A per-element object array of ``x`` (Pint scalars kept with their units).
+
+    A homogeneous Pint quantity array is exploded into an object array of scalar
+    quantities so NumPy's object-dtype ``@``/``*`` propagate units element by
+    element (needed for a matrix/vector whose columns carry *different* units).
+    A plain or already-object array is returned as-is.
+    """
+    if hasattr(x, "units") and getattr(x.magnitude, "dtype", None) != object:
+        reg = x._REGISTRY
+        unit = x.units
+        mag = np.asarray(x.magnitude)
+        out = np.empty(mag.shape, dtype=object)
+        flat_out, flat_in = out.reshape(-1), mag.reshape(-1)
+        for i in range(flat_in.size):
+            flat_out[i] = reg.Quantity(float(flat_in[i]), unit)
+        return out
+    return np.asarray(x)
+
+
+def _has_object(x):
+    """True if ``x`` is (or wraps) an object-dtype array of per-element scalars."""
+    mag = getattr(x, "magnitude", x)
+    return getattr(np.asarray(mag), "dtype", None) == object
+
+
+def augment(*cols):
+    """Mathcad ``augment``: stack column vectors side by side into a matrix.
+
+    Each argument is a 1-D vector; they become the columns of the result. The
+    columns may carry *different* units (Mathcad allows a heterogeneous matrix
+    here, e.g. ``augment(ones(n), Xs, Ys)`` mixing a dimensionless column with
+    length columns), so the result is an object array of per-element Pint
+    scalars -- a later ``matmul`` then propagates units column by column.
+    """
+    columns = [_to_object_matrix(c).reshape(-1) for c in cols]
+    nrows = max((len(c) for c in columns), default=0)
+    out = np.empty((nrows, len(columns)), dtype=object)
+    for j, c in enumerate(columns):
+        for i in range(nrows):
+            out[i, j] = c[i]
+    return out
+
+
+def _mag(x):
+    return x.magnitude if hasattr(x, "magnitude") else np.asarray(x)
+
+
+def matmul(a, b):
+    """Matrix (or matrix-vector) product, unit-aware (Mathcad ``A * B``).
+
+    When neither operand is a heterogeneous (object) array, the magnitudes are
+    multiplied with NumPy ``@`` and the units multiplied
+    (``unit_a * unit_b``) -- the fast, clean path covering a genuine matrix
+    with one consistent unit. When either operand carries per-element units
+    (from :func:`augment`/a mixed ``col``), the product is done on object
+    arrays so Pint propagates each element's unit and the summed terms keep
+    their (necessarily consistent) result unit.
+    """
+    if not _has_object(a) and not _has_object(b):
+        res = _mag(a) @ _mag(b)
+        ua = getattr(a, "units", None)
+        ub = getattr(b, "units", None)
+        if ua is None and ub is None:
+            return res
+        reg = (a if ua is not None else b)._REGISTRY
+        unit = ua if ua is not None else 1
+        if ub is not None:
+            unit = unit * ub
+        return reg.Quantity(res, unit)
+    # Object-dtype product (mixed per-element units): consolidate the result back
+    # to a fused Pint array when it turns out homogeneous (e.g. a strain vector),
+    # so downstream ``E * strain`` broadcasts instead of Pint mis-wrapping.
+    return _consolidate(_to_object_matrix(a) @ _to_object_matrix(b))
+
+
+def matcol(m, i):
+    """Extract column ``i`` of a matrix as a 1-D vector (Mathcad ``A^<i>``)."""
+    i = int(getattr(i, "magnitude", i))
+    if hasattr(m, "units") and getattr(m.magnitude, "dtype", None) != object:
+        return m._REGISTRY.Quantity(np.asarray(m.magnitude)[:, i], m.units)
+    return np.asarray(m)[:, i]
 
 
 def linterp(vx, vy, x):
@@ -263,6 +622,25 @@ def summation(func, lower, upper):
     return total
 
 
+def total(v):
+    """Sum every element of a vector (Mathcad's bare ``Σ`` over an array).
+
+    Unlike :func:`summation` (an indexed sum over integer bounds) this collapses
+    an already-built vector. Unit-aware: a homogeneous Pint vector sums its
+    magnitudes and keeps its unit; a mixed/object vector accumulates from the
+    first element so per-element Pint scalars add correctly.
+    """
+    if hasattr(v, "units") and getattr(v.magnitude, "dtype", None) != object:
+        return v._REGISTRY.Quantity(float(np.sum(v.magnitude)), v.units)
+    arr = np.atleast_1d(v).reshape(-1)
+    if len(arr) == 0:
+        return 0
+    tot = arr[0]
+    for x in arr[1:]:
+        tot = tot + x
+    return tot
+
+
 def _coarse_presearch(wrapped, x0, n_samples=15, seed=0):
     """Find a better `fsolve` seed by sampling broadly around ``x0``.
 
@@ -410,11 +788,21 @@ def plot_axis(data, unit=None):
     the axis shows ``data / unit``. A missing unit (Mathcad placeholder) falls
     back to base SI units, matching Mathcad's auto display.
     """
+    # A heterogeneous (object) column -- e.g. one extracted from a mixed-unit
+    # matrix -- is consolidated first so it becomes a fused Pint/plain array.
+    if isinstance(data, np.ndarray) and data.dtype == object:
+        data = _consolidate(data)
     if unit is None:
         if hasattr(data, "to_base_units"):
             data = data.to_base_units()
         return np.asarray(getattr(data, "magnitude", data), dtype=float)
     ratio = data / unit
+    # ``data`` and ``unit`` may carry different prefixes of the same dimension
+    # (e.g. a section outline in ``m`` shown in ``mm``): ``m / mm`` is
+    # dimensionless but Pint leaves it unreduced, so collapse it to a pure
+    # number before taking the magnitude (else ``0.65 m / mm`` reads ``0.65``).
+    if hasattr(ratio, "dimensionless") and ratio.dimensionless:
+        ratio = ratio.to("dimensionless")
     return np.asarray(getattr(ratio, "magnitude", ratio), dtype=float)
 
 

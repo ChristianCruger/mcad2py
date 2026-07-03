@@ -42,6 +42,21 @@ def _emit(node: ir.Expr) -> tuple[str, int]:
         return f"{left} * {right}", 2
 
     if isinstance(node, ir.BinOp):
+        # Mathcad uses the same ``*`` for scalar and matrix multiplication; when
+        # both operands are statically matrix-shaped we emit a real matrix product.
+        if node.op == "mul" and _is_matmul(node.left, node.right):
+            return (
+                f"matmul({expr_to_str(node.left)}, {expr_to_str(node.right)})",
+                _ATOM,
+            )
+        # A *fractional* power reduces a dimensionless base first (so ``ρ**(1/3)``
+        # on an unreduced ``mm²/mm²`` ratio doesn't leave fractional-unit noise);
+        # an integer power (``x**2``) stays a clean inline ``**``.
+        if node.op == "pow" and not _is_int_literal(node.right):
+            return (
+                f"power({expr_to_str(node.left)}, {expr_to_str(node.right)})",
+                _ATOM,
+            )
         sym, prec = BINARY_OPS[node.op]
         right_assoc = node.op == "pow"
         left = _wrap(node.left, prec, is_left=True, right_assoc=right_assoc)
@@ -54,16 +69,25 @@ def _emit(node: ir.Expr) -> tuple[str, int]:
         return f"-{operand}", UNARY_PREC
 
     if isinstance(node, ir.Call):
-        func = FUNCTIONS.get(node.func, node.func)
+        # Mathcad ``min``/``max`` are always a *reduction*: they flatten every
+        # argument (scalars and vectors) and return the single min/max
+        # (``mc_min``/``mc_max``). Element-wise behaviour comes from the
+        # vectorize *arrow* applying a function per element, not from min/max --
+        # so there's no ``np.minimum``/``np.maximum`` here.
+        if node.func in ("min", "max"):
+            func = "mc_min" if node.func == "min" else "mc_max"
+        else:
+            func = FUNCTIONS.get(node.func, node.func)
         args = ", ".join(expr_to_str(a) for a in node.args)
         return f"{func}({args})", _ATOM
 
     if isinstance(node, ir.Root):
+        # ``nth_root`` (not ``math.sqrt``/inline ``**``) so Pint handles a
+        # unit-bearing radicand (``√(m²) = m``) and a dimensionless radicand is
+        # reduced first (no fractional ``mm ** 0.5`` unit noise).
         operand = expr_to_str(node.operand)
-        if node.degree is None:
-            return f"math.sqrt({operand})", _ATOM
-        degree = expr_to_str(node.degree)
-        return f"({operand}) ** (1 / ({degree}))", _ATOM
+        degree = "2" if node.degree is None else expr_to_str(node.degree)
+        return f"nth_root({operand}, {degree})", _ATOM
 
     if isinstance(node, ir.Equation):
         return f"Eq({expr_to_str(node.lhs)}, {expr_to_str(node.rhs)})", _ATOM
@@ -77,6 +101,21 @@ def _emit(node: ir.Expr) -> tuple[str, int]:
     if isinstance(node, ir.Index):
         base = _wrap(node.base, _ATOM, is_left=True, right_assoc=False)
         return f"{base}[{expr_to_str(node.index)}]", _ATOM
+
+    if isinstance(node, ir.Index2D):
+        base = _wrap(node.base, _ATOM, is_left=True, right_assoc=False)
+        return f"{base}[{expr_to_str(node.row)}, {expr_to_str(node.col)}]", _ATOM
+
+    if isinstance(node, ir.MatCol):
+        return f"matcol({expr_to_str(node.base)}, {expr_to_str(node.index)})", _ATOM
+
+    if isinstance(node, ir.ProgramBlock):
+        # A ProgramBlock is only ever a Define/MultiAssign value (emitted as a
+        # ``def`` by assignment_line/multi_assign_lines), never inline.
+        return "None  # TODO: program block used inline", _ATOM
+
+    if isinstance(node, ir.VectorSum):
+        return f"total({expr_to_str(node.operand)})", _ATOM
 
     if isinstance(node, ir.Vectorize):
         return f"vectorize({expr_to_str(node.operand)})", _ATOM
@@ -136,6 +175,57 @@ def _emit(node: ir.Expr) -> tuple[str, int]:
     return f"None  # TODO unknown node: {type(node).__name__}", _ATOM
 
 
+def _is_int_literal(node: ir.Expr) -> bool:
+    """True if ``node`` is an integer numeric literal (optionally negated)."""
+    if isinstance(node, ir.UnaryOp) and node.op == "neg":
+        return _is_int_literal(node.operand)
+    if isinstance(node, ir.Number):
+        try:
+            return float(node.value).is_integer()
+        except ValueError:
+            return False
+    return False
+
+
+def _is_2d_matrix(node: ir.Expr) -> bool:
+    """True if ``node`` statically denotes a genuine 2-D matrix.
+
+    A matrix literal with more than one row *and* column, an ``augment(...)``
+    call (which stacks columns into a matrix), a transpose of a matrix, or a
+    nested matrix product. Column/row vectors (``col(...)``, ``matcol``) are
+    *not* 2-D matrices -- they stay element-wise.
+    """
+    if isinstance(node, ir.MatrixLiteral):
+        return node.rows > 1 and node.cols > 1
+    if isinstance(node, ir.Call) and node.func == "augment":
+        return True
+    if isinstance(node, ir.Transpose):
+        return _is_2d_matrix(node.operand)
+    if isinstance(node, ir.BinOp) and node.op == "mul":
+        return _is_matmul(node.left, node.right)
+    return False
+
+
+def _is_array_operand(node: ir.Expr) -> bool:
+    """True if ``node`` is array-shaped enough to be a matmul right operand.
+
+    Kept conservative (a matrix/vector literal, a column extraction, a
+    transpose, an ``augment``, or a nested matmul) so a matrix times a *scalar*
+    stays ordinary ``*`` rather than a spurious ``matmul``.
+    """
+    if isinstance(node, (ir.MatrixLiteral, ir.MatCol, ir.Transpose)):
+        return True
+    if isinstance(node, ir.Call) and node.func == "augment":
+        return True
+    return _is_2d_matrix(node)
+
+
+def _is_matmul(left: ir.Expr, right: ir.Expr) -> bool:
+    """A ``*`` that is a matrix (or matrix-vector) product: a 2-D matrix on the
+    left times an array operand on the right."""
+    return _is_2d_matrix(left) and _is_array_operand(right)
+
+
 def _wrap(node: ir.Expr, parent_prec: int, *, is_left: bool, right_assoc: bool) -> str:
     text, prec = _emit(node)
     if prec < parent_prec:
@@ -166,11 +256,147 @@ def assignment_line(define: ir.Define) -> str:
     # multi-line ``def``; a program assigned to a plain variable (e.g. an inline
     # ``if(cond, a, b)``) has no params and emits an inline conditional instead.
     if isinstance(define.value, ir.Program) and define.params:
-        return prefix + _program_def(define)
+        return prefix + _program_def(define) + _elementwise_wrap(define)
+    # An imperative multi-line program (loops/return/tryCatch) -> a ``def``:
+    # a function (``Neutral(e,kx,ky) := …``) keeps its params; a plain variable
+    # (``As := …``) is a nullary helper whose result is bound to the name.
+    if isinstance(define.value, ir.ProgramBlock):
+        if define.params:
+            return prefix + "\n".join(
+                _program_block_def(define.target.py, define.params, define.value)
+            ) + _elementwise_wrap(define)
+        helper = f"_{define.target.py}"
+        lines = _program_block_def(helper, [], define.value)
+        lines.append(f"{define.target.py} = {helper}()")
+        return prefix + "\n".join(lines)
     rhs = expr_to_str(define.value)
     if define.params:
-        return f"{prefix}{define.target.py} = lambda {', '.join(define.params)}: {rhs}"
+        return (
+            f"{prefix}{define.target.py} = lambda {', '.join(define.params)}: {rhs}"
+            + _elementwise_wrap(define)
+        )
     return f"{prefix}{define.target.py} = {rhs}"
+
+
+def status_control_line(region: ir.StatusControl) -> str:
+    """``print("<expr>", <expr>, "<message>")`` for a scriptable status widget.
+
+    Prints the expression's source, its live value, and the message Mathcad
+    cached -- the JScript that would pick the message from the value isn't
+    transpiled, so we surface both so the reader can see how they relate.
+    """
+    expr_s = expr_to_str(region.value)
+    return f"print({expr_s!r}, {expr_s}, {region.message!r})"
+
+
+def multi_assign_lines(region: ir.MultiAssign) -> list[str]:
+    """``a, b, c = tuple(<value>)`` for a destructuring assignment.
+
+    ``tuple(...)`` unpacks the returned vector (NumPy/Pint/object array) element
+    by element, so each target binds one component (units preserved). When the
+    value is an imperative program, it's emitted as a nullary helper ``def`` and
+    its returned vector destructured.
+    """
+    names = ", ".join(t.py for t in region.targets)
+    if isinstance(region.value, ir.ProgramBlock):
+        helper = "_" + "_".join(t.py for t in region.targets)
+        lines = _program_block_def(helper, [], region.value)
+        lines.append(f"{names} = tuple({helper}())")
+        return lines
+    return [f"{names} = tuple({expr_to_str(region.value)})"]
+
+
+def _program_block_def(name: str, params: list[str], block: ir.ProgramBlock) -> list[str]:
+    """A ``def name(params):`` whose body is an imperative ProgramBlock.
+
+    Any name written as a vector/matrix element (``X[i] := …``) is pre-declared
+    ``= None`` so the growable ``vec_set`` helper can create it on first write.
+    """
+    lines = [f"def {name}({', '.join(params)}):"]
+    lines += [f"    {n} = None" for n in _growable_names(block)]
+    body = _block_lines(block, 1)
+    lines += body if body else ["    pass"]
+    return lines
+
+
+def _block_lines(block: ir.ProgramBlock, indent: int) -> list[str]:
+    out: list[str] = []
+    for stmt in block.statements:
+        out += _stmt_lines(stmt, indent)
+    return out
+
+
+def _stmt_lines(stmt: ir.Stmt, indent: int) -> list[str]:
+    pad = "    " * indent
+    if isinstance(stmt, ir.LocalAssign):
+        target, value = stmt.target, stmt.value
+        if isinstance(target, ir.Name):
+            return [f"{pad}{target.py} = {expr_to_str(value)}"]
+        if isinstance(target, ir.Index):
+            base = expr_to_str(target.base)
+            return [
+                f"{pad}{base} = vec_set({base}, {expr_to_str(target.index)}, "
+                f"{expr_to_str(value)})"
+            ]
+        if isinstance(target, ir.Index2D):
+            base = expr_to_str(target.base)
+            return [
+                f"{pad}{base} = vec_set({base}, "
+                f"({expr_to_str(target.row)}, {expr_to_str(target.col)}), "
+                f"{expr_to_str(value)})"
+            ]
+        return [f"{pad}{expr_to_str(target)} = {expr_to_str(value)}"]
+    if isinstance(stmt, ir.ForLoop):
+        lines = [f"{pad}for {stmt.var.py} in {expr_to_str(stmt.iterable)}:"]
+        inner = _block_lines(stmt.body, indent + 1)
+        return lines + (inner if inner else [f"{pad}    pass"])
+    if isinstance(stmt, ir.IfStmt):
+        lines = []
+        for i, (test, body) in enumerate(stmt.branches):
+            if test is None:
+                lines.append(f"{pad}else:")
+            else:
+                lines.append(f"{pad}{'if' if i == 0 else 'elif'} {expr_to_str(test)}:")
+            inner = _block_lines(body, indent + 1)
+            lines += inner if inner else [f"{pad}    pass"]
+        return lines
+    if isinstance(stmt, ir.Return):
+        return [f"{pad}return {expr_to_str(stmt.value)}"]
+    if isinstance(stmt, ir.TryCatch):
+        lines = [f"{pad}try:"]
+        inner = _block_lines(stmt.body, indent + 1)
+        lines += inner if inner else [f"{pad}    pass"]
+        lines.append(f"{pad}except Exception:")
+        inner = _block_lines(stmt.handler, indent + 1)
+        lines += inner if inner else [f"{pad}    pass"]
+        return lines
+    return [f"{pad}pass  # TODO unsupported statement"]
+
+
+def _growable_names(block: ir.ProgramBlock) -> list[str]:
+    """Names written via ``X[i] := …`` anywhere in ``block`` (first-seen order);
+    these are pre-declared ``= None`` so ``vec_set`` can create them."""
+    names: list[str] = []
+
+    def scan(b: ir.ProgramBlock) -> None:
+        for stmt in b.statements:
+            if isinstance(stmt, ir.LocalAssign) and isinstance(
+                stmt.target, (ir.Index, ir.Index2D)
+            ):
+                base = stmt.target.base
+                if isinstance(base, ir.Name) and base.py not in names:
+                    names.append(base.py)
+            elif isinstance(stmt, ir.ForLoop):
+                scan(stmt.body)
+            elif isinstance(stmt, ir.IfStmt):
+                for _test, body in stmt.branches:
+                    scan(body)
+            elif isinstance(stmt, ir.TryCatch):
+                scan(stmt.body)
+                scan(stmt.handler)
+
+    scan(block)
+    return names
 
 
 def combobox_assign_lines(region: ir.ComboBoxAssign) -> list[str]:
@@ -189,6 +415,38 @@ def index_assign_line(region: ir.IndexAssign) -> str:
     """
     idx = region.index.py
     return f"{region.target.py} = index_build({idx}, lambda {idx}: {expr_to_str(region.value)})"
+
+
+def _needs_elementwise(define: ir.Define) -> bool:
+    """True for a *single-argument* scalar function that Mathcad's vectorize
+    arrow applies per element: a branching program (``σ_c``) or a *clamp* built
+    from a two-argument ``min``/``max`` (``σ_s`` = ``min(f, max(-f, E·ε))``).
+    Wrapping it in ``elementwise`` lets it accept a whole strain vector (mapped
+    per element), since a program ``if`` can't take an array and min/max reduce;
+    it's a pass-through for scalar calls. A *single*-argument min/max is instead
+    a reduction of the argument vector (e.g. ``UR(ε) := min(ε)/ε_cu``) -- that
+    function must stay a reduction, so it is not wrapped."""
+    if len(define.params) != 1:
+        return False
+    if isinstance(define.value, (ir.Program, ir.ProgramBlock)):
+        return True
+    return _contains_minmax_clamp(define.value)
+
+
+def _contains_minmax_clamp(node: ir.Expr) -> bool:
+    """A two-argument ``min``/``max`` (a clamp/comparison), not a single-argument
+    reduction, anywhere in ``node``."""
+    if isinstance(node, ir.Call) and node.func in ("min", "max") and len(node.args) >= 2:
+        return True
+    return any(_contains_minmax_clamp(c) for c in ir.child_exprs(node))
+
+
+def _elementwise_wrap(define: ir.Define) -> str:
+    """A trailing ``name = elementwise(name)`` line (or ``""``) -- see
+    :func:`_needs_elementwise`."""
+    if _needs_elementwise(define):
+        return f"\n{define.target.py} = elementwise({define.target.py})"
+    return ""
 
 
 def _program_def(define: ir.Define) -> str:
@@ -233,6 +491,13 @@ def echo_expr(region: ir.Region) -> str | None:
         if region.display_unit is not None:
             return _display(f"({base})", region.display_unit)
         return base
+    if isinstance(region, ir.MultiAssign):
+        if not region.evaluate:
+            return None
+        inner = "[" + ", ".join(t.py for t in region.targets) + "]"
+        if region.display_unit is not None:
+            return _display(f"({inner})", region.display_unit)
+        return inner
     if isinstance(region, ir.IndexAssign):
         if not region.evaluate:
             return None
@@ -254,7 +519,9 @@ def _display(value: str, unit: ir.Expr) -> str:
     """
     unit_s = expr_to_str(unit)
     if _has_unit(unit):
-        return f"{value}.to({unit_s})"
+        # ``disp`` converts if compatible, else divides (residual-unit display),
+        # so a loose override (a moment shown in ``kN``) can't crash the echo.
+        return f"disp({value}, {unit_s})"
     return f"{value} / ({unit_s})"
 
 
@@ -468,6 +735,7 @@ def header_lines(ws: ir.Worksheet) -> list[str]:
         order = [
             *RUNTIME_IMPORTS,
             "col", "matrix", "arange", "index_build", "vectorize", "transpose",
+            "matmul", "matcol", "total", "vec_set",
             "integral", "double_integral", "summation", "solve_block",
             "sample", "plot_axis", "mesh_grid", "resolve_plot_grid",
         ]
@@ -513,6 +781,11 @@ def _used_runtime(ws: ir.Worksheet) -> set[str]:
     found: set[str] = set()
     integrals: list[ir.Integral] = []
     for region in ws.regions:
+        du = getattr(region, "display_unit", None)
+        if du is not None and _has_unit(du):
+            found.add("disp")
+        if isinstance(region, ir.Define) and _needs_elementwise(region):
+            found.add("elementwise")
         if isinstance(region, ir.SolveBlock):
             found.add("solve_block")
         if isinstance(region, ir.IndexAssign):
@@ -525,8 +798,11 @@ def _used_runtime(ws: ir.Worksheet) -> set[str]:
                 found.add("mesh_grid")
         for node in _region_exprs(region):
             for sub in _walk(node):
-                if isinstance(sub, ir.Call) and sub.func in RUNTIME_IMPORTS:
-                    found.add(sub.func)
+                if isinstance(sub, ir.Call) and sub.func in ("min", "max"):
+                    found.add("mc_min" if sub.func == "min" else "mc_max")
+            for sub in _walk(node):
+                if isinstance(sub, ir.Call) and FUNCTIONS.get(sub.func, sub.func) in RUNTIME_IMPORTS:
+                    found.add(FUNCTIONS.get(sub.func, sub.func))
                 elif isinstance(sub, ir.MatrixLiteral):
                     found.add("col" if sub.rows <= 1 or sub.cols <= 1 else "matrix")
                 elif isinstance(sub, ir.Range):
@@ -535,6 +811,27 @@ def _used_runtime(ws: ir.Worksheet) -> set[str]:
                     found.add("vectorize")
                 elif isinstance(sub, ir.Transpose):
                     found.add("transpose")
+                elif isinstance(sub, ir.Root):
+                    found.add("nth_root")
+                elif (
+                    isinstance(sub, ir.BinOp)
+                    and sub.op == "pow"
+                    and not _is_int_literal(sub.right)
+                ):
+                    found.add("power")
+                elif isinstance(sub, ir.MatCol):
+                    found.add("matcol")
+                elif isinstance(sub, ir.VectorSum):
+                    found.add("total")
+                elif isinstance(sub, ir.ProgramBlock):
+                    if _growable_names(sub):
+                        found.add("vec_set")
+                elif (
+                    isinstance(sub, ir.BinOp)
+                    and sub.op == "mul"
+                    and _is_matmul(sub.left, sub.right)
+                ):
+                    found.add("matmul")
                 elif isinstance(sub, ir.Integral):
                     integrals.append(sub)
                 elif isinstance(sub, ir.Summation):
@@ -555,6 +852,10 @@ def _region_exprs(region: ir.Region) -> list[ir.Expr]:
     if isinstance(region, ir.Define):
         return [region.value]
     if isinstance(region, (ir.Evaluate, ir.IndexAssign)):
+        return [region.value]
+    if isinstance(region, ir.MultiAssign):
+        return [region.value]
+    if isinstance(region, ir.StatusControl):
         return [region.value]
     if isinstance(region, ir.ComboBoxAssign):
         return list(region.values)

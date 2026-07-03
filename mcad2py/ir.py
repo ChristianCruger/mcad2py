@@ -164,6 +164,83 @@ class Program(Expr):
 
 
 @dataclass
+class Index2D(Expr):
+    """Two-index element access ``M[i, j]`` (Mathcad ``<indexer>`` with a
+    ``<sequence>`` of two indices) -- a matrix element (0-based)."""
+
+    base: Expr
+    row: Expr
+    col: Expr
+
+
+# ---------------------------------------------------------------------------
+# Imperative program statements (inside a ProgramBlock)
+# ---------------------------------------------------------------------------
+
+
+class Stmt:
+    """Base class for a statement in a multi-line Mathcad program."""
+
+
+@dataclass
+class LocalAssign(Stmt):
+    """A local assignment ``target ← value`` (Mathcad ``<ml:localDefine>``).
+
+    ``target`` is a :class:`Name` (a scalar local) or an :class:`Index`/
+    :class:`Index2D` (building a vector/matrix element-by-element).
+    """
+
+    target: Expr
+    value: Expr
+
+
+@dataclass
+class ForLoop(Stmt):
+    """``for var in iterable:`` (Mathcad ``<ml:for>``); ``iterable`` is a Range."""
+
+    var: Name
+    iterable: Expr
+    body: "ProgramBlock"
+
+
+@dataclass
+class IfStmt(Stmt):
+    """A statement-form ``if``/``elif``/``else`` (Mathcad ``<ml:if>`` in a
+    program body); each branch is ``(test, body)`` with a ``None`` test = else."""
+
+    branches: list[tuple[Expr | None, "ProgramBlock"]]
+
+
+@dataclass
+class Return(Stmt):
+    """``return value`` (Mathcad ``<ml:return>``)."""
+
+    value: Expr
+
+
+@dataclass
+class TryCatch(Stmt):
+    """``try: … except Exception: …`` (Mathcad ``<ml:tryCatch>``)."""
+
+    body: "ProgramBlock"
+    handler: "ProgramBlock"
+
+
+@dataclass
+class ProgramBlock(Expr):
+    """A multi-line imperative Mathcad program (``<ml:program>`` with local
+    assignments, loops, ``if`` statements, ``return``, ``tryCatch``).
+
+    A value only in the sense that it's a :class:`Define`/:class:`MultiAssign`
+    right-hand side; the backends emit it as a Python ``def`` (with the
+    parameters of a function definition, or a nullary helper for a plain
+    variable) whose body is these ``statements``.
+    """
+
+    statements: list[Stmt]
+
+
+@dataclass
 class Lambda(Expr):
     """An inline anonymous function (Mathcad ``<ml:lambda>``).
 
@@ -199,6 +276,30 @@ class Summation(Expr):
     func: Lambda
     lower: Expr
     upper: Expr
+
+
+@dataclass
+class VectorSum(Expr):
+    """Mathcad's bare ``Σ`` over a whole vector (no index bounds).
+
+    The XML is a ``<ml:summation>`` whose bound variable and ``<upperBound>`` are
+    empty placeholders; the summand expression already evaluates to a vector, and
+    the operator sums all its elements. Emitted as ``total(<operand>)``.
+    """
+
+    operand: Expr
+
+
+@dataclass
+class MatCol(Expr):
+    """Mathcad column extraction ``A^<i>`` (``<ml:matcol>``).
+
+    Emitted as ``matcol(<base>, <index>)`` -> the ``index``-th column as a 1-D
+    vector (unit-aware).
+    """
+
+    base: Expr
+    index: Expr
 
 
 @dataclass
@@ -271,6 +372,22 @@ class Evaluate(Region):
 
 
 @dataclass
+class StatusControl(Region):
+    """A standalone scriptable status widget (``<ml:...ScriptableControl>``).
+
+    The control's JScript (which turns ``value`` into a human message) isn't
+    transpiled; instead we evaluate the expression it carries in its
+    ``PiggybackNode`` (any expression -- often a boolean like ``λ < λlim``, but
+    it can be a plain variable the JScript inspects) and print it alongside the
+    control's cached ``message``, so the generated code shows both the live value
+    and the message Mathcad displayed.
+    """
+
+    value: Expr
+    message: str
+
+
+@dataclass
 class IndexAssign(Region):
     """A range-indexed vector assignment: ``X[i] := expr`` with ``i`` a range.
 
@@ -284,6 +401,22 @@ class IndexAssign(Region):
 
     target: Name
     index: Name
+    value: Expr
+    evaluate: bool = False
+    display_unit: Expr | None = None
+
+
+@dataclass
+class MultiAssign(Region):
+    """A destructuring assignment ``[a; b; c] := <expr>``.
+
+    The left-hand side is a Mathcad ``<ml:matrix>`` of identifiers and the value
+    is an expression that returns a vector; emitted as ``a, b, c = tuple(<expr>)``
+    so each target binds one element. (When the value is a multi-line program,
+    the program is emitted as a helper and its returned vector destructured.)
+    """
+
+    targets: list[Name]
     value: Expr
     evaluate: bool = False
     display_unit: Expr | None = None
@@ -471,6 +604,12 @@ def child_exprs(node: object) -> list[Expr]:
         return list(node.elements)
     if isinstance(node, Index):
         return [node.base, node.index]
+    if isinstance(node, Index2D):
+        return [node.base, node.row, node.col]
+    if isinstance(node, MatCol):
+        return [node.base, node.index]
+    if isinstance(node, VectorSum):
+        return [node.operand]
     if isinstance(node, Vectorize):
         return [node.operand]
     if isinstance(node, Transpose):
@@ -488,4 +627,30 @@ def child_exprs(node: object) -> list[Expr]:
         return [node.body]
     if isinstance(node, (Integral, Summation)):
         return [node.func, node.lower, node.upper]
+    if isinstance(node, ProgramBlock):
+        out2: list[Expr] = []
+        for stmt in node.statements:
+            out2.extend(_stmt_exprs(stmt))
+        return out2
+    return []
+
+
+def _stmt_exprs(stmt: Stmt) -> list[Expr]:
+    """The sub-expressions of a program statement (bodies are ``ProgramBlock``
+    expressions, so a generic ``child_exprs`` walk recurses into them)."""
+    if isinstance(stmt, LocalAssign):
+        return [stmt.target, stmt.value]
+    if isinstance(stmt, ForLoop):
+        return [stmt.iterable, stmt.body]
+    if isinstance(stmt, IfStmt):
+        out: list[Expr] = []
+        for test, body in stmt.branches:
+            if test is not None:
+                out.append(test)
+            out.append(body)
+        return out
+    if isinstance(stmt, Return):
+        return [stmt.value]
+    if isinstance(stmt, TryCatch):
+        return [stmt.body, stmt.handler]
     return []

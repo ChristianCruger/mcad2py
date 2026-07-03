@@ -104,7 +104,7 @@ def test_compound_unit_override_in_echo():
     cached value (result-id 13) is 23749 kN*m.
     """
     src = convert_file(REFERENCE, fmt="py")
-    assert "(C * x_c - T * x_t).to(ureg.kN * ureg.m)" in src
+    assert "disp((C * x_c - T * x_t), ureg.kN * ureg.m)" in src
 
     ns = _exec_generated()
     check = (ns["C"] * ns["x_c"] - ns["T"] * ns["x_t"]).to("kN*m")

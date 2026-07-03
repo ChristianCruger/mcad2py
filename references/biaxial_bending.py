@@ -3,7 +3,7 @@ import math
 import matplotlib.pyplot as plt
 import pint
 
-from mcad2py.runtime import arange, double_integral, solve_block, sample, plot_axis, mesh_grid, resolve_plot_grid
+from mcad2py.runtime import power, elementwise, arange, double_integral, solve_block, sample, plot_axis, mesh_grid, resolve_plot_grid
 ureg = pint.UnitRegistry()
 
 
@@ -33,8 +33,9 @@ def sigma(e):
     elif e > 0:
         return E_c * e
     elif e > epsilon_c2:
-        return -f_cd * (1 - (1 - e / epsilon_c2)**n)
+        return -f_cd * (1 - power(1 - e / epsilon_c2, n))
     return -f_cd
+sigma = elementwise(sigma)
 
 e0 = arange(1.5 * epsilon_c2, -epsilon_c2, 1.49 * epsilon_c2 - 1.5 * epsilon_c2)
 
@@ -84,7 +85,9 @@ x0 = arange(-W / (2 * ureg.mm), W / (2 * ureg.mm), -0.495 * (W / ureg.mm) - -W /
 
 y0 = arange(-H / (2 * ureg.mm), H / (2 * ureg.mm), -0.495 * (H / ureg.mm) - -H / (2 * ureg.mm))
 
-_X, _Y, _Z, _kind = resolve_plot_grid(mesh_grid(lambda x0, y0: sigma(epsilon(x0 * mm, y0 * mm)), x0, y0))
+f = lambda x, y: sigma(epsilon(x * ureg.mm, y * ureg.mm))
+
+_X, _Y, _Z, _kind = resolve_plot_grid(mesh_grid(lambda x0, y0: f(x0, y0), x0, y0))
 _Xs, _Ys, _Zs = plot_axis(_X), plot_axis(_Y), plot_axis(_Z, ureg.MPa)
 _fig, _ax = plt.subplots()
 if _kind == 'scatter':

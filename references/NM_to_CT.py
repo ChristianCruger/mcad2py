@@ -1,44 +1,49 @@
-from sympy import solve, Symbol, Eq
+"""Auto-generated from a Mathcad worksheet by mcad2py."""
 import math
 import pint
+from sympy import Eq, Symbol, solve
+
+from mcad2py.runtime import disp
 ureg = pint.UnitRegistry()
 
-N = Symbol('N')
+
 M = Symbol('M')
 C = Symbol('C')
-T = Symbol('T')
 x_c = Symbol('x_c')
+T = Symbol('T')
 x_t = Symbol('x_t')
+N = Symbol('N')
 
 Eq(M, C * x_c - T * x_t)
 
 Eq(N, C + T)
+
 Eq(T, N - C)
 
-print(solve(Eq(M, C * x_c - (N - C) * x_t) , C))
-
+print(solve(Eq(M, C * x_c - (N - C) * x_t), C))
 
 N = 115798 * ureg.kN
+
 M = 23749 * ureg.kN * ureg.m
 
 c = 71 * ureg.mm
 
-w = 1.2 * ureg.m 
+w = 1.2 * ureg.m
 
-a_c =  500 * ureg.mm
+a_c = 500 * ureg.mm
 
-x_t = w/2 - c
+x_t = w / 2 - c
 print(x_t)
 
-x_c = w/2 - a_c/2
-print(x_c)
+x_c = w / 2 - a_c / 2
+print(disp(x_c, ureg.mm))
 
-C = (x_t * N + M) / (x_c + x_t)
-print(C.to(ureg.kN))
+C = (x_t * N + M) / (x_t + x_c)
+print(disp(C, ureg.kN))
 
 T = N - C
-print(T.to(ureg.kN))
+print(disp(T, ureg.kN))
 
 # check:
 
-print((C * x_c - T * x_t).to('kN*m'))
+print(disp((C * x_c - T * x_t), ureg.kN * ureg.m))

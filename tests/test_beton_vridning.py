@@ -88,7 +88,7 @@ def test_index_variable_is_integer_array():
 def test_indexed_assignment_emits_index_build():
     src = _src()
     assert "T_Ed = index_build(i, lambda i: 400)" in src
-    assert "n_sl = index_build(i, lambda i: math.ceil(" in src
+    assert "n_sl = index_build(i, lambda i: ceil(" in src
     assert "from mcad2py.runtime import" in src and "index_build" in src
 
 
@@ -137,14 +137,16 @@ def test_stepless_range_ir_has_no_step():
     assert expr_to_str(rng.stop) == "n"
 
 
-def test_ceil_builtin_maps_to_math_ceil():
-    assert "math.ceil(" in _src()
-    assert expr_to_str(ir.Call(func="ceil", args=[ir.Number("2.1")])) == "math.ceil(2.1)"
+def test_ceil_maps_to_dimensionless_aware_helper():
+    # ceil/floor/round are runtime helpers that reduce a dimensionless-but-
+    # unreduced Pint quantity (e.g. l/s = m/mm) before rounding.
+    assert "ceil(" in _src()
+    assert expr_to_str(ir.Call(func="ceil", args=[ir.Number("2.1")])) == "ceil(2.1)"
 
 
 def test_floor_and_round_builtins():
-    assert expr_to_str(ir.Call(func="floor", args=[ir.Number("2.9")])) == "math.floor(2.9)"
-    assert expr_to_str(ir.Call(func="round", args=[ir.Number("2.5")])) == "round(2.5)"
+    assert expr_to_str(ir.Call(func="floor", args=[ir.Number("2.9")])) == "floor(2.9)"
+    assert expr_to_str(ir.Call(func="round", args=[ir.Number("2.5")])) == "mround(2.5)"
 
 
 def test_inline_if_with_string_literals():

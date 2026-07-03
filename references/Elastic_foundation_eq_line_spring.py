@@ -1,7 +1,8 @@
+"""Auto-generated from a Mathcad worksheet by mcad2py."""
 import math
 import pint
 
-from mcad2py.runtime import cos
+from mcad2py.runtime import cos, power, disp
 ureg = pint.UnitRegistry()
 
 
@@ -17,7 +18,7 @@ k = 5000 * (ureg.kPa / ureg.m)
 
 # Analytical solution of beam on elastic foundation as per Hetenyi "Beams of elastic foundation" 11th print, 1979
 
-lambda_ = (3 * k / (E_c * t**3))**(1 / 4)
+lambda_ = power(3 * k / (E_c * t**3), 1 / 4)
 print(lambda_)
 
 # char length:
@@ -36,6 +37,8 @@ w = 300 * ureg.mm
 
 q = 1 * (ureg.kN / ureg.m) / w
 
+# [image: Image15.png]
+
 # deflection under wall:
 
 a = w / 2
@@ -43,9 +46,9 @@ a = w / 2
 b = w / 2
 
 y = q / (2 * k) * (2 - D(a) - D(b))
-print(y.to(ureg.mm))
+print(disp(y, ureg.mm))
 
 # Eq: line spring:
 
 K = 1 * (ureg.kN / ureg.m) / y
-print(K.to(ureg.kN * ureg.m**-1 / ureg.m))
+print(disp(K, ureg.kN * ureg.m**-1 / ureg.m))

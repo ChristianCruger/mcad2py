@@ -56,23 +56,33 @@ FUNCTIONS = {
     "exp": "math.exp",
     "ln": "math.log",
     "log": "math.log10",
-    "sqrt": "math.sqrt",
+    # ``** 0.5`` via a runtime helper so a unit-bearing radicand keeps its unit
+    # (Pint), unlike ``math.sqrt`` which rejects a dimensioned argument.
+    "sqrt": "sqrt",
     "abs": "abs",
     "length": "len",
-    "ceil": "math.ceil",
-    "floor": "math.floor",
-    "round": "round",
+    # Dimensionless-aware runtime helpers (Mathcad reduces e.g. l/s to a pure
+    # number before rounding; Pint keeps it as m/mm, so these reduce first).
+    "ceil": "ceil",
+    "floor": "floor",
+    "round": "mround",
     # Element-wise (2-arg) min/max so they broadcast over arrays under a
     # vectorize 'arrow'; ``np.minimum``/``np.maximum`` also work on scalars.
     "min": "np.minimum",
     "max": "np.maximum",
+    # Build a matrix by stacking column vectors side by side (unit-aware).
+    "augment": "augment",
 }
 
 # Runtime helpers that are *called by name* in generated code (so a Call to one
 # triggers its import): the angle-aware trig wrappers, ``linterp`` (Mathcad's
 # linear interpolation, which reorders args and is unit-aware), and
 # ``CreateMesh`` (a 3D-plot grid builder) -- see runtime.py.
-RUNTIME_IMPORTS = ("sin", "cos", "tan", "cot", "linterp", "CreateMesh")
+RUNTIME_IMPORTS = (
+    "sin", "cos", "tan", "cot", "linterp", "CreateMesh", "augment",
+    "ceil", "floor", "mround", "sqrt", "nth_root", "power", "disp", "elementwise",
+    "mc_min", "mc_max",
+)
 
 # Mathcad symbolic command keyword (first id of a <ml:command> sequence) ->
 # SymPy callable. Symbolic regions emit ``<callable>(expr, *args)``.

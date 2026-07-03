@@ -177,3 +177,98 @@ read this file when parsing a new schema construct or debugging a parser edge ca
   0-based indexing), `convergence-tolerance` = Mathcad `TOL`, `constraint-tolerance` = `CTOL` (both
   per-file, default `0.001`). Not consumed yet — `TOL`/`CTOL` will drive `find`/`quad` tolerances
   when solve blocks land.
+
+## `LT91.mcdx` constructs (Stage 1 — leaf features)
+
+- **Data table** = a `<region>` whose child is `<ml:spec-table>` holding one `<math><define>` per
+  column (Mathcad names the resulting vectors by their column headers). `_parse_region` returns a
+  **list** of `Define`s for it (and `parse_worksheet` flattens the list), so one region expands to N
+  column regions — otherwise the whole table is silently dropped (only the region's first child is
+  inspected). Each column is `<apply><scale/> <matrix col-vector> <unit-or-placeholder>`: a real unit
+  (`Fz := col(…) * ureg.kN`) rides the normal `Quantity` path; a **placeholder** unit (a dimensionless
+  or string column like `LS`) is stripped in `_parse_apply` so the value stands alone (else it emits
+  `col(…) * None`). String columns become `col('ULS', …)` (an object array via `col()`).
+- **`augment(a, b, …)`** = a `FUNCTION`-labelled call → runtime `augment` (in `RUNTIME_IMPORTS`).
+  Stacks column vectors side by side into a matrix. Columns may carry **different** units (Mathcad
+  allows a heterogeneous matrix here, e.g. `augment(ones(n), Xs_mm, Ys_mm)` mixing dimensionless and
+  length columns), so the result is a NumPy **object array of per-element Pint scalars**; a later
+  `matmul` propagates units column by column. `col()`/`matrix()` similarly fall back to an object
+  array when their elements' units are incompatible (a mixed `[strain; curvature]` vector).
+- **Bare `Σ`** = `<apply><summation/> <lambda>(boundVars=placeholder) <upperBound><placeholder/></apply>`
+  — no index variable, no bounds. Means "sum every element of the (already-built) vector" → `ir.VectorSum`
+  → runtime `total(v)` (unit-aware). Detected in `_parse_integral_like` by the lambda having **no
+  params** (a real indexed sum always has an index var + integer bounds → `ir.Summation`).
+- **Column extraction** `A^<i>` = `<apply><matcol/> <base> <index>` → `ir.MatCol` → runtime
+  `matcol(m, i)` (the `i`-th column as a 1-D vector, unit-aware). Seen feeding plot equations
+  (`Contour^<0>`/`Contour^<1>` as x/y outlines).
+- **Matrix multiplication** uses the **same `<ml:mult>` tag** as scalar `*` (and as the element-wise
+  product under a `vectorize` arrow) — Prime does not distinguish them in XML. Codegen emits a runtime
+  `matmul(a, b)` (unit-aware `@`) only when **both operands are statically matrix-shaped**
+  (`_is_matmul`): a `MatrixLiteral` with `rows>1 and cols>1`, an `augment(…)` call, a `Transpose` of
+  one, or a nested matmul on the left; and an array-shaped right operand (matrix/vector literal,
+  `matcol`, transpose, augment, matmul). A matrix times a *scalar*, and an element-wise vector product
+  under `vectorize`, stay ordinary `*`. This is a heuristic (a matmul between two *named* matrix
+  variables is not detected) but covers every product in `LT91`.
+- **Multi-target destructuring** `[a; b; c] := <expr>` = a `<ml:matrix>` of ids as the define target
+  with an ordinary value → `ir.MultiAssign` → `a, b, c = tuple(<expr>)` (unpack a returned vector).
+  Guarded so a `<matrix>` target whose value is a native `…Control` still routes to the ComboBox path.
+  (When the value is a multi-line program, the program-as-helper + destructure is Stage 2.)
+- **`<ml:TextBoxScriptableControl>`** as a **standalone** region (`<math>` child, not a define value):
+  a status widget with **no `RL` cache**. Its JScript isn't transpiled; instead the expression it
+  carries in `PiggybackNode > inputControlInputField` — any expression, often a boolean (`λ < λlim`,
+  `ERR = 0`) but possibly a plain variable the JScript inspects — becomes an `ir.StatusControl`, which
+  emits `print("<expr>", <expr>, "<message>")`: the expression source, its live value, and the cached
+  `<ml:vals>` message (`"All loadcases pass!"`, `"OK!"`), so the reader sees how the value drove the
+  message. (Contrast `_parse_scriptable_control`, which recovers a define-*driving* control's cached
+  `RL` value.)
+## `LT91.mcdx` constructs (Stage 2 — imperative programs)
+
+- **Multi-line program** (`<ml:program>` with statements) → a new statement IR (`ir.ProgramBlock` of
+  `LocalAssign`/`ForLoop`/`IfStmt`/`Return`/`TryCatch`), distinct from the value-`Program` (piecewise
+  ternary). `parse_expr` treats a program as imperative when it has a `localDefine`/`for`/`return`/
+  `tryCatch` child (else it's a single value expression). Emitted as a Python **`def`**: a function
+  (`Neutral(e,kx,ky) := …`) keeps its params; a plain variable (`As := …`) becomes a nullary helper
+  `def _As(): …` bound with `As = _As()`; a multi-target `[Xs;Ys;n] := …` destructures
+  `Xs, Ys, n = tuple(_Xs_Ys_n())`. Statement forms: `<ml:localDefine>` = `←` local assign,
+  `<ml:for>` = `for v in arange(…)`, statement-`<ml:if>`/`then`/`elseif`/`else`, `<ml:return>`,
+  `<ml:tryCatch>` = `try/except Exception`. A bare trailing expression is an implicit `return`.
+- **Growable program vectors** — `X[i] := …` inside a program (Mathcad auto-grows/zero-fills) →
+  `X = vec_set(X, i, v)` (codegen pre-declares `X = None`). `vec_set` grows an object array and
+  **consolidates** it back to a fused Pint array once homogeneous (so downstream `kx * X` broadcasts).
+  A `<ml:sequence>` index `Ans[j, 0]` = a 2-D element (`ir.Index2D`) → `vec_set(Ans, (j, 0), v)`.
+- **`max`/`min` are reductions**, always: Mathcad flattens *all* arguments (scalars and vectors) and
+  returns the single min/max — `mc_max`/`mc_min` (equivalent to `np.min`/`np.max` over the flattened
+  args, unit-aware). There is no element-wise `np.minimum`/`np.maximum`; element-wise behaviour comes
+  from the **vectorize arrow applying a function per element**. So `min(v)`/`max(v,s)`/`min(a,b,c)` all
+  reduce to a scalar (fixes `A_smin = max(vectorize(0.1·N)/f_yd, 0.002·A_c)` → scalar).
+- **`elementwise` wrapping** — a *single-argument* scalar function that the vectorize arrow applies per
+  element is wrapped `f = elementwise(f)`: a branching program (`σ_c`) or a **two-argument** min/max
+  *clamp* (`σ_s := min(f_yd, max(-f_yd, E_s·ε))`). It passes a scalar straight through and maps a
+  vector per element (so a clamp applies per component instead of collapsing). A *single*-argument
+  min/max is a reduction of its vector arg (`UR(ε) := min(ε)/ε_cu`), which `mc_min` already handles for
+  either a scalar or a vector, so such a function is **not** wrapped (we can't know `ε`'s type at parse
+  time, and the reduction is correct for both).
+- **Dimensionless reduction for roots/powers** — Pint keeps a ratio of same-dimension quantities
+  *unreduced* (`200 mm / d` = `mm/mm`, `ρ = A/(b·d)` = `mm²/mm²`); a `sqrt`/nth-root/fractional power of
+  that would leave fractional `mm**0.5` unit noise (and floating-point `m**1e-16` residue that breaks a
+  later `< 1` compare). So `√`/nthRoot → `nth_root(x, n)` and a *non-integer* `**` → `power(x, e)`, both
+  reducing a dimensionless base first (a *dimensioned* radicand keeps its unit: `√(m²) = m`). Likewise
+  `ceil`/`floor`/`round` are dimensionless-aware runtime helpers.
+- **`disp(value, unit)`** replaces `value.to(unit)` for an inline `=` echo: it converts when
+  dimensionally compatible, else divides (the residual-unit form Mathcad shows for a *loose* override,
+  e.g. a `kN·m` moment displayed with a `kN` override), so a stray override can't crash the echo.
+- **Data-table units** — a `<spec-table>` column with a real unit rides the normal `Quantity` path
+  (`Fz := col(…) * ureg.kN`), preserving units; a mixed matrix keeps per-element units (object array)
+  when a plain *nonzero* entry sits beside dimensioned ones (a strain matrix `[1, -l/2, -w/2]`), while
+  a plain *zero* is absorbed into the prevailing unit (`[[w,0],[0,l]]`).
+- **Parametric `<xyPlot>`s** — a plot has a *sampling domain* only when one axis is a bare **range**
+  variable (`y = f(x)` over a range `x`, sampled element-wise with `sample(lambda x: …, x)`). When both
+  axes are plain data vectors (`LT91`'s section outline, rebar scatter, neutral-axis line — e.g. x =
+  `matcol(Contour, 0)`, y = `matcol(Contour, 1)`), there is no domain: each axis expression is emitted
+  directly (`plot_axis(matcol(Contour, 0), ureg.mm)`) and the traces are plotted point-by-point.
+  `_detect_domain` therefore only accepts a `Name` that is in `range_names`; a bare data-vector `Name`
+  (`X_s`, built by an imperative program) is *not* mistaken for a domain. `plot_axis` also reduces a
+  dimensionless-but-unreduced axis ratio (a section in `m` shown with an `mm` override → `m/mm`, which
+  must collapse to `650`, not read as `0.65`).
+- **Known limitation:** a solve block's guess/solution units stay unreduced, e.g. a strain shows as
+  `kN/m²/GPa` rather than a plain number — correct value, verbose unit.
