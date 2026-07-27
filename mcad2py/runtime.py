@@ -20,6 +20,11 @@ def _radians(x: object) -> float:
 
     Accepts a plain number (already radians, per Mathcad) or a Pint quantity
     carrying an angle/dimensionless unit (e.g. ``deg``, ``rad``).
+
+    Mathcad's angle units are *dimensionless scales* (``deg`` = π/180), so this
+    doubles as "reduce a pure-number argument to a float": the hyperbolic and
+    inverse-trig builtins below take a plain number, and feeding one an angle
+    (or an unreduced ratio like ``mm/mm``) must give its radian/reduced value.
     """
     to = getattr(x, "to", None)
     if callable(to):
@@ -44,6 +49,121 @@ def tan(x: object) -> float:
 
 def cot(x: object) -> float:
     return 1.0 / math.tan(_radians(x))
+
+
+def sec(x: object) -> float:
+    return 1.0 / math.cos(_radians(x))
+
+
+def csc(x: object) -> float:
+    return 1.0 / math.sin(_radians(x))
+
+
+def sinc(x: object) -> float:
+    """Mathcad ``sinc(z) = sin(z)/z`` (``1`` at ``0``).
+
+    The *unnormalised* sinc -- note ``np.sinc`` is the normalised
+    ``sin(πx)/(πx)`` and would be wrong here.
+    """
+    z = _radians(x)
+    return 1.0 if z == 0.0 else math.sin(z) / z
+
+
+# Inverse trig / hyperbolic results are angles in radians, returned as plain
+# floats -- exactly as Mathcad stores them (its ``deg`` is a dimensionless
+# π/180 scale, so a ``deg`` display override is applied by ``disp``).
+
+
+def asin(x: object) -> float:
+    return math.asin(_radians(x))
+
+
+def acos(x: object) -> float:
+    return math.acos(_radians(x))
+
+
+def atan(x: object) -> float:
+    return math.atan(_radians(x))
+
+
+def acot(x: object) -> float:
+    """Inverse cotangent, ``π/2 - atan(x)`` -- the branch on ``(0, π)``.
+
+    Mathcad follows the Maple/MuPAD convention here (continuous across ``x=0``),
+    not Mathematica's ``atan(1/x)``. The two agree for positive ``x`` and differ
+    for negative: ``references/trig.mcdx`` caches ``acot(-2) = 2.67794``, i.e.
+    ``π/2 - atan(-2)``, not ``atan(-0.5) = -0.46365``.
+    """
+    return math.pi / 2 - math.atan(_radians(x))
+
+
+def asec(x: object) -> float:
+    return math.acos(1.0 / _radians(x))
+
+
+def acsc(x: object) -> float:
+    return math.asin(1.0 / _radians(x))
+
+
+def atan2(x: object, y: object) -> float:
+    """Mathcad ``atan2(x, y)``: the angle of the point ``(x, y)``, in ``(-π, π]``.
+
+    Note the argument order is the *opposite* of Python's ``math.atan2(y, x)``.
+    """
+    return math.atan2(_radians(y), _radians(x))
+
+
+def angle(x: object, y: object) -> float:
+    """Mathcad ``angle(x, y)``: like :func:`atan2` but wrapped to ``[0, 2π)``."""
+    return math.atan2(_radians(y), _radians(x)) % (2 * math.pi)
+
+
+def sinh(x: object) -> float:
+    return math.sinh(_radians(x))
+
+
+def cosh(x: object) -> float:
+    return math.cosh(_radians(x))
+
+
+def tanh(x: object) -> float:
+    return math.tanh(_radians(x))
+
+
+def coth(x: object) -> float:
+    return 1.0 / math.tanh(_radians(x))
+
+
+def sech(x: object) -> float:
+    return 1.0 / math.cosh(_radians(x))
+
+
+def csch(x: object) -> float:
+    return 1.0 / math.sinh(_radians(x))
+
+
+def asinh(x: object) -> float:
+    return math.asinh(_radians(x))
+
+
+def acosh(x: object) -> float:
+    return math.acosh(_radians(x))
+
+
+def atanh(x: object) -> float:
+    return math.atanh(_radians(x))
+
+
+def acoth(x: object) -> float:
+    return math.atanh(1.0 / _radians(x))
+
+
+def asech(x: object) -> float:
+    return math.acosh(1.0 / _radians(x))
+
+
+def acsch(x: object) -> float:
+    return math.asinh(1.0 / _radians(x))
 
 
 def elementwise(fn):
@@ -94,14 +214,35 @@ def mc_min(*args):
     return min(_flatten_scalars(args))
 
 
-def disp(value, unit):
-    """Render ``value`` in a display unit (Mathcad's inline ``=`` override).
+# Pint names of the angle units, whose Mathcad meaning is a dimensionless scale.
+_ANGLE_UNITS = frozenset(
+    ("radian", "degree", "gradian", "arcminute", "arcsecond", "turn", "revolution")
+)
 
-    Converts when dimensionally compatible; otherwise divides, giving the
-    residual-unit form Mathcad shows for a *loose* override (e.g. a ``kN·m``
-    moment displayed with a ``kN`` override shows as ``… m``). Never raises, so a
-    stray display override can't crash the computation.
+
+def disp(value, unit=None):
+    """Render ``value`` for a Mathcad inline ``=``.
+
+    With a display-unit override, converts when dimensionally compatible;
+    otherwise divides, giving the residual-unit form Mathcad shows for a *loose*
+    override (e.g. a ``kN·m`` moment displayed with a ``kN`` override shows as
+    ``… m``). Never raises, so a stray display override can't crash the
+    computation.
+
+    A *plain number* displayed with an angle unit is the one case where the
+    value isn't a Pint quantity yet still converts: the inverse trig/hyperbolic
+    builtins return bare radians (Mathcad's ``deg`` being just the π/180 scale),
+    so ``atan(B) = … deg`` has to rescale rather than divide.
+
+    With **no** override (Mathcad's automatic display) a *dimensionless but
+    unreduced* quantity is collapsed to a plain number: Pint leaves ``sin(θ)/θ``
+    as ``0.0164 1/degree`` and ``l/s`` as ``m/mm``, where Mathcad -- for which
+    ``deg`` is a plain π/180 scale -- shows the reduced ``0.9423``.
     """
+    if unit is None:
+        return _reduce_dimensionless(value)
+    if not hasattr(value, "to") and str(getattr(unit, "units", unit)) in _ANGLE_UNITS:
+        return unit._REGISTRY.Quantity(value, "radian").to(unit)
     try:
         return value.to(unit)
     except Exception:
@@ -136,14 +277,16 @@ def power(base, exp):
 
 def _reduce_dimensionless(x):
     """A dimensionless Pint quantity (even *unreduced*, e.g. ``m/mm``) -> a plain
-    float; a dimensioned quantity or plain number is returned unchanged.
+    number (or plain array); a dimensioned quantity or plain number is returned
+    unchanged.
 
     Mathcad reduces ``l/s`` (both lengths) to a pure number before ``round`` etc.,
     but Pint keeps ``1.3 m / (300 mm)`` as magnitude ``0.00433`` with unit
     ``m/mm``, so rounding the raw magnitude would give ``0``. This collapses that.
     """
     if hasattr(x, "dimensionality") and x.dimensionless:
-        return float(x.to("dimensionless").magnitude)
+        mag = x.to("dimensionless").magnitude
+        return mag if _is_arraylike(mag) else float(mag)
     return x
 
 

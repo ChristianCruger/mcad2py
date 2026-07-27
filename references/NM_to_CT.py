@@ -33,7 +33,7 @@ w = 1.2 * ureg.m
 a_c = 500 * ureg.mm
 
 x_t = w / 2 - c
-print(x_t)
+print(disp(x_t))
 
 x_c = w / 2 - a_c / 2
 print(disp(x_c, ureg.mm))

@@ -257,6 +257,9 @@ read this file when parsing a new schema construct or debugging a parser edge ca
 - **`disp(value, unit)`** replaces `value.to(unit)` for an inline `=` echo: it converts when
   dimensionally compatible, else divides (the residual-unit form Mathcad shows for a *loose* override,
   e.g. a `kN·m` moment displayed with a `kN` override), so a stray override can't crash the echo.
+  Two further cases (see the trig/hyperbolic section below): a **plain number with an angle override**
+  is rescaled as radians rather than divided, and `disp(value)` with **no** override reduces a
+  dimensionless-but-unreduced quantity.
 - **Data-table units** — a `<spec-table>` column with a real unit rides the normal `Quantity` path
   (`Fz := col(…) * ureg.kN`), preserving units; a mixed matrix keeps per-element units (object array)
   when a plain *nonzero* entry sits beside dimensioned ones (a strain matrix `[1, -l/2, -w/2]`), while
@@ -271,4 +274,40 @@ read this file when parsing a new schema construct or debugging a parser edge ca
   dimensionless-but-unreduced axis ratio (a section in `m` shown with an `mm` override → `m/mm`, which
   must collapse to `650`, not read as `0.65`).
 - **Known limitation:** a solve block's guess/solution units stay unreduced, e.g. a strain shows as
-  `kN/m²/GPa` rather than a plain number — correct value, verbose unit.
+  `kN/m²/GPa` rather than a plain number — correct value, verbose unit. (An *echoed* ratio no longer
+  has this problem — see the automatic-display note below.)
+
+## `trig.mcdx` / `hyperbolic.mcdx` constructs (the two function families)
+
+Both sheets are catalogues: one angle, then every member of the family applied to it. No new XML
+constructs — the parser already handled them — but they pin down several **semantics**:
+
+- **Angles are dimensionless in Mathcad.** `deg` is a plain π/180 scale, not a distinct dimension.
+  So `sinh(103.2 deg)` means `sinh(1.80118)`, and `atan(x) = … deg` displays a bare radian result in
+  degrees. The runtime's `_radians` coercion therefore serves *both* jobs: converting an angle
+  argument for the forward trig functions, and reducing any pure-number argument (an angle, or an
+  unreduced Pint ratio like `mm/mm`) to a float for the hyperbolic/inverse ones.
+- **Inverse trig/hyperbolic return bare floats of radians**, matching what Mathcad stores. The
+  display override is applied by `disp`, which special-cases a value with no `.to()` and an *angle*
+  unit (`_ANGLE_UNITS`): it rescales via `Quantity(value, "radian").to(unit)`. Without that case it
+  would fall through to `value / ureg.deg` and report `0.593 1/degree` instead of `34 deg`.
+- **Automatic display reduces a ratio.** With an *empty* (placeholder) override Mathcad shows the
+  reduced number, but Pint leaves `sin(θ)/θ` as `0.0164 1/degree` and `ρ = A/(b·d)` as
+  `783.98 mm²/m²`. So an echo whose value contains a **division** is wrapped `disp(<expr>)` (one-arg
+  form → `_reduce_dimensionless`); other echoes stay bare, keeping generated cells readable. This is
+  what makes `LT91`'s `ε_yd`, `ρ`, `n_0` and the `UR_vc` utilisation vector match the cache — they
+  were previously displayed ~1000× off, with the residual unit as the only hint.
+- **Conventions that differ from Python/NumPy** — worth checking against, not guessing:
+  `atan2(x, y)` takes its arguments in the **opposite** order to `math.atan2(y, x)`; `angle(x, y)` is
+  the same thing wrapped to `[0, 2π)`; `sinc(z)` is the **unnormalised** `sin(z)/z` (`np.sinc` is
+  `sin(πz)/(πz)`); `asec`/`acsc` are `acos(1/x)`/`asin(1/x)`; and `acot` is `π/2 - atan(x)`, the
+  `(0, π)` branch (the Maple/MuPAD convention, *not* Mathematica's `atan(1/x)`).
+- **`acot`'s negative branch is confirmed**, not inferred: the sheet caches `acot(-2) = 2.67794`
+  (= `π/2 - atan(-2)`), ruling out `atan(1/x)`, which would give `-0.46365`. The two conventions agree
+  for positive arguments, so this is the only case that distinguishes them. `atan(-6) = -1.40565` is
+  cached alongside it, confirming `atan` keeps the ordinary signed `(-π/2, π/2)` branch.
+- **`sec` arrives without a `labels` attribute** (`<ml:id xml:space="preserve">sec</ml:id>`, no
+  `labels="FUNCTION"`), presumably because the name collides with the `sec`/second unit. It resolves
+  anyway: `_parse_apply` takes the first child of `<ml:apply>` as the callable regardless of label.
+- **Multi-argument builtins** wrap their arguments in `<ml:sequence>` (`atan2`, `angle`) — already
+  handled by the generic apply path.

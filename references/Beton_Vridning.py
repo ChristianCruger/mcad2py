@@ -81,7 +81,7 @@ f_cd = f_ck / gamma_c
 f_yd = f_yk / gamma_s
 
 A_t = n_t * (math.pi / 4 * phi_t**2)
-print(A_t)
+print(disp(A_t))
 
 nu_t = 0.7 * (0.7 - f_ck / 200)
 
@@ -89,7 +89,7 @@ nu_t = 0.7 * (0.7 - f_ck / 200)
 
 t_ef = mc_max(A / u, 2 * (c + phi_t + phi / 2))
 
-print(t_ef / 2)
+print(disp(t_ef / 2))
 
 print(A)
 
@@ -116,10 +116,10 @@ n_sl = index_build(i, lambda i: ceil(A_sl[i] / (math.pi / 4 * phi**2)))
 s = index_build(i, lambda i: 2 * A_t * A_k * f_yd * cottheta / (T_Ed[i] * 10**6))
 
 s_t = index_build(i, lambda i: mc_min(u / 8, s[i]))
-print(s_t[i])
+print(disp(s_t[i]))
 
 k = index_build(i, lambda i: T_Ed[i] / T_Rdmax)
-print(k[i])
+print(disp(k[i]))
 
 accept = index_build(i, lambda i: 'ok' if k[i] >= 0 else 'tværsnit overudnyttet')
 

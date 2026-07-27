@@ -39,7 +39,7 @@ When adding features, respect this boundary — parsers produce IR, backends con
 | [parser/regions.py](mcad2py/parser/regions.py) | Worksheet→ordered regions; **sort by (top, left)** for reading order |
 | [ir.py](mcad2py/ir.py) | Backend-agnostic node dataclasses |
 | [mapping.py](mcad2py/mapping.py) | Data tables: operators, builtins, constants, Greek, unit aliases |
-| [runtime.py](mcad2py/runtime.py) | Helpers imported by generated code: angle-aware `sin/cos/tan/cot`, `col`/`arange`/`index_build`/`vectorize`/`transpose`, `linterp` (unit-aware linear interp), `integral` (scipy `quad`), `summation`, `solve_block` (scipy `fsolve`), `sample`/`plot_axis` (matplotlib plots) |
+| [runtime.py](mcad2py/runtime.py) | Helpers imported by generated code: the full angle-aware trig + hyperbolic families, `col`/`arange`/`index_build`/`vectorize`/`transpose`, `linterp` (unit-aware linear interp), `integral` (scipy `quad`), `summation`, `solve_block` (scipy `fsolve`), `sample`/`plot_axis` (matplotlib plots) |
 | [emit/codegen.py](mcad2py/emit/codegen.py) | Precedence-aware expression printer; shared by both backends |
 | [emit/notebook_backend.py](mcad2py/emit/notebook_backend.py) | IR→`.ipynb`; region→cell; bare last line echoes result |
 | [emit/py_backend.py](mcad2py/emit/py_backend.py) | IR→`.py`; evaluations become `print(...)` |
@@ -56,7 +56,9 @@ adding support for a new XML construct.
 
 - Generated trig uses runtime helpers (`tan(phi)`), not `math.tan(phi.to('rad').magnitude)`.
 - Display units come from `unitOverride`; emit `x.to(ureg.<unit>)` for the echo (or `x / (<scale>)`
-  when the override is a pure numeric scale like `10**-6` — see `_display`).
+  when the override is a pure numeric scale like `10**-6` — see `_display`). With *no* override, an
+  echo whose value contains a **division** is wrapped `disp(<expr>)` so a dimensionless-but-unreduced
+  ratio (`mm²/m²`, `1/degree`) collapses the way Mathcad shows it.
 - Unknown/unsupported constructs emit a visible `# TODO unsupported: <note>` so output still
   loads — never silently drop a region.
 - Add new builtins/units/constants to [mapping.py](mcad2py/mapping.py) (data, not code).
@@ -136,12 +138,29 @@ both axes data vectors) are asserted too: the emitted direct-axis form (`plot_ax
 ureg.mm)`, no `sample(lambda …)`) and a rendered check that the outline is a ±650 mm rectangle and the 12
 rebars sit at ±583 mm (i.e. the `m`→`mm` override reduced). The numeric tests still strip plot blocks in
 the exec purely for speed.
+[tests/test_trig_hyperbolic.py](tests/test_trig_hyperbolic.py) covers `references/trig.mcdx` and
+`references/hyperbolic.mcdx` — two **catalogue sheets** (one angle, then every member of the family
+applied to it), so between them they pin the whole trig + hyperbolic group. Both run end-to-end and
+every echoed region is matched to the cached `result.xml` by parsing the printed output in region
+order. Plus: that the forward trig reads the angle *unit* (`sin(34 deg)` = 0.559) while the hyperbolic
+and inverse functions reduce their argument to a pure number (`sinh(103.2 deg)` = `sinh(1.80118)` —
+Mathcad angles are dimensionless); that inverse results are bare radians and `disp` **rescales** them
+for a `deg` override (rather than dividing, which would read `0.593 1/degree`); that `disp` with no
+override reduces `sin(θ)/θ` from `1/degree` to `0.9423` and is emitted for divisions *only*; the four
+conventions that differ from Python/NumPy (`atan2`'s reversed arg order, `angle`'s `[0, 2π)` wrap,
+`sinc` unnormalised vs `np.sinc`, and `acot`'s `(0, π)` branch — pinned by the sheet's cached
+`acot(-2) = 2.67794`, the one argument sign where that convention differs from `atan(1/x)`, alongside
+`atan(-6) = -1.40565` for the ordinary signed branch); and round-trip identities for all twelve
+forward/inverse pairs.
 
 **Reference files are test fixtures — don't edit them.** Tests compare generated output against each
 `.mcdx`'s cached `result.xml`; changing a worksheet (e.g. a `phi` value) silently shifts every
 dependent cached number and breaks the hardcoded expected values.
 
 ## Not yet supported (next targets)
+
+For a full **function-catalog coverage map** — every Mathcad function category vs. what we emit, plus a
+prioritized TODO — see [docs/mathcad-function-coverage.md](docs/mathcad-function-coverage.md).
 
 `find` solve blocks work; `minerr`/`maximize`/`minimize` don't yet. `solve_block` (runtime) falls back
 to a bounded random-restart search when `fsolve` reports success without actually reducing the
@@ -155,7 +174,9 @@ branching/clamp function is wrapped `elementwise` so the vectorize arrow applies
 LT91 schema notes). Square roots now emit `nth_root(x, n)` (a *dimensioned* radicand keeps its unit; a
 dimensionless one reduces first). Parametric xy plots (both axes are data vectors, e.g. a section
 outline) now render correctly — a sampling domain is only inferred when an axis is a bare *range* (see
-the schema note).
+the schema note). The **trig and hyperbolic families are complete** (including `sec`/`csc`/`sinc`,
+`atan2`/`angle`, and all six inverse hyperbolics), with `acot`'s Maple/MuPAD `(0, π)` branch confirmed
+against a cached negative argument (see the schema note).
 `TOL`/`CTOL` from `calculation.xml` aren't consumed yet (solve uses fsolve defaults).
 Scriptable-control JScript is **intentionally** not transpiled — we surface the control's cached
 output value (the `RL` attribute) instead, which is faithful as long as the worksheet was last saved

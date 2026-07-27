@@ -19,7 +19,7 @@ mu = tan(phi)
 print(mu)
 
 k = (1 + sin(phi)) / (1 - sin(phi))
-print(k)
+print(disp(k))
 
 # internal cohesion:
 
@@ -27,7 +27,7 @@ c = f_cd / (2 * nth_root(k, 2))
 print(disp(c, ureg.MPa))
 
 v = 2 / nth_root(30, 2)
-print(v)
+print(disp(v))
 
 c_eff = v * c
 print(disp(c_eff, ureg.MPa))

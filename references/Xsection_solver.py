@@ -66,7 +66,7 @@ cov = 75 * ureg.mm
 Ø = col(0, 25) * ureg.mm
 
 z_s = col(h / 2 - cov - Ø[0] * 0.5, -(h / 2) + cov + Ø[1] * 0.5)
-print(z_s)
+print(disp(z_s))
 
 s = col(150, 150) * ureg.mm
 

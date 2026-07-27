@@ -485,12 +485,12 @@ def echo_expr(region: ir.Region) -> str | None:
         target = region.target.py
         if region.display_unit is not None:
             return _display(target, region.display_unit)
-        return target
+        return _auto(target, region)
     if isinstance(region, ir.Evaluate):
         base = expr_to_str(region.value)
         if region.display_unit is not None:
             return _display(f"({base})", region.display_unit)
-        return base
+        return _auto(base, region)
     if isinstance(region, ir.MultiAssign):
         if not region.evaluate:
             return None
@@ -506,8 +506,35 @@ def echo_expr(region: ir.Region) -> str | None:
         base = f"{region.target.py}[{region.index.py}]"
         if region.display_unit is not None:
             return _display(f"({base})", region.display_unit)
-        return base
+        return _auto(base, region)
     return None
+
+
+def _auto(value: str, region: ir.Region) -> str:
+    """An echo with no display override -- Mathcad's *automatic* display.
+
+    Wrapped in ``disp(...)`` only when the value came from a division, the one
+    place Pint can leave a dimensionless result unreduced (``sin(θ)/θ`` as
+    ``1/degree``, ``l/s`` as ``m/mm``) where Mathcad shows the plain number.
+    Everything else echoes bare, so generated cells stay readable.
+    """
+    return f"disp({value})" if _has_division(getattr(region, "value", None)) else value
+
+
+def _has_division(node: ir.Expr | None) -> bool:
+    """True if ``node`` divides anywhere (including a reciprocal ``x**-n``)."""
+    if node is None:
+        return False
+    for sub in _walk(node):
+        if isinstance(sub, ir.BinOp) and sub.op == "div":
+            return True
+        if (
+            isinstance(sub, ir.BinOp)
+            and sub.op == "pow"
+            and isinstance(sub.right, ir.UnaryOp)
+        ):
+            return True
+    return False
 
 
 def _display(value: str, unit: ir.Expr) -> str:
@@ -784,6 +811,10 @@ def _used_runtime(ws: ir.Worksheet) -> set[str]:
         du = getattr(region, "display_unit", None)
         if du is not None and _has_unit(du):
             found.add("disp")
+        elif du is None and echo_expr(region) is not None and _has_division(
+            getattr(region, "value", None)
+        ):
+            found.add("disp")  # automatic display of a possibly-unreduced ratio
         if isinstance(region, ir.Define) and _needs_elementwise(region):
             found.add("elementwise")
         if isinstance(region, ir.SolveBlock):

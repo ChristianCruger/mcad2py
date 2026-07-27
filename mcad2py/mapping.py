@@ -46,13 +46,37 @@ UNARY_PREC = 3
 # Trig functions resolve to angle-aware helpers from mcad2py.runtime
 # (imported by name into the generated module), so they appear bare here.
 FUNCTIONS = {
+    # Trigonometric: the forward ones read an angle (deg/rad) and the inverse
+    # ones return bare radians, as Mathcad does. ``atan2``/``angle`` take their
+    # arguments as (x, y) -- the reverse of Python's ``math.atan2``.
     "sin": "sin",
     "cos": "cos",
     "tan": "tan",
     "cot": "cot",
-    "asin": "math.asin",
-    "acos": "math.acos",
-    "atan": "math.atan",
+    "sec": "sec",
+    "csc": "csc",
+    "sinc": "sinc",
+    "asin": "asin",
+    "acos": "acos",
+    "atan": "atan",
+    "acot": "acot",
+    "asec": "asec",
+    "acsc": "acsc",
+    "atan2": "atan2",
+    "angle": "angle",
+    # Hyperbolic: the argument is a pure number; an angle reduces to radians.
+    "sinh": "sinh",
+    "cosh": "cosh",
+    "tanh": "tanh",
+    "coth": "coth",
+    "sech": "sech",
+    "csch": "csch",
+    "asinh": "asinh",
+    "acosh": "acosh",
+    "atanh": "atanh",
+    "acoth": "acoth",
+    "asech": "asech",
+    "acsch": "acsch",
     "exp": "math.exp",
     "ln": "math.log",
     "log": "math.log10",
@@ -79,7 +103,11 @@ FUNCTIONS = {
 # linear interpolation, which reorders args and is unit-aware), and
 # ``CreateMesh`` (a 3D-plot grid builder) -- see runtime.py.
 RUNTIME_IMPORTS = (
-    "sin", "cos", "tan", "cot", "linterp", "CreateMesh", "augment",
+    "sin", "cos", "tan", "cot", "sec", "csc", "sinc",
+    "asin", "acos", "atan", "acot", "asec", "acsc", "atan2", "angle",
+    "sinh", "cosh", "tanh", "coth", "sech", "csch",
+    "asinh", "acosh", "atanh", "acoth", "asech", "acsch",
+    "linterp", "CreateMesh", "augment",
     "ceil", "floor", "mround", "sqrt", "nth_root", "power", "disp", "elementwise",
     "mc_min", "mc_max",
 )

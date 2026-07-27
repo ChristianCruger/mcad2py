@@ -19,7 +19,7 @@ k = 5000 * (ureg.kPa / ureg.m)
 # Analytical solution of beam on elastic foundation as per Hetenyi "Beams of elastic foundation" 11th print, 1979
 
 lambda_ = power(3 * k / (E_c * t**3), 1 / 4)
-print(lambda_)
+print(disp(lambda_))
 
 # char length:
 

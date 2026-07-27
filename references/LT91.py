@@ -71,12 +71,12 @@ f_yd = f_yk / 1.15
 E_s = 200 * ureg.GPa
 
 alpha = E_s / E_c
-print(alpha)
+print(disp(alpha))
 
 # Strain limits
 
 epsilon_yd = f_yd / E_s
-print(epsilon_yd)
+print(disp(epsilon_yd))
 
 epsilon_ud = 9 / 100
 
@@ -112,10 +112,10 @@ s_x = 300 * ureg.mm
 s_y = 300 * ureg.mm
 
 n_s = col(mround(l_c / s_x), mround(w_c / s_y), mround(l_c / s_x), mround(w_c / s_y)) - 2
-print(n_s)
+print(disp(n_s))
 
 stirrup = Contour + matrix(5, 2, cov + ø_w / 2, cov + ø_w / 2, -cov - ø_w / 2, -cov - ø_w / 2, cov + ø_w / 2, cov + ø_w / 2, -cov - ø_w / 2, -cov - ø_w / 2, cov + ø_w / 2, cov + ø_w / 2)
-print(stirrup)
+print(disp(stirrup))
 
 s = vectorize(col(l_c - 2 * cov - 2 * ø_w, w_c - 2 * cov - 2 * ø_w, l_c - 2 * cov - 2 * ø_w, w_c - 2 * cov - 2 * ø_w) * (1 / (n_s + 1)))
 print(disp(s, ureg.mm))
@@ -251,10 +251,10 @@ l_0 = h_c * 3
 I_c = mc_min(Ix, Iy)
 
 i = nth_root(I_c / A_c, 2)
-print(i)
+print(disp(i))
 
 lambda_ = l_0 / i
-print(lambda_)
+print(disp(lambda_))
 
 # Limiting Slenderness:
 
@@ -265,10 +265,10 @@ B = 1.1
 C = 0.7
 
 n_0 = mc_max(Fz) / (A_c * f_cd)
-print(n_0)
+print(disp(n_0))
 
 lambda__lim = 20 * A * B * C / nth_root(n_0, 2)
-print(lambda__lim)
+print(disp(lambda__lim))
 
 print('lambda_ < lambda__lim', lambda_ < lambda__lim, 'Effects can be neglected!')
 
@@ -279,7 +279,7 @@ theta_0 = 1 / 200
 alpha_m = 1
 
 alpha_h = mc_min(2 / nth_root(h_c * (1 / ureg.m), 2), 1)
-print(alpha_h)
+print(disp(alpha_h))
 
 theta_i = theta_0 * alpha_h * alpha_m
 print(theta_i)
@@ -634,17 +634,17 @@ b_w = w_c
 # Number of tensile bars:
 
 n_t = mround(w_c / s_y)
-print(n_t)
+print(disp(n_t))
 
 # Area of reinforcement in tension
 
 A_st = n_t * ø**2 * (math.pi / 4)
-print(A_st)
+print(disp(A_st))
 
 # Reinforcement ratio:
 
 rho = mc_min(0.02, A_st / (b_w * d))
-print(rho)
+print(disp(rho))
 
 # Compression in section:
 
@@ -654,7 +654,7 @@ print(disp(sigma_cp, ureg.MPa))
 # Size factor:
 
 k = mc_min(2, 1 + nth_root(200 * ureg.mm / d, 2))
-print(k)
+print(disp(k))
 
 # Shear strenth parameters:
 
@@ -678,7 +678,7 @@ print(disp(V_rd, ureg.kN))
 # Shear utilization
 
 UR_vc = vectorize(V / V_rd)
-print(UR_vc)
+print(disp(UR_vc))
 
 print(mc_max(UR_vc))
 
