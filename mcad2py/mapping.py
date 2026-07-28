@@ -94,8 +94,50 @@ FUNCTIONS = {
     # vectorize 'arrow'; ``np.minimum``/``np.maximum`` also work on scalars.
     "min": "np.minimum",
     "max": "np.maximum",
-    # Build a matrix by stacking column vectors side by side (unit-aware).
+    # --- Vector & matrix builtins (all runtime helpers; see runtime.py) ------
+    # Shape / structure
     "augment": "augment",
+    "stack": "stack",
+    "rows": "rows",
+    "cols": "cols",
+    "last": "last",
+    "identity": "identity",
+    "diag": "diag",
+    "submatrix": "submatrix",
+    "matrix": "matrix",
+    # Linear algebra
+    "det": "det",
+    "tr": "tr",
+    "lsolve": "lsolve",
+    "geninv": "geninv",
+    "rank": "rank",
+    "rref": "rref",
+    "cross": "cross",
+    # Norms & condition numbers
+    "norm": "norm",
+    "norm1": "norm1",
+    "norm2": "norm2",
+    "norme": "norme",
+    "normi": "normi",
+    "cond1": "cond1",
+    "cond2": "cond2",
+    "conde": "conde",
+    "condi": "condi",
+    # Eigen / singular values
+    "eigenvals": "eigenvals",
+    "eigenvec": "eigenvec",
+    "eigenvecs": "eigenvecs",
+    "genvals": "genvals",
+    "genvecs": "genvecs",
+    "svds": "svds",
+    # Ordering, reduction, predicates
+    "sort": "sort",
+    "reverse": "reverse",
+    "csort": "csort",
+    "rsort": "rsort",
+    "mean": "mean",
+    "IsArray": "IsArray",
+    "IsScalar": "IsScalar",
 }
 
 # Runtime helpers that are *called by name* in generated code (so a Call to one
@@ -110,6 +152,15 @@ RUNTIME_IMPORTS = (
     "linterp", "CreateMesh", "augment",
     "ceil", "floor", "mround", "sqrt", "nth_root", "power", "disp", "elementwise",
     "mc_min", "mc_max",
+    # Vector & matrix builtins, plus the two bar/cross *operators*
+    # (``determinant``/``cross``) the parser routes through a Call.
+    "stack", "rows", "cols", "last", "identity", "diag", "submatrix", "matrix",
+    "det", "determinant", "tr", "lsolve", "geninv", "rank", "rref", "cross",
+    "norm", "norm1", "norm2", "norme", "normi",
+    "cond1", "cond2", "conde", "condi",
+    "eigenvals", "eigenvec", "eigenvecs", "genvals", "genvecs", "svds",
+    "sort", "reverse", "csort", "rsort", "mean", "IsArray", "IsScalar",
+    "matrow", "matelem", "matmul",
 )
 
 # Mathcad symbolic command keyword (first id of a <ml:command> sequence) ->

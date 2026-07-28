@@ -4,7 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pint
 
-from mcad2py.runtime import augment, mround, nth_root, power, disp, elementwise, mc_min, mc_max, col, matrix, arange, vectorize, transpose, matmul, matcol, total, vec_set, solve_block, sample, plot_axis
+from mcad2py.runtime import augment, mround, nth_root, power, disp, elementwise, mc_min, mc_max, matrix, matelem, matmul, col, arange, vectorize, transpose, matcol, total, vec_set, solve_block, sample, plot_axis
 ureg = pint.UnitRegistry()
 
 
@@ -499,7 +499,7 @@ print(disp((mc_max(vectorize(sigma_s(e_s)))), ureg.MPa))
 
 def z(e, kx, ky):
     X = CG(e, kx, ky)
-    return nth_root((X[1, 0] - X[0, 0])**2 + (X[1, 1] - X[0, 1])**2, 2)
+    return nth_root((matelem(X, 1, 0) - matelem(X, 0, 0))**2 + (matelem(X, 1, 1) - matelem(X, 0, 1))**2, 2)
 
 # Utilizations (in terms of strain limits):
 

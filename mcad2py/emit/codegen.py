@@ -42,13 +42,8 @@ def _emit(node: ir.Expr) -> tuple[str, int]:
         return f"{left} * {right}", 2
 
     if isinstance(node, ir.BinOp):
-        # Mathcad uses the same ``*`` for scalar and matrix multiplication; when
-        # both operands are statically matrix-shaped we emit a real matrix product.
-        if node.op == "mul" and _is_matmul(node.left, node.right):
-            return (
-                f"matmul({expr_to_str(node.left)}, {expr_to_str(node.right)})",
-                _ATOM,
-            )
+        # (A ``*`` that is a matrix/dot product has already been rewritten into
+        # a ``matmul`` Call by the shape pass -- see mcad2py/shapes.py.)
         # A *fractional* power reduces a dimensionless base first (so ``ρ**(1/3)``
         # on an unreduced ``mm²/mm²`` ratio doesn't leave fractional-unit noise);
         # an integer power (``x**2``) stays a clean inline ``**``.
@@ -103,8 +98,13 @@ def _emit(node: ir.Expr) -> tuple[str, int]:
         return f"{base}[{expr_to_str(node.index)}]", _ATOM
 
     if isinstance(node, ir.Index2D):
-        base = _wrap(node.base, _ATOM, is_left=True, right_assoc=False)
-        return f"{base}[{expr_to_str(node.row)}, {expr_to_str(node.col)}]", _ATOM
+        # ``matelem``, not ``base[i, j]``: a Mathcad row/column vector is stored
+        # here as a 1-D array, which NumPy won't accept two subscripts for.
+        return (
+            f"matelem({expr_to_str(node.base)}, "
+            f"{expr_to_str(node.row)}, {expr_to_str(node.col)})",
+            _ATOM,
+        )
 
     if isinstance(node, ir.MatCol):
         return f"matcol({expr_to_str(node.base)}, {expr_to_str(node.index)})", _ATOM
@@ -187,45 +187,6 @@ def _is_int_literal(node: ir.Expr) -> bool:
     return False
 
 
-def _is_2d_matrix(node: ir.Expr) -> bool:
-    """True if ``node`` statically denotes a genuine 2-D matrix.
-
-    A matrix literal with more than one row *and* column, an ``augment(...)``
-    call (which stacks columns into a matrix), a transpose of a matrix, or a
-    nested matrix product. Column/row vectors (``col(...)``, ``matcol``) are
-    *not* 2-D matrices -- they stay element-wise.
-    """
-    if isinstance(node, ir.MatrixLiteral):
-        return node.rows > 1 and node.cols > 1
-    if isinstance(node, ir.Call) and node.func == "augment":
-        return True
-    if isinstance(node, ir.Transpose):
-        return _is_2d_matrix(node.operand)
-    if isinstance(node, ir.BinOp) and node.op == "mul":
-        return _is_matmul(node.left, node.right)
-    return False
-
-
-def _is_array_operand(node: ir.Expr) -> bool:
-    """True if ``node`` is array-shaped enough to be a matmul right operand.
-
-    Kept conservative (a matrix/vector literal, a column extraction, a
-    transpose, an ``augment``, or a nested matmul) so a matrix times a *scalar*
-    stays ordinary ``*`` rather than a spurious ``matmul``.
-    """
-    if isinstance(node, (ir.MatrixLiteral, ir.MatCol, ir.Transpose)):
-        return True
-    if isinstance(node, ir.Call) and node.func == "augment":
-        return True
-    return _is_2d_matrix(node)
-
-
-def _is_matmul(left: ir.Expr, right: ir.Expr) -> bool:
-    """A ``*`` that is a matrix (or matrix-vector) product: a 2-D matrix on the
-    left times an array operand on the right."""
-    return _is_2d_matrix(left) and _is_array_operand(right)
-
-
 def _wrap(node: ir.Expr, parent_prec: int, *, is_left: bool, right_assoc: bool) -> str:
     text, prec = _emit(node)
     if prec < parent_prec:
@@ -295,7 +256,9 @@ def multi_assign_lines(region: ir.MultiAssign) -> list[str]:
     ``tuple(...)`` unpacks the returned vector (NumPy/Pint/object array) element
     by element, so each target binds one component (units preserved). When the
     value is an imperative program, it's emitted as a nullary helper ``def`` and
-    its returned vector destructured.
+    its returned vector destructured. A 2-D target (``[a b; c d] := M``) names
+    every element of a matrix; ``unpack`` flattens it column-major first -- the
+    order Mathcad lists the target ids in.
     """
     names = ", ".join(t.py for t in region.targets)
     if isinstance(region.value, ir.ProgramBlock):
@@ -303,7 +266,10 @@ def multi_assign_lines(region: ir.MultiAssign) -> list[str]:
         lines = _program_block_def(helper, [], region.value)
         lines.append(f"{names} = tuple({helper}())")
         return lines
-    return [f"{names} = tuple({expr_to_str(region.value)})"]
+    value = expr_to_str(region.value)
+    if region.matrix_target:
+        value = f"unpack({value})"
+    return [f"{names} = tuple({value})"]
 
 
 def _program_block_def(name: str, params: list[str], block: ir.ProgramBlock) -> list[str]:
@@ -411,10 +377,19 @@ def index_assign_line(region: ir.IndexAssign) -> str:
     """``X = index_build(i, lambda i: expr)`` for a range-indexed assignment.
 
     The lambda parameter reuses the index variable's name so ``X[i]`` reads in
-    the right-hand side resolve against the *scalar* loop index.
+    the right-hand side resolve against the *scalar* loop index. The
+    two-subscript form ``X[i, j] :=`` builds a matrix over both ranges'
+    outer product instead (``index_build_2d``).
     """
     idx = region.index.py
-    return f"{region.target.py} = index_build({idx}, lambda {idx}: {expr_to_str(region.value)})"
+    body = expr_to_str(region.value)
+    if region.col_index is not None:
+        jdx = region.col_index.py
+        return (
+            f"{region.target.py} = index_build_2d({idx}, {jdx}, "
+            f"lambda {idx}, {jdx}: {body})"
+        )
+    return f"{region.target.py} = index_build({idx}, lambda {idx}: {body})"
 
 
 def _needs_elementwise(define: ir.Define) -> bool:
@@ -503,7 +478,12 @@ def echo_expr(region: ir.Region) -> str | None:
             return None
         # Mathcad's inline ``=`` after ``X[i] := …`` shows the vector read at the
         # range index -- a sub-vector (``X[i]`` with ``i`` the integer range).
-        base = f"{region.target.py}[{region.index.py}]"
+        # The two-subscript form covers the whole matrix, so it echoes bare.
+        base = (
+            region.target.py
+            if region.col_index is not None
+            else f"{region.target.py}[{region.index.py}]"
+        )
         if region.display_unit is not None:
             return _display(f"({base})", region.display_unit)
         return _auto(base, region)
@@ -761,12 +741,15 @@ def header_lines(ws: ir.Worksheet) -> list[str]:
     if runtime:
         order = [
             *RUNTIME_IMPORTS,
-            "col", "matrix", "arange", "index_build", "vectorize", "transpose",
-            "matmul", "matcol", "total", "vec_set",
-            "integral", "double_integral", "summation", "solve_block",
+            "col", "matrix", "arange", "index_build", "index_build_2d",
+            "vectorize", "transpose", "matmul", "matcol", "total", "vec_set",
+            "unpack", "integral", "double_integral", "summation", "solve_block",
             "sample", "plot_axis", "mesh_grid", "resolve_plot_grid",
         ]
-        names = ", ".join(n for n in order if n in runtime)
+        seen: set[str] = set()
+        names = ", ".join(
+            n for n in order if n in runtime and not (n in seen or seen.add(n))
+        )
         lines.append(f"from mcad2py.runtime import {names}")
     lines.append("ureg = pint.UnitRegistry()")
     return lines
@@ -820,7 +803,9 @@ def _used_runtime(ws: ir.Worksheet) -> set[str]:
         if isinstance(region, ir.SolveBlock):
             found.add("solve_block")
         if isinstance(region, ir.IndexAssign):
-            found.add("index_build")
+            found.add("index_build_2d" if region.col_index is not None else "index_build")
+        if isinstance(region, ir.MultiAssign) and region.matrix_target:
+            found.add("unpack")
         if isinstance(region, ir.Plot):
             found.update(("sample", "plot_axis"))
         if isinstance(region, ir.GridPlot):
@@ -852,17 +837,13 @@ def _used_runtime(ws: ir.Worksheet) -> set[str]:
                     found.add("power")
                 elif isinstance(sub, ir.MatCol):
                     found.add("matcol")
+                elif isinstance(sub, ir.Index2D):
+                    found.add("matelem")
                 elif isinstance(sub, ir.VectorSum):
                     found.add("total")
                 elif isinstance(sub, ir.ProgramBlock):
                     if _growable_names(sub):
                         found.add("vec_set")
-                elif (
-                    isinstance(sub, ir.BinOp)
-                    and sub.op == "mul"
-                    and _is_matmul(sub.left, sub.right)
-                ):
-                    found.add("matmul")
                 elif isinstance(sub, ir.Integral):
                     integrals.append(sub)
                 elif isinstance(sub, ir.Summation):

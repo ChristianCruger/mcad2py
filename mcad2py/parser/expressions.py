@@ -168,6 +168,23 @@ def _parse_apply(elem: ET.Element) -> ir.Expr:
     if head_tag == "matcol":
         return ir.MatCol(base=parse_expr(rest[0]), index=parse_expr(rest[1]))
 
+    # Row extraction: <apply><matrow/> <base/> <index/> -> a 1-D vector.
+    if head_tag == "matrow":
+        return ir.Call(func="matrow", args=[parse_expr(rest[0]), parse_expr(rest[1])])
+
+    # Prime has *two* vertical-bar operators, distinguished in the XML:
+    # <absval> is the elementwise absolute value, while <determinant> is the
+    # determinant of a matrix -- which on a vector means its magnitude, so it
+    # routes to a runtime helper that dispatches on the operand's shape.
+    if head_tag == "absval":
+        return ir.Call(func="abs", args=[parse_expr(rest[0])])
+    if head_tag == "determinant":
+        return ir.Call(func="determinant", args=[parse_expr(rest[0])])
+
+    # Vector cross product: <apply><crossProduct/> <a/> <b/>.
+    if head_tag == "crossProduct":
+        return ir.Call(func="cross", args=[parse_expr(rest[0]), parse_expr(rest[1])])
+
     # Percent postfix: <apply><percent/> <operand/>  ==  operand / 100.
     if head_tag == "percent":
         return ir.BinOp(op="div", left=parse_expr(rest[0]), right=ir.Number("100"))

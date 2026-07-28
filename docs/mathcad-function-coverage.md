@@ -16,8 +16,8 @@ sample worksheet will hit an unsupported builtin.
   three tables when it drifts.
 
 > Scope reminder: this repo targets **structural / civil-engineering** worksheets (concrete,
-> sections, EN 1992). The priorities below reflect that — a linear solver (`lsolve`) and matrix
-> utilities (`rows`, `identity`, `submatrix`) matter far more here than Bessel functions or wavelets.
+> sections, EN 1992). The priorities below reflect that — spline interpolation and the remaining
+> solvers matter far more here than Bessel functions or wavelets.
 
 ---
 
@@ -35,16 +35,20 @@ sample worksheet will hit an unsupported builtin.
 | Min / max | `min` `max` (element-wise `np.minimum/maximum`), `mc_min` `mc_max` (flattening reductions) | Mathcad `max/min` flatten *all* args to a scalar; the element-wise form only appears under a vectorize arrow |
 | Absolute value / size | `abs`, `length` (→ `len`) | |
 | Interpolation | `linterp` | unit-aware, **extrapolates** past the knots (unlike `np.interp`); arg order reversed vs. numpy |
+| Vector & matrix | `rows` `cols` `last` `length`, `identity` `diag` `augment` `stack` `submatrix` `matrix(m,n,f)`, `det` `tr` `lsolve` `geninv` `rank` `rref`, `norm` `norm1` `norm2` `norme` `normi`, `cond1` `cond2` `conde` `condi`, `eigenvals` `eigenvec` `eigenvecs` `genvals` `genvecs` `svds`, `sort` `reverse` `csort` `rsort`, `mean`, `IsArray` `IsScalar` | plus the operators: `\|x\|` (determinant *or* magnitude), row extraction, `×` cross product. Linear algebra runs on magnitudes; shape/ordering helpers keep units. Eigen ordering and eigenvector signs are LAPACK's — see [mcdx-schema-notes.md](mcdx-schema-notes.md) |
 
 ### Vector / matrix & reduction helpers (runtime)
 
-`col` / `matrix` (literal builders, column-major, unit-fused or object-array), `augment` (side-by-side
-columns, heterogeneous units OK), `transpose`, `matmul` (unit-aware `@`, heuristic detection),
-`matcol` (`A^<i>` column extract), `vec_set` (growable program vectors), `index_build` (range-indexed
-`X[i] :=`), `total` (sum a vector), `summation` (indexed Σ), `integral` / `double_integral` (scipy
-`quad`/`dblquad`), `arange` (inclusive unit-aware range), `sample` / `mesh_grid` / `CreateMesh` /
-`resolve_plot_grid` (plot sampling), `vectorize` / `elementwise` (the arrow), `solve_block` (Given/Find
-via `fsolve`).
+`col` / `matrix` (literal builders, column-major, unit-fused or object-array), `augment` / `stack`
+(side-by-side / stacked blocks, heterogeneous units OK), `transpose`, `matmul` (unit-aware `@`;
+*which* `·` is a matrix product is decided by the sheet-wide shape pass in
+[`shapes.py`](../mcad2py/shapes.py)), `matcol` / `matrow` (`A^<i>` column and row extract), `matelem`
+(two-subscript element read, coping with a 1-D row/column vector), `vec_set` (growable program
+vectors), `index_build` / `index_build_2d` (range-indexed `X[i] :=` and `X[i, j] :=`), `unpack`
+(column-major flatten for `[a b; c d] := M`), `total` (sum a vector), `summation` (indexed Σ),
+`integral` / `double_integral` (scipy `quad`/`dblquad`), `arange` (inclusive unit-aware range),
+`sample` / `mesh_grid` / `CreateMesh` / `resolve_plot_grid` (plot sampling), `vectorize` /
+`elementwise` (the arrow), `solve_block` (Given/Find via `fsolve`).
 
 ### Symbolic (`SYMBOLIC_COMMANDS` → SymPy)
 
@@ -72,10 +76,10 @@ Legend: ✅ done · 🟡 partial · ⬜ not started · ⛔ out of scope (unlikel
 | **Log & exponential** | 🟡 | exp ln log10 | `log(z, b)` two-arg base |
 | **Piecewise / conditional** | 🟡 | `if` (inline + block) | `sign`/`signum`, `Φ` Heaviside, `δ` Kronecker, `ε` Levi-Civita, `until` |
 | **Truncation & round-off** | 🟡 | ceil floor round | `trunc`, `Ceil/Floor/Round/Trunc(x, y)` (round-to-multiple), `mantissa` |
-| **Vector & matrix** | 🟡 | augment, transpose, matmul, matcol, col/matrix, length | `rows` `cols` `last` `length(v)`, `identity` `diag` `stack` `submatrix`, `max/min` (reduce ✓), `mean` `tr` `rank` `norm1/2/e/i/f`, `sort` `csort` `rsort` `reverse`, `lookup` `match` `vlookup` `hlookup`, `cross` `dot`, `IsArray` `matrix` |
-| **Solving & optimization** | 🟡 | `find` (numeric), `solve` (symbolic) | `lsolve` (linear systems — high value), `root`, `polyroots`, `minerr`, `maximize` `minimize`, `Isolve` |
+| **Vector & matrix** | ✅ | the full list above (see `references/matrices.mcdx`) | `lookup` `match` `vlookup` `hlookup` (table search) |
+| **Solving & optimization** | 🟡 | `find` (numeric), `solve` (symbolic), `lsolve` (linear systems) | `root`, `polyroots`, `minerr`, `maximize` `minimize`, `Isolve` |
 | **Interpolation & prediction** | 🟡 | `linterp` | `cspline`/`pspline`/`lspline` + `interp`, `bicubic`/`bilinear`, `predict`, `sinterp` |
-| **Statistics** | ⬜ | — | `mean` `median` `mode` `var` `Var` `stdev` `Stdev` `gmean` `hmean` `corr` `cvar` `kurt` `skew` `hist`/`histogram` |
+| **Statistics** | 🟡 | `mean` | `median` `mode` `var` `Var` `stdev` `Stdev` `gmean` `hmean` `corr` `cvar` `kurt` `skew` `hist`/`histogram` |
 | **Probability distributions** | ⬜ | — | the `d/p/q/r` families (`norm` `binom` `pois` `unif` `exp` `gamma` `beta` `weibull` `t` `F` `chisq` …) |
 | **Regression & smoothing** | ⬜ | — | `line` `slope` `intercept`, `regress` `loess`, `linfit` `genfit` `expfit` `logfit` `pwrfit` `sinfit`, `medsmooth` `ksmooth` `supsmooth` |
 | **Complex numbers** | 🟡 | `abs` (`|z|`) | `Re` `Im` `arg` `csgn` `signum`, conjugate |
@@ -85,7 +89,7 @@ Legend: ✅ done · 🟡 partial · ⬜ not started · ⛔ out of scope (unlikel
 | **Differential equations** | ⬜ | — | `odesolve`, `rkfixed` `Rkadapt` `Bulstoer` `Radau` `Stiffb/r`, `sbval` `bvalfit`, `relax` `multigrid` `numol` |
 | **Fourier transforms** | ⬜ | — | `fft/ifft` `FFT/IFFT` `cfft/icfft` `dft` |
 | **String functions** | ⬜ | — | `concat` `num2str` `str2num` `strlen` `substr` `search` `strfind` `error` (string *literals* already work) |
-| **Sorting** | ⬜ | — | `sort` `csort` `rsort` `reverse` (also listed under vector/matrix) |
+| **Sorting** | ✅ | `sort` `csort` `rsort` `reverse` (also listed under vector/matrix) | — |
 | **Graphing helpers** | 🟡 | `CreateMesh`, plot rendering (xy/contour/3D) | `CreateSpace`, `polyhedron`, `QuickPlot`-only forms |
 | **Finance** | ⛔ | — | `fv` `pv` `npv` `irr` `pmt` `rate` … (not engineering) |
 | **Image processing** | ⛔ | — | out of scope |
@@ -99,26 +103,26 @@ Legend: ✅ done · 🟡 partial · ⬜ not started · ⛔ out of scope (unlikel
 
 Ranked by expected payoff × frequency in the kind of sheets this repo converts, and roughly by effort.
 
-1. **Matrix/vector utilities** — `rows`, `cols`, `last`, `identity`, `diag`, `stack`, `submatrix`,
-   `sort`/`reverse`, `lookup`/`match`. Mostly thin `runtime.py` helpers over NumPy; add to
-   `RUNTIME_IMPORTS`. These show up constantly and each is cheap. *(Note: `ones` is already referenced
-   in comments/examples but is **not implemented** — a sheet using `ones(n)` would `NameError`. Add it
-   with this batch.)*
-2. **`lsolve`** (linear system `A·x = b`) — a one-liner over `numpy.linalg.solve`, unit-aware. Very
-   common in frame/section analysis. High value, low effort.
-3. **Statistics basics** — `mean`, `median`, `var`/`Var`, `stdev`/`Stdev`, `hist`. Simple NumPy wraps;
-   watch the population-vs-sample `var` vs `Var` distinction (lowercase = population, capital = sample).
-4. **Cubic-spline interpolation** — `cspline`/`lspline`/`pspline` + `interp`, extending the existing
+1. **Table search** — `lookup`, `match`, `vlookup`, `hlookup`. The one part of the vector/matrix
+   category `references/matrices.mcdx` doesn't exercise; thin NumPy wraps, but each needs its
+   Mathcad-specific "not found" behaviour pinned by a sample. *(The rest of that item — `rows`,
+   `cols`, `last`, `identity`, `diag`, `stack`, `submatrix`, `sort`/`reverse` — is **done**, together
+   with `lsolve`, the norms/conditions, and the eigen family. Note `ones` is **not** a Prime builtin:
+   `LT91.mcdx` defines its own, which is why the generated code calls one.)*
+2. **Statistics basics** — `median`, `var`/`Var`, `stdev`/`Stdev`, `hist` (`mean` is done with the
+   matrix batch). Simple NumPy wraps; watch the population-vs-sample `var` vs `Var` distinction
+   (lowercase = population, capital = sample).
+3. **Cubic-spline interpolation** — `cspline`/`lspline`/`pspline` + `interp`, extending the existing
    `linterp`. Maps onto `scipy.interpolate`. Common for material curves.
-5. **More solving** — `root` (scalar) and `polyroots`, then `minerr`/`maximize`/`minimize` (extend the
+4. **More solving** — `root` (scalar) and `polyroots`, then `minerr`/`maximize`/`minimize` (extend the
    `solve_block` machinery: `minerr` = least-squares residual, the optimizers = `scipy.optimize`).
-6. **Complex-number accessors** — `Re`, `Im`, `arg`, conjugate. Trivial; occasionally needed.
-7. **`mod`, `gcd`, `lcm`** — trivial, high-completeness-per-line. *(The trig and hyperbolic families
+5. **Complex-number accessors** — `Re`, `Im`, `arg`, conjugate. Trivial; occasionally needed.
+6. **`mod`, `gcd`, `lcm`** — trivial, high-completeness-per-line. *(The trig and hyperbolic families
    that used to head this item are done — see `references/trig.mcdx` / `references/hyperbolic.mcdx`.)*
-8. **Special functions** — `erf`/`erfc`, `Γ` — thin `scipy.special` wraps; occasional.
-9. **Differential equations** (`odesolve`, `rkfixed`, …) — a larger effort (a solve-block-like block
+7. **Special functions** — `erf`/`erfc`, `Γ` — thin `scipy.special` wraps; occasional.
+8. **Differential equations** (`odesolve`, `rkfixed`, …) — a larger effort (a solve-block-like block
    construct over `scipy.integrate.solve_ivp`). Do only when a sample needs it.
-10. **Fourier** (`fft`/`ifft`) — low priority for structural work; `scipy.fft` wraps if needed.
+9. **Fourier** (`fft`/`ifft`) — low priority for structural work; `scipy.fft` wraps if needed.
 
 Explicitly **not** planned: finance, image processing, file I/O, wavelets/signal — out of scope for a
 structural worksheet converter.

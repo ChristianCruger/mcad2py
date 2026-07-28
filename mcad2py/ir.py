@@ -397,6 +397,10 @@ class IndexAssign(Region):
     index, so the right-hand side (and any ``X[i]`` reads inside it) evaluates
     per-element with the ordinary scalar codegen. ``evaluate``/``display_unit``
     mirror :class:`Define` for an inline ``=`` that shows ``X[i]``.
+
+    ``col_index`` is set for the two-subscript form ``X[i, j] := expr``, which
+    builds a *matrix* over both ranges' outer product (``index_build_2d``); the
+    inline ``=`` then shows the whole matrix rather than a sub-vector.
     """
 
     target: Name
@@ -404,6 +408,7 @@ class IndexAssign(Region):
     value: Expr
     evaluate: bool = False
     display_unit: Expr | None = None
+    col_index: Name | None = None
 
 
 @dataclass
@@ -414,12 +419,17 @@ class MultiAssign(Region):
     is an expression that returns a vector; emitted as ``a, b, c = tuple(<expr>)``
     so each target binds one element. (When the value is a multi-line program,
     the program is emitted as a helper and its returned vector destructured.)
+
+    ``matrix_target`` marks the 2-D case ``[a b; c d] := M``: Mathcad lists the
+    target names **column-major**, so the value is flattened the same way
+    (``unpack``) before being unpacked.
     """
 
     targets: list[Name]
     value: Expr
     evaluate: bool = False
     display_unit: Expr | None = None
+    matrix_target: bool = False
 
 
 @dataclass

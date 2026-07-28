@@ -9,6 +9,7 @@ from typing import Callable
 
 from .. import ir
 from ..mapping import SYMBOLIC_COMMANDS
+from ..shapes import annotate_products
 from .expressions import parse_eval, parse_expr, read_identifier, sanitize
 from .namespaces import localname
 
@@ -59,6 +60,9 @@ def parse_worksheet(
                 range_names.add(item.target.py)
             ws.regions.append(item)
     _inject_symbol_declarations(ws)
+    # Mathcad spells scalar, matrix and dot products all as ``·``; deciding
+    # which is which needs the whole sheet's shapes, so it runs as a pass.
+    annotate_products(ws)
     return ws
 
 
@@ -168,13 +172,23 @@ def _parse_define(define_elem: ET.Element) -> ir.Region:
     # builds the vector). Routes to IndexAssign, not a scalar Define.
     indexed = _parse_index_target(target_elem)
     if indexed is not None:
-        base, index = indexed
+        base, index, col_index = indexed
         if localname(value_elem.tag) == "eval":
             value, unit = parse_eval(value_elem)
             return ir.IndexAssign(
-                target=base, index=index, value=value, evaluate=True, display_unit=unit
+                target=base,
+                index=index,
+                value=value,
+                evaluate=True,
+                display_unit=unit,
+                col_index=col_index,
             )
-        return ir.IndexAssign(target=base, index=index, value=parse_expr(value_elem))
+        return ir.IndexAssign(
+            target=base,
+            index=index,
+            value=parse_expr(value_elem),
+            col_index=col_index,
+        )
 
     # ``[a; b; c] := <expr>``: a matrix of ids on the left destructures a returned
     # vector (a plain value, not a native control -- those are handled below).
@@ -257,14 +271,31 @@ def _parse_status_control(control: ET.Element) -> ir.Region:
 
 
 def _parse_multi_assign(target_elem: ET.Element, value_elem: ET.Element) -> ir.Region:
-    """``[a; b; c] := <expr>`` -> a :class:`ir.MultiAssign` destructuring."""
+    """``[a; b; c] := <expr>`` -> a :class:`ir.MultiAssign` destructuring.
+
+    A target with more than one row *and* column (``[a b; c d] := M``) names the
+    elements of a whole matrix; like ``<ml:matrix>`` itself the ids are listed
+    column-major, so the value has to be flattened that way before unpacking.
+    """
     targets = [_parse_target(c) for c in target_elem if localname(c.tag) == "id"]
+    matrix_target = (
+        int(target_elem.get("rows", "1") or 1) > 1
+        and int(target_elem.get("cols", "1") or 1) > 1
+    )
     if localname(value_elem.tag) == "eval":
         value, unit = parse_eval(value_elem)
         return ir.MultiAssign(
-            targets=targets, value=value, evaluate=True, display_unit=unit
+            targets=targets,
+            value=value,
+            evaluate=True,
+            display_unit=unit,
+            matrix_target=matrix_target,
         )
-    return ir.MultiAssign(targets=targets, value=parse_expr(value_elem))
+    return ir.MultiAssign(
+        targets=targets,
+        value=parse_expr(value_elem),
+        matrix_target=matrix_target,
+    )
 
 
 def _parse_scriptable_control(
@@ -669,18 +700,29 @@ def _parse_target(id_elem: ET.Element) -> ir.Name:
     )
 
 
-def _parse_index_target(elem: ET.Element) -> tuple[ir.Name, ir.Name] | None:
-    """If ``elem`` is an indexed-assignment target ``X[i]``, return ``(X, i)``.
+def _parse_index_target(
+    elem: ET.Element,
+) -> "tuple[ir.Name, ir.Name, ir.Name | None] | None":
+    """If ``elem`` is an indexed-assignment target, return ``(X, i, j-or-None)``.
 
-    The target is ``<apply><indexer/> <id base> <id index>``; both the vector
-    name and the index variable are plain ids. Returns None for any other shape.
+    The target is ``<apply><indexer/> <id base> <index>``; the index is a plain
+    id for the vector form ``X[i] := …`` and a ``<sequence>`` of two ids for the
+    matrix form ``X[i, j] := …``. Returns None for any other shape.
     """
     if localname(elem.tag) != "apply":
         return None
     kids = list(elem)
     if len(kids) < 3 or localname(kids[0].tag) != "indexer":
         return None
-    return _parse_target(kids[1]), _parse_target(kids[2])
+    base, index_elem = _parse_target(kids[1]), kids[2]
+    if localname(index_elem.tag) == "sequence":
+        parts = [p for p in index_elem if localname(p.tag) == "id"]
+        if len(parts) != 2:
+            return None
+        return base, _parse_target(parts[0]), _parse_target(parts[1])
+    if localname(index_elem.tag) != "id":
+        return None
+    return base, _parse_target(index_elem), None
 
 
 def _parse_function_header(func_elem: ET.Element) -> tuple[ir.Name, list[str]]:

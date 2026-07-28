@@ -311,3 +311,89 @@ constructs — the parser already handled them — but they pin down several **s
   anyway: `_parse_apply` takes the first child of `<ml:apply>` as the callable regardless of label.
 - **Multi-argument builtins** wrap their arguments in `<ml:sequence>` (`atan2`, `angle`) — already
   handled by the generic apply path.
+
+## `matrices.mcdx` constructs (the vector & matrix family)
+
+A catalogue of Mathcad's whole "Vector and Matrix" function category plus its bar/row/cross
+operators, followed by three worked examples (down-sampling, left/right eigenvectors, PCA).
+
+### New `<ml:apply>` heads
+
+- `<ml:absval>` and `<ml:determinant>` are **two different operators that both render as `|x|`**
+  (Prime's ribbon offers them separately). `absval` is the elementwise absolute value → plain
+  `abs(x)`. `determinant` is the determinant of a matrix — but Mathcad also accepts a *vector* there,
+  where it means the Euclidean magnitude, so it emits the runtime `determinant(x)`, which dispatches
+  on the operand's shape (2-D → `np.linalg.det`, 1-D → 2-norm, scalar → `abs`). The sheet caches
+  both: `|M| = 12` (a determinant) and `|A| = 5.4772 = √30` (a magnitude).
+- `<ml:matrow> base index>` = the row-extraction operator, the sibling of `<ml:matcol>` (`A^<i>`) →
+  `matrow(M, i)`. Mathcad's cache shows a `1×4` result; we return a 1-D array, as we do for every
+  row/column vector.
+- `<ml:crossProduct> a b>` = the `×` operator → `cross(a, b)` (unit-aware: the result carries
+  `unit_a · unit_b`).
+
+### Two-subscript forms
+
+- **Reads.** `<apply><indexer/> base <sequence>i j>` (already parsed into `ir.Index2D`) now emits
+  `matelem(base, i, j)` rather than `base[i, j]`. A Mathcad row *or* column vector is stored here as a
+  1-D array, which NumPy will not accept two subscripts for — and the sheet does exactly that
+  (`A[1, 0]` on a 4×1, `B[0, 2]` on a 1×4). `matelem` takes whichever subscript is non-zero in that
+  case, and indexes straight through for a genuine 2-D matrix.
+- **Writes.** A `<ml:define>` whose target is `<apply><indexer/> X <sequence>i j>` with *both*
+  indices range variables is the matrix form of `ir.IndexAssign` (`col_index` set) →
+  `X = index_build_2d(i, j, lambda i, j: <expr>)`. Mathcad takes the two ranges' **outer product**
+  (as it does for a contour plot's two ranges), not a zip. The inline `=` echoes the whole matrix,
+  where the one-subscript form echoes the sub-vector `X[i]`.
+- **Destructuring a whole matrix.** `[a1 b1 …; …] := M·kg` is an `ir.MultiAssign` whose target
+  `<ml:matrix>` has `rows > 1` *and* `cols > 1`. The target ids are listed **column-major**, exactly
+  like `<ml:matrix>`'s own elements, so the value is flattened the same way first:
+  `a1, b1, … = tuple(unpack(M * ureg.kg))`. (The sheet confirms the order: `v := [a_0; b_0; c_0]` is
+  documented as "column 0 of M", and `DET`'s cofactor expansion uses `a_0, a_1, a_2` as row 0.)
+
+### Which `·` is a matrix product — `mcad2py/shapes.py`
+
+Mathcad writes scalar multiplication, matrix multiplication and the dot product all as `·`, and the
+XML records no shapes. Deciding between them needs to know how each *name* was defined earlier in the
+sheet, so it runs as a pass over the parsed worksheet (`annotate_products`, called at the end of
+`parse_worksheet`): it walks the regions in order tracking `name -> scalar/vector/matrix/unknown` and
+rewrites every `BinOp("mul", …)` whose **both** operands are array-shaped into `Call("matmul", …)`.
+
+- Anything not *provably* an array stays a plain `*`, so the inference only has to be right about
+  what it knows. `2·identity(4)`, `λ_0·R_0` and `M·kg` all keep `*`.
+- Nothing under a **vectorize arrow** is rewritten — the arrow is precisely how Mathcad asks for the
+  element-wise product (`vectorize(F_ci(…) * Y_c)` in `LT91.mcdx` must stay `*`).
+- Names bound in a smaller scope (a function's params, a program's locals, a lambda's bound var) are
+  masked to `unknown` there, so a product inside one is only rewritten when the operands are
+  structurally array-shaped on their own (a matrix literal, `augment(...)`, a transpose).
+- A **row × column** product is a matmul too: `B·C` with `B` a `1×4` and `C` a `4×1` caches as the
+  scalar `112`, which is what `@` on two 1-D arrays gives.
+
+### `matrix(m, n, f)` — a builtin sharing its name with the literal builder
+
+Prime's `matrix` builtin fills an `m×n` matrix from a function of the (0-based) row and column index.
+The runtime `matrix()` already existed as the emitter for `<ml:matrix>` literals, so it now
+distinguishes the two by the single **callable** argument. Cached: `matrix(3, 3, f)` with
+`f(x, y) = x² − y` gives columns `[0,1,4] [-1,0,3] [-2,-1,2]`.
+
+### Eigen results: what LAPACK reproduces
+
+Mathcad is using LAPACK too, so `eigenvals`/`eigenvecs`/`genvals` reproduce its cached values to
+full double precision — and, for the symmetric matrices, in Mathcad's own order. What is *not*
+reproducible:
+
+- **Ordering.** For the sheet's general (nonsymmetric) 6×6s and for `genvals`, Mathcad's order and
+  NumPy/SciPy's differ (the multisets are equal). Mathcad does not sort — the sheet itself calls
+  `reverse(sort(eigenvals(S1)))` when it wants a sorted spectrum.
+- **Eigenvector sign.** Arbitrary in any implementation; the sheet's `eigenvecs(M)` and the PCA
+  transform matrix `T` differ from the cache by a column sign (and `D2 = D·T` with them). Invariants
+  do match: `S2`'s diagonal reproduces the cached principal components exactly.
+- **Normalisation differs between the two eigenvector builtins**: `eigenvecs` columns are unit
+  length (as SciPy returns them), while `genvecs` columns are scaled so their largest-magnitude
+  component is `1` — confirmed against the cached `genvecs(M, N, "L")`, whose first column starts
+  with a literal `1`.
+
+### `arange` and a fractional endpoint
+
+`j := 0 .. (length(v) − 1)/28` stops at `7.142857` yet takes only integer values, and is then used as
+an index (`u[j] := v[n·j]`). So `arange` returns an **integer** array whenever the *start and step*
+are whole — the endpoint need not be. (It previously required all three, and produced a float array
+here, which NumPy refuses as an index.)

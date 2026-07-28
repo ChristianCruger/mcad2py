@@ -325,16 +325,25 @@ def col(*elements: object) -> object:
     return _build_array(elements, shape=None)
 
 
-def matrix(rows: int, cols: int, *elements: object) -> object:
-    """Build a genuine ``rows``x``cols`` Mathcad matrix (both > 1).
+def matrix(nrows: int, ncols: int, *elements: object) -> object:
+    """Build a genuine ``nrows``x``ncols`` Mathcad matrix (both > 1).
 
     ``elements`` arrive in Prime's own ``<ml:matrix>`` order, which is
     column-major, hence ``order="F"`` on the reshape. Unit handling mirrors
     ``col()``: a matrix with one consistent unit is a fused Pint array, while a
     heterogeneous one (mixed/plain units) becomes an object array of per-element
     values.
+
+    This doubles as Mathcad's ``matrix(m, n, f)`` *builtin*, which fills the
+    matrix from a function of the (0-based) row and column index -- the two
+    spellings are distinguished by the single callable argument.
     """
-    return _build_array(elements, shape=(rows, cols))
+    if len(elements) == 1 and callable(elements[0]):
+        f = elements[0]
+        elements = tuple(
+            f(i, j) for j in range(int(ncols)) for i in range(int(nrows))
+        )
+    return _build_array(elements, shape=(nrows, ncols))
 
 
 def _object_array(elements, shape):
@@ -551,22 +560,42 @@ def _has_object(x):
     return getattr(np.asarray(mag), "dtype", None) == object
 
 
-def augment(*cols):
+def augment(*columns):
     """Mathcad ``augment``: stack column vectors side by side into a matrix.
 
     Each argument is a 1-D vector; they become the columns of the result. The
     columns may carry *different* units (Mathcad allows a heterogeneous matrix
-    here, e.g. ``augment(ones(n), Xs, Ys)`` mixing a dimensionless column with
-    length columns), so the result is an object array of per-element Pint
-    scalars -- a later ``matmul`` then propagates units column by column.
+    here, e.g. a dimensionless column beside two length columns), so the result
+    is an object array of per-element Pint scalars -- a later ``matmul`` then
+    propagates units column by column.
     """
-    columns = [_to_object_matrix(c).reshape(-1) for c in cols]
-    nrows = max((len(c) for c in columns), default=0)
-    out = np.empty((nrows, len(columns)), dtype=object)
-    for j, c in enumerate(columns):
+    cols_ = [_to_object_matrix(c).reshape(-1) for c in columns]
+    nrows = max((len(c) for c in cols_), default=0)
+    out = np.empty((nrows, len(cols_)), dtype=object)
+    for j, c in enumerate(cols_):
         for i in range(nrows):
             out[i, j] = c[i]
     return out
+
+
+def stack(*blocks):
+    """Mathcad ``stack``: join matrices/vectors one *above* the other.
+
+    The vertical counterpart of :func:`augment`. Every block must have the same
+    number of columns (a 1-D vector counts as one column); the result is an
+    object array of per-element values so blocks with different units survive.
+    """
+    parts = [_to_object_matrix(b) for b in blocks]
+    parts = [p.reshape(-1, 1) if p.ndim == 1 else p for p in parts]
+    ncols = max((p.shape[1] for p in parts), default=0)
+    nrows = sum(p.shape[0] for p in parts)
+    out = np.empty((nrows, ncols), dtype=object)
+    out[:] = 0
+    r = 0
+    for p in parts:
+        out[r : r + p.shape[0], : p.shape[1]] = p
+        r += p.shape[0]
+    return _consolidate(out)
 
 
 def _mag(x):
@@ -607,6 +636,376 @@ def matcol(m, i):
     if hasattr(m, "units") and getattr(m.magnitude, "dtype", None) != object:
         return m._REGISTRY.Quantity(np.asarray(m.magnitude)[:, i], m.units)
     return np.asarray(m)[:, i]
+
+
+# ---------------------------------------------------------------------------
+# Vector & matrix builtins
+#
+# Mathcad's "Vector and Matrix" function category. Two conventions run through
+# all of them:
+#
+# * **Vectors are 1-D.** A Mathcad n×1 column and 1×n row both become a plain
+#   1-D array (that's what ``col()``/``transpose()`` build), so the row/column
+#   distinction is not carried -- ``rows``/``cols`` report a 1-D array as n×1,
+#   and :func:`matelem` resolves a two-subscript access on one by taking
+#   whichever subscript is non-zero.
+# * **Linear algebra runs on magnitudes.** ``det``/``norm``-family/``eigen``-
+#   family/``lsolve``/``geninv``/``rref`` strip Pint units, compute, and (where
+#   the unit is meaningful and unambiguous, e.g. ``tr``/``norm``/``sort``)
+#   reattach it. A determinant's ``unit**n`` and a mixed-unit system are not
+#   modelled -- Mathcad itself rejects most of those.
+# ---------------------------------------------------------------------------
+
+
+def _split(x):
+    """``(plain ndarray of magnitudes, Pint unit or None)`` for an array/scalar.
+
+    A heterogeneous (object) array is consolidated first, so a matrix built by
+    ``augment``/``vec_set`` from per-element quantities enters linear algebra as
+    a fused numeric array.
+    """
+    if isinstance(x, np.ndarray) and x.dtype == object:
+        x = _consolidate(x)
+    unit = getattr(x, "units", None)
+    mag = np.asarray(getattr(x, "magnitude", x))
+    if mag.dtype == object:
+        mag = mag.astype(float)
+    return mag, unit
+
+
+def _join(arr, unit):
+    """Reattach ``unit`` (or None) to a computed magnitude array/scalar."""
+    return arr if unit is None else unit._REGISTRY.Quantity(arr, unit)
+
+
+def _as_2d(mag):
+    """A 2-D view of ``mag``, treating a 1-D vector as a single column."""
+    return mag.reshape(-1, 1) if mag.ndim == 1 else mag
+
+
+def _real_if_close(arr):
+    """Drop a negligible imaginary part (LAPACK returns complex dtype even for
+    a real spectrum; Mathcad shows those results as plain reals)."""
+    arr = np.asarray(arr)
+    if np.iscomplexobj(arr) and np.allclose(arr.imag, 0.0, atol=1e-12):
+        return arr.real
+    return arr
+
+
+def rows(a):
+    """Mathcad ``rows``: the number of rows (a 1-D vector counts as n×1)."""
+    return int(_as_2d(_split(a)[0]).shape[0])
+
+
+def cols(a):
+    """Mathcad ``cols``: the number of columns (a 1-D vector counts as n×1)."""
+    return int(_as_2d(_split(a)[0]).shape[1])
+
+
+def last(v):
+    """Mathcad ``last``: the index of a vector's final element.
+
+    Worksheets converted here are read with ``ORIGIN = 0`` (the parser emits
+    0-based indices throughout), so this is ``length(v) - 1``.
+    """
+    return len(v) - 1
+
+
+def identity(n):
+    """Mathcad ``identity(n)``: the n×n identity matrix."""
+    return np.eye(int(n))
+
+
+def diag(a):
+    """Mathcad ``diag``: a vector's elements on a diagonal matrix, or a
+    matrix's diagonal as a vector -- whichever the argument calls for."""
+    mag, unit = _split(a)
+    return _join(np.diag(mag), unit)
+
+
+def tr(a):
+    """Mathcad ``tr``: the trace (sum of the diagonal) of a square matrix."""
+    mag, unit = _split(a)
+    return _join(float(np.trace(mag)), unit)
+
+
+def det(a):
+    """Mathcad ``det``: the determinant of a square matrix (on magnitudes)."""
+    return float(np.linalg.det(_split(a)[0]))
+
+
+def determinant(a):
+    """Mathcad's ``|x|`` operator -- determinant *or* magnitude.
+
+    Prime uses one pair of bars for both: on a square matrix it is the
+    determinant, on a vector the Euclidean magnitude, on a scalar the absolute
+    value. (Prime's *other* bars operator, elementwise absolute value, parses as
+    ``absval`` and emits plain ``abs``.)
+    """
+    mag, unit = _split(a)
+    if mag.ndim == 2 and mag.shape[0] > 1 and mag.shape[1] > 1:
+        return float(np.linalg.det(mag))
+    if mag.ndim >= 1:
+        return _join(float(np.linalg.norm(mag.reshape(-1))), unit)
+    return abs(a)
+
+
+def matrow(m, i):
+    """Extract row ``i`` of a matrix as a 1-D vector (Mathcad's row operator)."""
+    mag, unit = _split(m)
+    return _join(_as_2d(mag)[int(getattr(i, "magnitude", i)), :], unit)
+
+
+def matelem(m, i, j):
+    """Mathcad's two-subscript element access ``M[i, j]`` (0-based).
+
+    A genuine 2-D matrix indexes straight through. A *vector* is stored 1-D
+    here (see the section note), so one of the two subscripts is necessarily
+    ``0`` and the other selects the element -- which is what a Mathcad sheet
+    means by ``A[1, 0]`` on a column or ``B[0, 2]`` on a row.
+    """
+    i, j = int(getattr(i, "magnitude", i)), int(getattr(j, "magnitude", j))
+    mag = getattr(m, "magnitude", m)
+    if getattr(np.asarray(mag), "ndim", 0) == 1:
+        return m[i if j == 0 else j]
+    return m[i, j]
+
+
+def submatrix(a, row_lo, row_hi, col_lo, col_hi):
+    """Mathcad ``submatrix``: the block spanning rows ``row_lo..row_hi`` and
+    columns ``col_lo..col_hi`` -- both bounds *inclusive*, unlike a Python
+    slice."""
+    mag, unit = _split(a)
+    lo_r, hi_r = int(row_lo), int(row_hi)
+    lo_c, hi_c = int(col_lo), int(col_hi)
+    return _join(_as_2d(mag)[lo_r : hi_r + 1, lo_c : hi_c + 1], unit)
+
+
+def cross(a, b):
+    """Mathcad's vector cross product ``a × b`` (3-element vectors)."""
+    ma, ua = _split(a)
+    mb, ub = _split(b)
+    out = np.cross(ma.reshape(-1), mb.reshape(-1))
+    if ua is None and ub is None:
+        return out
+    unit = (ua if ua is not None else 1) * (ub if ub is not None else 1)
+    reg = (a if ua is not None else b)._REGISTRY
+    return reg.Quantity(out, unit)
+
+
+def lsolve(a, b):
+    """Mathcad ``lsolve(A, b)``: solve the linear system ``A·x = b``."""
+    return np.linalg.solve(_split(a)[0], _split(b)[0])
+
+
+def geninv(a):
+    """Mathcad ``geninv``: the Moore-Penrose (pseudo) inverse."""
+    return np.linalg.pinv(_split(a)[0])
+
+
+def rank(a):
+    """Mathcad ``rank``: the number of linearly independent columns."""
+    return int(np.linalg.matrix_rank(_split(a)[0]))
+
+
+def rref(a, tol=1e-12):
+    """Mathcad ``rref``: the row-reduced echelon form (Gauss-Jordan)."""
+    m = _as_2d(_split(a)[0]).astype(float).copy()
+    nrows, ncols = m.shape
+    pivot = 0
+    for c in range(ncols):
+        if pivot >= nrows:
+            break
+        r = pivot + int(np.argmax(np.abs(m[pivot:, c])))
+        if abs(m[r, c]) <= tol:
+            continue
+        m[[pivot, r]] = m[[r, pivot]]
+        m[pivot] = m[pivot] / m[pivot, c]
+        for other in range(nrows):
+            if other != pivot and m[other, c] != 0.0:
+                m[other] = m[other] - m[other, c] * m[pivot]
+        pivot += 1
+    return m
+
+
+def norm(v):
+    """Mathcad ``norm``: the Euclidean length of a vector."""
+    mag, unit = _split(v)
+    return _join(float(np.linalg.norm(mag.reshape(-1))), unit)
+
+
+def norm1(a):
+    """Mathcad ``norm1``: the L1 matrix norm (largest absolute column sum)."""
+    return float(np.linalg.norm(_as_2d(_split(a)[0]), 1))
+
+
+def norm2(a):
+    """Mathcad ``norm2``: the L2 matrix norm (largest singular value)."""
+    return float(np.linalg.norm(_as_2d(_split(a)[0]), 2))
+
+
+def norme(a):
+    """Mathcad ``norme``: the Euclidean (Frobenius) matrix norm."""
+    return float(np.linalg.norm(_as_2d(_split(a)[0]), "fro"))
+
+
+def normi(a):
+    """Mathcad ``normi``: the infinity matrix norm (largest absolute row sum)."""
+    return float(np.linalg.norm(_as_2d(_split(a)[0]), np.inf))
+
+
+def _cond(a, order):
+    """``‖A‖ · ‖A⁻¹‖`` in the given norm -- Mathcad's condition numbers.
+
+    ``np.linalg.cond`` covers 1/2/inf; the Euclidean (Frobenius) one it does not
+    define the same way, so the product is taken explicitly for all of them.
+    """
+    mag = _as_2d(_split(a)[0])
+    inv = np.linalg.inv(mag)
+    return float(np.linalg.norm(mag, order) * np.linalg.norm(inv, order))
+
+
+def cond1(a):
+    """Mathcad ``cond1``: the condition number in the L1 norm."""
+    return _cond(a, 1)
+
+
+def cond2(a):
+    """Mathcad ``cond2``: the condition number in the L2 norm."""
+    return _cond(a, 2)
+
+
+def conde(a):
+    """Mathcad ``conde``: the condition number in the Euclidean norm."""
+    return _cond(a, "fro")
+
+
+def condi(a):
+    """Mathcad ``condi``: the condition number in the infinity norm."""
+    return _cond(a, np.inf)
+
+
+def eigenvals(a):
+    """Mathcad ``eigenvals``: the eigenvalues of a square matrix.
+
+    LAPACK's ordering, which is what Mathcad reports too (it is *not* sorted --
+    see ``sort``/``reverse`` for that). A real spectrum comes back real.
+    """
+    return _real_if_close(np.linalg.eigvals(_split(a)[0]))
+
+
+def eigenvecs(a, side="R"):
+    """Mathcad ``eigenvecs``: a matrix whose *columns* are the eigenvectors.
+
+    ``side`` is Mathcad's optional second argument: ``"R"`` (default) for right
+    eigenvectors ``A·v = λ·v``, ``"L"`` for left ones ``vᵀ·A = λ·vᵀ`` (returned,
+    as Mathcad does, as columns of the result). Each column is normalised to
+    unit length, matching Mathcad's convention.
+    """
+    from scipy.linalg import eig
+
+    mag = _split(a)[0]
+    want_left = str(side).upper().startswith("L")
+    left, right = eig(mag, left=True, right=True)[1:]
+    return _real_if_close(left if want_left else right)
+
+
+def eigenvec(a, value):
+    """Mathcad ``eigenvec(M, λ)``: the (unit-length) eigenvector for ``λ``.
+
+    Found as the null space of ``M - λ·I`` via an SVD -- the right singular
+    vector belonging to the smallest singular value.
+    """
+    mag = _split(a)[0]
+    lam = complex(getattr(value, "magnitude", value))
+    n = mag.shape[0]
+    shifted = mag.astype(complex) - lam * np.eye(n)
+    _u, _s, vh = np.linalg.svd(shifted)
+    vec = vh[-1].conj()
+    # Fix the arbitrary SVD sign the way LAPACK's eigensolver reports it: make
+    # the largest-magnitude component positive real.
+    lead = vec[int(np.argmax(np.abs(vec)))]
+    if lead != 0:
+        vec = vec * (abs(lead) / lead)
+    return _real_if_close(vec)
+
+
+def genvals(a, b):
+    """Mathcad ``genvals``: eigenvalues of the generalized problem ``A·v = λ·B·v``."""
+    from scipy.linalg import eig
+
+    return _real_if_close(eig(_split(a)[0], _split(b)[0], right=False))
+
+
+def genvecs(a, b, side="R"):
+    """Mathcad ``genvecs``: eigenvectors of ``A·v = λ·B·v``, as columns.
+
+    ``side`` selects right (default) or left vectors, as in :func:`eigenvecs`.
+    Mathcad normalises each column so its largest-magnitude component is ``1``
+    (not to unit length, as it does for ``eigenvecs``).
+    """
+    from scipy.linalg import eig
+
+    want_left = str(side).upper().startswith("L")
+    left, right = eig(_split(a)[0], _split(b)[0], left=True, right=True)[1:]
+    vecs = np.asarray(left if want_left else right)
+    out = np.empty_like(vecs)
+    for j in range(vecs.shape[1]):
+        column = vecs[:, j]
+        lead = column[int(np.argmax(np.abs(column)))]
+        out[:, j] = column / lead if lead != 0 else column
+    return _real_if_close(out)
+
+
+def svds(a):
+    """Mathcad ``svds``: the singular values of a matrix, largest first."""
+    return np.linalg.svd(_as_2d(_split(a)[0]), compute_uv=False)
+
+
+def mean(a):
+    """Mathcad ``mean``: the arithmetic mean of every element."""
+    mag, unit = _split(a)
+    return _join(float(np.mean(mag)), unit)
+
+
+def sort(v):
+    """Mathcad ``sort``: a vector's elements in ascending order."""
+    mag, unit = _split(v)
+    return _join(np.sort(mag.reshape(-1)), unit)
+
+
+def reverse(v):
+    """Mathcad ``reverse``: a vector's elements (or a matrix's rows) reversed."""
+    mag, unit = _split(v)
+    return _join(mag[::-1].copy(), unit)
+
+
+def csort(a, n):
+    """Mathcad ``csort(A, n)``: sort a matrix's *rows* by column ``n``."""
+    mag, unit = _split(a)
+    m = _as_2d(mag)
+    return _join(m[np.argsort(m[:, int(n)], kind="stable")], unit)
+
+
+def rsort(a, n):
+    """Mathcad ``rsort(A, n)``: sort a matrix's *columns* by row ``n``."""
+    mag, unit = _split(a)
+    m = _as_2d(mag)
+    return _join(m[:, np.argsort(m[int(n), :], kind="stable")], unit)
+
+
+def IsArray(x):  # noqa: N802 -- Mathcad's own spelling
+    """Mathcad ``IsArray``: ``1`` if ``x`` is a vector/matrix, else ``0``.
+
+    Mathcad's booleans display as 1/0 (and that is what ``result.xml`` caches),
+    so these return ints rather than Python ``bool``s.
+    """
+    return 1 if _is_arraylike(x) else 0
+
+
+def IsScalar(x):  # noqa: N802 -- Mathcad's own spelling
+    """Mathcad ``IsScalar``: ``1`` if ``x`` is a single value, else ``0``."""
+    return 0 if _is_arraylike(x) else 1
 
 
 def linterp(vx, vy, x):
@@ -655,6 +1054,15 @@ def index_build(idx, fn):
     n = max(keys) + 1
     sample = results[keys[0]]
 
+    # Elements that are themselves vectors (``x[j] := eigenvec(S, V[j])``) build
+    # a vector *of* vectors -- an object array, like a heterogeneous ``col()``.
+    if _is_arraylike(sample):
+        vec = np.empty(n, dtype=object)
+        vec[:] = 0
+        for k, v in results.items():
+            vec[k] = v
+        return vec
+
     if hasattr(sample, "units"):
         reg = sample._REGISTRY
         unit = sample.units
@@ -668,6 +1076,40 @@ def index_build(idx, fn):
     for k, v in results.items():
         vec[k] = v
     return vec
+
+
+def index_build_2d(row_idx, col_idx, fn):
+    """Build a 0-based Mathcad *matrix* by iterating two index ranges.
+
+    The two-subscript form of :func:`index_build` -- ``X[i, j] := expr`` with
+    both ``i`` and ``j`` range variables. ``fn(i, j)`` is evaluated for every
+    combination (Mathcad takes the ranges' outer product, not a zip), and any
+    lower row/column never written is zero-filled.
+    """
+    ri = [int(k) for k in np.atleast_1d(getattr(row_idx, "magnitude", row_idx))]
+    ci = [int(k) for k in np.atleast_1d(getattr(col_idx, "magnitude", col_idx))]
+    out = np.empty((max(ri) + 1, max(ci) + 1), dtype=object)
+    out[:] = 0
+    for i in ri:
+        for j in ci:
+            out[i, j] = fn(i, j)
+    return _consolidate(out)
+
+
+def unpack(value):
+    """Flatten a matrix **column-major** for a destructuring assignment.
+
+    Mathcad's ``[a b; c d] := M`` lists its target names column by column (the
+    same order ``<ml:matrix>`` stores elements in), so a 2-D right-hand side has
+    to be flattened the same way before being unpacked. A 1-D vector passes
+    through unchanged.
+    """
+    mag = getattr(value, "magnitude", value)
+    if getattr(np.asarray(mag), "ndim", 0) < 2:
+        return value
+    flat = np.asarray(mag).reshape(-1, order="F")
+    unit = getattr(value, "units", None)
+    return flat if unit is None else unit._REGISTRY.Quantity(flat, unit)
 
 
 def integral(func, lower, upper):
@@ -907,11 +1349,14 @@ def arange(start, stop, step):
         d = step.to(unit).magnitude
         return reg.Quantity(np.arange(lo, hi + d / 2, d), unit)
     lo, hi, d = float(start), float(stop), float(step)
-    # An all-integer range (e.g. an index variable ``i := 1 .. n``) returns an
-    # *integer* array so it can index NumPy/Pint vectors directly.
-    if lo.is_integer() and hi.is_integer() and d.is_integer():
-        return np.arange(int(lo), int(hi) + 1, int(d))
-    return np.arange(lo, hi + d / 2, d)
+    values = np.arange(lo, hi + d / 2, d)
+    # A range whose *start and step* are whole numbers only ever takes integer
+    # values, so it returns an integer array and can index NumPy/Pint vectors
+    # directly. The endpoint need not be whole: ``j := 0 .. (length(v)-1)/28``
+    # still runs 0, 1, … 7 -- and is still used as an index.
+    if lo.is_integer() and d.is_integer():
+        return values.astype(int)
+    return values
 
 
 def sample(func, xs):

@@ -25,6 +25,8 @@ pytest                                              # run the suite
 
 ```
 .mcdx ─load─▶ regions ─parse─▶ IR (our AST) ─emit─▶ .ipynb / .py
+                                    ▲
+                              shape inference
 ```
 
 The **IR is the key design choice**: it decouples XML parsing from code generation, so a future
@@ -38,8 +40,9 @@ When adding features, respect this boundary — parsers produce IR, backends con
 | [parser/expressions.py](mcad2py/parser/expressions.py) | Recursive XML→IR walk; identifier reading (subscripts/Greek), `sanitize()` |
 | [parser/regions.py](mcad2py/parser/regions.py) | Worksheet→ordered regions; **sort by (top, left)** for reading order |
 | [ir.py](mcad2py/ir.py) | Backend-agnostic node dataclasses |
+| [shapes.py](mcad2py/shapes.py) | Post-parse IR pass: infers each name's shape across the sheet so Mathcad's one `·` splits into scalar `*` vs. `matmul` |
 | [mapping.py](mcad2py/mapping.py) | Data tables: operators, builtins, constants, Greek, unit aliases |
-| [runtime.py](mcad2py/runtime.py) | Helpers imported by generated code: the full angle-aware trig + hyperbolic families, `col`/`arange`/`index_build`/`vectorize`/`transpose`, `linterp` (unit-aware linear interp), `integral` (scipy `quad`), `summation`, `solve_block` (scipy `fsolve`), `sample`/`plot_axis` (matplotlib plots) |
+| [runtime.py](mcad2py/runtime.py) | Helpers imported by generated code: the full angle-aware trig + hyperbolic families, the full vector/matrix family (`rows`/`identity`/`det`/`lsolve`/the norm & condition sets/the eigen set/`sort`…), `col`/`arange`/`index_build`/`vectorize`/`transpose`, `linterp` (unit-aware linear interp), `integral` (scipy `quad`), `summation`, `solve_block` (scipy `fsolve`), `sample`/`plot_axis` (matplotlib plots) |
 | [emit/codegen.py](mcad2py/emit/codegen.py) | Precedence-aware expression printer; shared by both backends |
 | [emit/notebook_backend.py](mcad2py/emit/notebook_backend.py) | IR→`.ipynb`; region→cell; bare last line echoes result |
 | [emit/py_backend.py](mcad2py/emit/py_backend.py) | IR→`.py`; evaluations become `print(...)` |
@@ -62,6 +65,10 @@ adding support for a new XML construct.
 - Unknown/unsupported constructs emit a visible `# TODO unsupported: <note>` so output still
   loads — never silently drop a region.
 - Add new builtins/units/constants to [mapping.py](mcad2py/mapping.py) (data, not code).
+- Mathcad's `·` is scalar, matrix *and* dot product; [shapes.py](mcad2py/shapes.py) decides which by
+  inferring shapes across the whole sheet, and only rewrites to `matmul` when **both** operands are
+  provably arrays (never under a vectorize arrow). Give a new array-returning builtin an entry in its
+  `_CALL_KINDS` table.
 
 ## Testing
 
@@ -152,6 +159,21 @@ conventions that differ from Python/NumPy (`atan2`'s reversed arg order, `angle`
 `acot(-2) = 2.67794`, the one argument sign where that convention differs from `atan(1/x)`, alongside
 `atan(-6) = -1.40565` for the ordinary signed branch); and round-trip identities for all twelve
 forward/inverse pairs.
+[tests/test_matrices.py](tests/test_matrices.py) covers `references/matrices.mcdx` — a third **catalogue
+sheet**, this one walking the whole **vector & matrix** family (shape, linear algebra, norms/conditions,
+eigen/singular values, ordering, predicates) plus three worked examples (down-sampling, left/right
+eigenvectors, PCA). It runs end-to-end and matches all 111 echoes against the cache — captured as
+*objects* via a `print` shim in the exec namespace, since a sheet of matrices prints multi-line arrays
+no line-based parse could reassemble. Beyond "the name resolves" it pins: **which `·` is a matrix
+product** (`M·A`/`B·C`/`L_0ᵀ·A` → `matmul`, while `2·identity(4)`, `λ·R` and `M·kg` stay `*` — this needs
+the sheet-wide shape pass, since `M` and `A` are plain names at the point of use); the **two-subscript
+forms** (`matelem` reads, including on the 1-D arrays we store row/column vectors as; `index_build_2d`
+writes over both ranges' outer product; the column-major `[a b; c d] := M` destructure); the two
+bar operators (`|M|` = determinant vs. `|a_0|` = `abs`), row extraction and `×`; and `matrix(m, n, f)`
+sharing its name with the literal builder. Eigen results are checked the only way they can be —
+values as a **set** (LAPACK's order is Mathcad's for the symmetric cases, not for the general 6×6s or
+`genvals`) and vectors by their **defining equation** (signs are arbitrary in any implementation), with
+the PCA's cached principal components confirming the invariant end result.
 
 **Reference files are test fixtures — don't edit them.** Tests compare generated output against each
 `.mcdx`'s cached `result.xml`; changing a worksheet (e.g. a `phi` value) silently shifts every
@@ -162,7 +184,8 @@ dependent cached number and breaks the hardcoded expected values.
 For a full **function-catalog coverage map** — every Mathcad function category vs. what we emit, plus a
 prioritized TODO — see [docs/mathcad-function-coverage.md](docs/mathcad-function-coverage.md).
 
-`find` solve blocks work; `minerr`/`maximize`/`minimize` don't yet. `solve_block` (runtime) falls back
+`find` solve blocks and `lsolve` work; `minerr`/`maximize`/`minimize`/`root`/`polyroots` don't yet.
+`solve_block` (runtime) falls back
 to a bounded random-restart search when `fsolve` reports success without actually reducing the
 residual (a locally-flat/degenerate Jacobian, seen on `references/biaxial_bending.mcdx`'s double
 integral) — capped at one retry so a bad case costs a few minutes, not tens; it prints a warning and
@@ -176,7 +199,12 @@ dimensionless one reduces first). Parametric xy plots (both axes are data vector
 outline) now render correctly — a sampling domain is only inferred when an axis is a bare *range* (see
 the schema note). The **trig and hyperbolic families are complete** (including `sec`/`csc`/`sinc`,
 `atan2`/`angle`, and all six inverse hyperbolics), with `acot`'s Maple/MuPAD `(0, π)` branch confirmed
-against a cached negative argument (see the schema note).
+against a cached negative argument (see the schema note). The **vector & matrix family is complete**
+too, bar the table-search functions (`lookup`/`match`/`vlookup`/`hlookup`) — and with it come the
+two-subscript read/write forms and the `·`-disambiguating shape pass. Two things there are *not*
+byte-reproducible and shouldn't be treated as bugs: LAPACK's **eigenvalue ordering** differs from
+Mathcad's for nonsymmetric matrices and for `genvals` (the multisets agree), and **eigenvector signs**
+are arbitrary in any implementation.
 `TOL`/`CTOL` from `calculation.xml` aren't consumed yet (solve uses fsolve defaults).
 Scriptable-control JScript is **intentionally** not transpiled — we surface the control's cached
 output value (the `RL` attribute) instead, which is faithful as long as the worksheet was last saved
