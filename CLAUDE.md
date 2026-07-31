@@ -38,7 +38,7 @@ When adding features, respect this boundary — parsers produce IR, backends con
 | [loader.py](mcad2py/loader.py) | Unzip `.mcdx`; return `worksheet.xml`, `result.xml`, XAML text packages, rels map |
 | [parser/namespaces.py](mcad2py/parser/namespaces.py) | Namespace constants; `localname()` strips `{ns}` — **match on local name, not full URI** (Prime bumps version numbers) |
 | [parser/expressions.py](mcad2py/parser/expressions.py) | Recursive XML→IR walk; identifier reading (subscripts/Greek), `sanitize()` |
-| [parser/regions.py](mcad2py/parser/regions.py) | Worksheet→ordered regions; **sort by (top, left)** for reading order |
+| [parser/regions.py](mcad2py/parser/regions.py) | Worksheet→ordered regions; **sort by (top, left)** for reading order; collapsible `<Area>`s flattened away (their coords are area-relative) |
 | [ir.py](mcad2py/ir.py) | Backend-agnostic node dataclasses |
 | [shapes.py](mcad2py/shapes.py) | Post-parse IR pass: infers each name's shape across the sheet so Mathcad's one `·` splits into scalar `*` vs. `matmul` |
 | [mapping.py](mcad2py/mapping.py) | Data tables: operators, builtins, constants, Greek, unit aliases |
@@ -174,6 +174,12 @@ sharing its name with the literal builder. Eigen results are checked the only wa
 values as a **set** (LAPACK's order is Mathcad's for the symmetric cases, not for the general 6×6s or
 `genvals`) and vectors by their **defining equation** (signs are arbitrary in any implementation), with
 the PCA's cached principal components confirming the invariant end result.
+[tests/test_areas.py](tests/test_areas.py) covers `references/collapsable-area.mcdx`: a **collapsible
+area** (`<region><Area><regions>…`) is flattened away, so `y := 2·x` defined *inside* one converts and
+runs like any other region and the `y + x =` below it matches the cache (`3`). Plus, on synthetic
+worksheet XML, the two properties the fixture is too simple to show: areas **nest**, and their
+children's `top`/`left` are **area-relative**, so each area is sorted within itself and spliced in at
+its own position rather than sorted against the sheet.
 
 [tools/strip_mcdx_metadata.py](tools/strip_mcdx_metadata.py) removes the authoring metadata a
 `.mcdx` carries in parts you never see in Prime (`docProps/core.xml`'s `creator`/`lastModifiedBy`,

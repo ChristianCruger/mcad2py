@@ -6,6 +6,8 @@ read this file when parsing a new schema construct or debugging a parser edge ca
 
 - Namespaces: `ws=worksheet50`, `ml=math50`, `u=units10`, `p=provenance10`.
 - `<region top= left=>` → sort by position. `<math resultRef=N>` links to `result.xml`.
+- `<region><Area><regions>…` = a **collapsible area** (a container region, not math) — flattened away;
+  see [Collapsible areas](#collapsible-areas-collapsable-areamcdx).
 - `<ml:define>` = `:=`; `<ml:eval>` = inline `=`, carries `<ml:unitOverride>` (display unit, or
   `<ml:placeholder/>` = auto) → drives `.to(<unit-expr>)`. The override is parsed as a full
   expression, so a compound unit (`kN*m`, an `<ml:apply><ml:mult/>`) becomes `ureg.kN * ureg.m`.
@@ -398,3 +400,32 @@ reproducible:
 an index (`u[j] := v[n·j]`). So `arange` returns an **integer** array whenever the *start and step*
 are whole — the endpoint need not be. (It previously required all three, and produced a float array
 here, which NumPy refuses as an index.)
+
+## Collapsible areas (`collapsable-area.mcdx`)
+
+A Prime **area** is a container region — one whose only child is `<Area>`, holding its own `<regions>`
+list — that the user can fold shut in the worksheet:
+
+```xml
+<region region-id="2" top="96" left="0"><Area><regions>
+  <region region-id="3" top="19.2" left="19.2"><text item-idref="R3f6…"/></region>
+  <region region-id="4" top="38.4" left="19.2"><math resultRef="1"><ml:define>…</ml:define></math></region>
+</regions></Area></region>
+```
+
+Collapsing is **purely presentational** — Mathcad still evaluates everything inside, and downstream
+regions depend on those definitions — so `_ordered_regions` ([parser/regions.py](../mcad2py/parser/regions.py))
+splices an area's contents into the region stream at the area's own position and converts them as
+though the area weren't there. Points worth knowing:
+
+- Nested `top`/`left` are **area-relative** (`19.2`, `38.4` above, versus the area's own `96`), so each
+  area is sorted *within itself* and inserted as a block. Sorting every region globally would scatter
+  area contents to the top of the sheet.
+- Areas nest, so the flattening recurses.
+- `<Area>` is in the **worksheet** namespace (no `ml:` prefix) and is capitalized, unlike its siblings —
+  match on the local name, as everywhere else.
+- No collapsed/locked state is recorded in the fixture's `<Area>` (it has no attributes at all). Since
+  we flatten regardless, any such attribute is irrelevant to conversion.
+- Before this, a region containing an `<Area>` matched none of `_parse_region`'s cases and returned
+  `None` — the whole area was silently dropped, definitions included, and dependent regions downstream
+  emitted references to names that were never defined.

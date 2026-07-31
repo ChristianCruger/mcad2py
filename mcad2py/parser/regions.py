@@ -42,15 +42,11 @@ def parse_worksheet(
     if regions_elem is None:
         return ws
 
-    # Sort by visual position (top, then left) to get reading order.
-    def position(region: ET.Element) -> tuple[float, float]:
-        return (_to_float(region.get("top")), _to_float(region.get("left")))
-
     # Names defined as a Mathcad *range* (``x0 := -50, -49 .. 50``), tracked as
     # we go so a later contour/3D plot equation can tell "``f(x0, y0)`` over two
     # ranges" (needs an outer-product grid) apart from a plain call.
     range_names: set[str] = set()
-    for region in sorted(regions_elem, key=position):
+    for region in _ordered_regions(regions_elem):
         parsed = _parse_region(region, text_resolver, image_resolver, range_names)
         # A data table (<spec-table>) expands to one region per column.
         for item in parsed if isinstance(parsed, list) else [parsed]:
@@ -64,6 +60,33 @@ def parse_worksheet(
     # which is which needs the whole sheet's shapes, so it runs as a pass.
     annotate_products(ws)
     return ws
+
+
+def _ordered_regions(regions_elem: ET.Element) -> list[ET.Element]:
+    """The leaf ``<region>`` elements in reading order, flattening ``<Area>``s.
+
+    A collapsible **area** is a container region: ``<region><Area><regions>…``.
+    Collapsing it is purely presentational -- Mathcad still evaluates what's
+    inside -- so we splice its contents into the stream at the area's own
+    position and convert them as if the area weren't there. The nested regions'
+    ``top``/``left`` are *area-relative*, so each area is sorted within itself
+    rather than against its siblings. Areas nest, hence the recursion.
+    """
+    ordered: list[ET.Element] = []
+    for region in sorted(regions_elem, key=_position):
+        area = next((c for c in region if localname(c.tag) == "Area"), None)
+        if area is None:
+            ordered.append(region)
+            continue
+        inner = next((c for c in area if localname(c.tag) == "regions"), None)
+        if inner is not None:
+            ordered.extend(_ordered_regions(inner))
+    return ordered
+
+
+def _position(region: ET.Element) -> tuple[float, float]:
+    """Visual position (top, then left) -- i.e. reading order."""
+    return (_to_float(region.get("top")), _to_float(region.get("left")))
 
 
 def _parse_region(
