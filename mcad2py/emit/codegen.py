@@ -556,14 +556,23 @@ def plot_lines(region: ir.Plot) -> list[str]:
     Each trace's non-domain expression is sampled element-wise over the domain
     array (``sample(lambda d: expr, d)``) so branching programs and units work;
     ``plot_axis`` applies Mathcad's value/unit axis scaling.
+
+    An *implicit* domain (a plot of a free variable, with no ``x :=`` in the
+    sheet) is built here from Mathcad's default interval. It goes into a
+    private ``_domain_<name>`` rather than the name itself, since Mathcad
+    invents the variable for the plot alone -- it must not leak into the
+    regions below.
     """
     domain = region.domain
-    lines = ["_fig, _ax = plt.subplots()"]
+    lines: list[str] = []
+    if region.implicit_domain is not None:
+        start, stop, num = region.implicit_domain
+        lines.append(f"{_domain_var(region)} = plot_domain({start}, {stop}, {num})")
+    lines.append("_fig, _ax = plt.subplots()")
     for trace in region.traces:
-        x = _plot_axis_call(trace.x, trace.x_unit, domain)
-        y = _plot_axis_call(trace.y, trace.y_unit, domain)
-        series = trace.y if _is_domain(trace.x, domain) else trace.x
-        label = expr_to_str(series)
+        x = _plot_axis_call(trace.x, trace.x_unit, domain, _domain_var(region))
+        y = _plot_axis_call(trace.y, trace.y_unit, domain, _domain_var(region))
+        label = expr_to_str(_trace_series(trace, region))
         color = f", color={trace.color!r}" if trace.color else ""
         lines.append(f"_ax.plot({x}, {y}, label={label!r}{color})")
     lines.append("_ax.axhline(0, color='0.6', linewidth=0.8)")
@@ -632,13 +641,39 @@ def _is_domain(expr: ir.Expr, domain: str | None) -> bool:
     return isinstance(expr, ir.Name) and expr.py == domain
 
 
-def _plot_axis_call(expr: ir.Expr, unit: ir.Expr | None, domain: str | None) -> str:
+def _domain_var(region: ir.Plot) -> str:
+    """The Python variable holding the domain array -- the sheet's own name,
+    or a private one when the domain is implicit (invented for this plot)."""
+    if region.implicit_domain is None:
+        return region.domain or ""
+    return f"_domain_{region.domain}"
+
+
+def _trace_series(trace: ir.PlotTrace, region: ir.Plot) -> ir.Expr:
+    """The expression a trace is named after in the legend: the *dependent*
+    axis, i.e. whichever one isn't the domain itself.
+
+    With an implicit domain neither axis need be the bare variable (``x/2``
+    against ``cos(x)``), so y -- the function being plotted -- always wins. A
+    parametric plot has no domain at all and keeps x, which is how a section
+    outline reads (``matcol(Contour, 0)``).
+    """
+    if region.implicit_domain is not None or _is_domain(trace.x, region.domain):
+        return trace.y
+    return trace.x
+
+
+def _plot_axis_call(
+    expr: ir.Expr, unit: ir.Expr | None, domain: str | None, domain_var: str
+) -> str:
     """``plot_axis(<data>, <unit>)`` where data is the domain array directly or
     the expression sampled element-wise over the domain."""
-    if _is_domain(expr, domain) or domain is None:
+    if _is_domain(expr, domain):
+        data = domain_var
+    elif domain is None:
         data = expr_to_str(expr)
     else:
-        data = f"sample(lambda {domain}: {expr_to_str(expr)}, {domain})"
+        data = f"sample(lambda {domain}: {expr_to_str(expr)}, {domain_var})"
     unit_s = expr_to_str(unit) if unit is not None else "None"
     return f"plot_axis({data}, {unit_s})"
 
@@ -744,7 +779,7 @@ def header_lines(ws: ir.Worksheet) -> list[str]:
             "col", "matrix", "arange", "index_build", "index_build_2d",
             "vectorize", "transpose", "matmul", "matcol", "total", "vec_set",
             "unpack", "integral", "double_integral", "summation", "solve_block",
-            "sample", "plot_axis", "mesh_grid", "resolve_plot_grid",
+            "sample", "plot_domain", "plot_axis", "mesh_grid", "resolve_plot_grid",
         ]
         seen: set[str] = set()
         names = ", ".join(
@@ -808,6 +843,8 @@ def _used_runtime(ws: ir.Worksheet) -> set[str]:
             found.add("unpack")
         if isinstance(region, ir.Plot):
             found.update(("sample", "plot_axis"))
+            if region.implicit_domain is not None:
+                found.add("plot_domain")
         if isinstance(region, ir.GridPlot):
             found.update(("resolve_plot_grid", "plot_axis"))
             if region.mesh_names is not None:

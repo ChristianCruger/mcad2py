@@ -429,3 +429,40 @@ though the area weren't there. Points worth knowing:
 - Before this, a region containing an `<Area>` matched none of `_parse_region`'s cases and returned
   `None` — the whole area was silently dropped, definitions included, and dependent regions downstream
   emitted references to names that were never defined.
+
+## Plotting without a plotting variable (`plotting-wo-var.mcdx`)
+
+An `<xyPlot>` needs **no** `x := -10, -9.96 .. 10` above it. Writing `sin(x)` on the y axis against
+`x` on the x axis is enough: Mathcad notices `x` is undefined and invents a domain for it. Nothing in
+the XML says so — the `<plotEquation>`s are ordinary `<ml:id>`/`<ml:apply>` trees, and the
+`<xAxis start="-10" end="10">` attributes are just the *drawn* window (the union of the traces'
+extents). The interval is read off the cached `<ml:Trace2dResult>` instead:
+
+```xml
+<ml:Trace2dResult TraceType="Parametric">
+  <ml:RangeInfo Min="-10" Max="10" />          <!-- trace 1: x on the x axis -->
+  <ml:Data><ml:RangePoints><ml:DataVectors … VectorLength="499">[-10,-9.9598…,10]</…>
+```
+
+- **-10..10 in 499 points** (a step of 20/498). The `<trace>` element's own `num-of-points="500"` is
+  *not* the vector length — the cached data holds 499. `plot_domain()` ([runtime.py](../mcad2py/runtime.py))
+  reproduces it as `np.linspace(-10, 10, 499)`.
+- **The interval belongs to the free variable, not to the axis.** The fixture's second trace puts
+  `x/2` on the x axis against `cos(x)`; its cached `RangeInfo` is `Min="-5" Max="5"` and its y values
+  are `cos(x)` for `x` over the *full* -10..10 (checked against `cos(x/2)`, which they are not). So
+  the axis expression is just another function sampled over the domain — exactly like the y axis.
+- **Inference** is a post-parse pass, `_infer_implicit_plot_domains`
+  ([parser/regions.py](../mcad2py/parser/regions.py)), because it needs to know which names the sheet
+  ever defines. Walking the regions in order, a `Plot` with no range-typed domain whose axis
+  expressions reference **exactly one** variable not bound above it takes that variable as its domain
+  and gets `implicit_domain = (-10, 10, 499)`. Order matters: Mathcad reads top-to-bottom, so a
+  definition *below* the plot doesn't reach it. Zero free names is a parametric plot (two data
+  vectors, see the `RC_col` note) and two is not a function plot — both are left alone. `π`/`e` are
+  skipped: they're still bare identifiers in the IR (codegen is what maps them to `math.pi`/`math.e`),
+  so `sin(π·x)` would otherwise look like two free variables.
+- **The invented variable is scoped to the plot.** Codegen puts the array in `_domain_<name>` rather
+  than `<name>`, since Mathcad conjures it for the one plot — leaking it would let a region below
+  silently resolve a name that has no value in the worksheet.
+- The legend names the **y** expression whenever the domain is implicit. The usual rule ("whichever
+  axis isn't the domain") doesn't decide the `x/2` vs `cos(x)` trace, where *neither* axis is the bare
+  variable.

@@ -47,7 +47,8 @@ sample worksheet will hit an unsupported builtin.
 vectors), `index_build` / `index_build_2d` (range-indexed `X[i] :=` and `X[i, j] :=`), `unpack`
 (column-major flatten for `[a b; c d] := M`), `total` (sum a vector), `summation` (indexed Σ),
 `integral` / `double_integral` (scipy `quad`/`dblquad`), `arange` (inclusive unit-aware range),
-`sample` / `mesh_grid` / `CreateMesh` / `resolve_plot_grid` (plot sampling), `vectorize` /
+`sample` / `plot_domain` / `mesh_grid` / `CreateMesh` / `resolve_plot_grid` (plot sampling),
+`vectorize` /
 `elementwise` (the arrow), `solve_block` (Given/Find via `fsolve`).
 
 ### Symbolic (`SYMBOLIC_COMMANDS` → SymPy)
@@ -90,7 +91,7 @@ Legend: ✅ done · 🟡 partial · ⬜ not started · ⛔ out of scope (unlikel
 | **Fourier transforms** | ⬜ | — | `fft/ifft` `FFT/IFFT` `cfft/icfft` `dft` |
 | **String functions** | ⬜ | — | `concat` `num2str` `str2num` `strlen` `substr` `search` `strfind` `error` (string *literals* already work) |
 | **Sorting** | ✅ | `sort` `csort` `rsort` `reverse` (also listed under vector/matrix) | — |
-| **Graphing helpers** | 🟡 | `CreateMesh`, plot rendering (xy/contour/3D) | `CreateSpace`, `polyhedron`, `QuickPlot`-only forms |
+| **Graphing helpers** | 🟡 | `CreateMesh`, plot rendering (xy/contour/3D), QuickPlot (xy plot of an undefined variable → the invented -10..10 domain) | `CreateSpace`, `polyhedron` |
 | **Finance** | ⛔ | — | `fv` `pv` `npv` `irr` `pmt` `rate` … (not engineering) |
 | **Image processing** | ⛔ | — | out of scope |
 | **File access / data I/O** | ⛔ | — | `READPRN` `WRITEPRN` `READEXCEL` `READFILE` … (a converter shouldn't touch the filesystem the way the sheet did) |

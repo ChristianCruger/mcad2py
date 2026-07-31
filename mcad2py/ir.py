@@ -526,10 +526,17 @@ class Plot(Region):
     ``domain`` is the independent array variable (the bare-``Name`` axis, e.g.
     ``e_plot``/``z_plot``); trace expressions are sampled element-wise over it
     so branching programs and units survive.
+
+    ``implicit_domain`` is set when that variable is never *defined* in the
+    sheet: Mathcad plots a function of a free variable by inventing a domain
+    for it, so we invent the same one. It holds ``(start, stop, points)`` --
+    Mathcad's default interval -- and codegen builds the array itself rather
+    than reading a name that doesn't exist.
     """
 
     traces: list[PlotTrace]
     domain: str | None = None
+    implicit_domain: tuple[float, float, int] | None = None
 
 
 @dataclass

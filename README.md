@@ -80,7 +80,8 @@ angle-aware helpers (`from mcad2py.runtime import sin, cos, tan, cot`), so
 - **Solve blocks** — numeric Given/Find (via `scipy.optimize`), including a block that *defines a
   function*; symbolic `solve`/`simplify`/`factor`/`expand` via SymPy
 - **Integrals and sums** — definite and double integrals (`scipy.integrate`), indexed Σ
-- **Plots** — x-y (function and parametric), contour and 3D, rendered with matplotlib
+- **Plots** — x-y (function and parametric, including a plot whose variable is never defined —
+  Mathcad's invented -10..10 domain), contour and 3D, rendered with matplotlib
 - **Controls and tables** — ComboBox row selectors, data tables, scriptable controls (via their
   cached value), text/comment regions → markdown cells
 - Images embedded from picture regions

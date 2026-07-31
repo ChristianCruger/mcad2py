@@ -1369,6 +1369,17 @@ def sample(func, xs):
     return col(*[func(x) for x in xs])
 
 
+def plot_domain(start=-10.0, stop=10.0, num=499):
+    """The array Mathcad invents for a plot over an *undefined* variable.
+
+    Plotting ``sin(x)`` against ``x`` with no ``x :=`` anywhere makes Mathcad
+    sample the free variable over -10..10; the axis expression may then scale
+    it (``x/2`` reads -5..5). Defaults match a cached ``<ml:Trace2dResult>``:
+    499 points, i.e. a step of 20/498.
+    """
+    return np.linspace(float(start), float(stop), int(num))
+
+
 def plot_axis(data, unit=None):
     """Magnitudes for a plot axis, applying Mathcad's value/unit scaling.
 

@@ -8,7 +8,7 @@ import xml.etree.ElementTree as ET
 from typing import Callable
 
 from .. import ir
-from ..mapping import SYMBOLIC_COMMANDS
+from ..mapping import CONSTANTS, SYMBOLIC_COMMANDS
 from ..shapes import annotate_products
 from .expressions import parse_eval, parse_expr, read_identifier, sanitize
 from .namespaces import localname
@@ -56,6 +56,8 @@ def parse_worksheet(
                 range_names.add(item.target.py)
             ws.regions.append(item)
     _inject_symbol_declarations(ws)
+    # Needs the whole (ordered) sheet to know which names are ever defined.
+    _infer_implicit_plot_domains(ws)
     # Mathcad spells scalar, matrix and dot products all as ``·``; deciding
     # which is which needs the whole sheet's shapes, so it runs as a pass.
     annotate_products(ws)
@@ -843,6 +845,80 @@ def _collect_var_names(node: ir.Expr, acc: list[str]) -> None:
         acc.append(node.py)
     for child in ir.child_exprs(node):
         _collect_var_names(child, acc)
+
+
+# Mathcad's default sampling interval for a plot over an *undefined* variable,
+# and the number of points it takes across it. Both read off a cached
+# ``<ml:Trace2dResult>``: -10..10 in 499 steps of 20/498 (the ``<trace>``
+# element's own ``num-of-points`` says 500, but the data vector holds 499).
+_IMPLICIT_PLOT_DOMAIN = (-10.0, 10.0, 499)
+
+
+def _infer_implicit_plot_domains(ws: ir.Worksheet) -> None:
+    """Give an X-Y plot over a never-defined variable Mathcad's default domain.
+
+    A plot needs no ``x := -10, -9.96 .. 10`` above it: writing ``sin(x)`` on
+    the y axis against ``x`` on the x axis is enough, and Mathcad invents the
+    interval -10..10 for the free variable. The *axis* expression may be any
+    function of it -- ``x/2`` on the x axis plots -5..5, because it's ``x``
+    that spans -10..10, not the axis.
+
+    So: a plot with no range-typed domain whose equations reference exactly one
+    variable that nothing above it defines takes that variable as its domain,
+    with the default interval attached. Two free names, or none, is not a
+    function plot (a parametric outline plots two data vectors directly) and is
+    left alone.
+    """
+    defined: set[str] = set()
+    for region in ws.regions:
+        if isinstance(region, ir.Plot) and region.domain is None:
+            free = _free_plot_names(region, defined)
+            if len(free) == 1:
+                region.domain = free[0]
+                region.implicit_domain = _IMPLICIT_PLOT_DOMAIN
+        defined |= _bound_names(region)
+
+
+def _free_plot_names(plot: ir.Plot, defined: set[str]) -> list[str]:
+    """Distinct variables a plot's axis expressions reference and nothing has
+    defined. ``π``/``e`` read as identifiers at this stage (they only become
+    ``math.pi``/``math.e`` at codegen), so they're excluded -- else
+    ``sin(π·x)`` would look like two free names rather than one.
+    """
+    names: list[str] = []
+    for trace in plot.traces:
+        for node in (trace.x, trace.y):
+            for sub in _walk_exprs(node):
+                if not isinstance(sub, ir.Name) or sub.role != "VARIABLE":
+                    continue
+                if sub.py in defined or sub.original in CONSTANTS:
+                    continue
+                if sub.py not in names:
+                    names.append(sub.py)
+    return names
+
+
+def _walk_exprs(node: ir.Expr) -> "list[ir.Expr]":
+    """``node`` and every descendant expression, pre-order."""
+    out = [node]
+    for child in ir.child_exprs(node):
+        out.extend(_walk_exprs(child))
+    return out
+
+
+def _bound_names(region: ir.Region) -> set[str]:
+    """The names a region binds, i.e. what is in scope below it."""
+    if isinstance(region, (ir.Define, ir.IndexAssign)):
+        return {region.target.py}
+    if isinstance(region, (ir.MultiAssign, ir.ComboBoxAssign)):
+        return {t.py for t in region.targets}
+    if isinstance(region, ir.SolveBlock):
+        return {t.py for t in region.targets} | {
+            g.target.py for g in region.guesses
+        }
+    if isinstance(region, ir.SymbolDeclarations):
+        return set(region.names)
+    return set()
 
 
 def _to_float(value: str | None) -> float:

@@ -42,7 +42,7 @@ When adding features, respect this boundary — parsers produce IR, backends con
 | [ir.py](mcad2py/ir.py) | Backend-agnostic node dataclasses |
 | [shapes.py](mcad2py/shapes.py) | Post-parse IR pass: infers each name's shape across the sheet so Mathcad's one `·` splits into scalar `*` vs. `matmul` |
 | [mapping.py](mcad2py/mapping.py) | Data tables: operators, builtins, constants, Greek, unit aliases |
-| [runtime.py](mcad2py/runtime.py) | Helpers imported by generated code: the full angle-aware trig + hyperbolic families, the full vector/matrix family (`rows`/`identity`/`det`/`lsolve`/the norm & condition sets/the eigen set/`sort`…), `col`/`arange`/`index_build`/`vectorize`/`transpose`, `linterp` (unit-aware linear interp), `integral` (scipy `quad`), `summation`, `solve_block` (scipy `fsolve`), `sample`/`plot_axis` (matplotlib plots) |
+| [runtime.py](mcad2py/runtime.py) | Helpers imported by generated code: the full angle-aware trig + hyperbolic families, the full vector/matrix family (`rows`/`identity`/`det`/`lsolve`/the norm & condition sets/the eigen set/`sort`…), `col`/`arange`/`index_build`/`vectorize`/`transpose`, `linterp` (unit-aware linear interp), `integral` (scipy `quad`), `summation`, `solve_block` (scipy `fsolve`), `sample`/`plot_domain`/`plot_axis` (matplotlib plots) |
 | [emit/codegen.py](mcad2py/emit/codegen.py) | Precedence-aware expression printer; shared by both backends |
 | [emit/notebook_backend.py](mcad2py/emit/notebook_backend.py) | IR→`.ipynb`; region→cell; bare last line echoes result |
 | [emit/py_backend.py](mcad2py/emit/py_backend.py) | IR→`.py`; evaluations become `print(...)` |
@@ -180,6 +180,17 @@ runs like any other region and the `y + x =` below it matches the cache (`3`). P
 worksheet XML, the two properties the fixture is too simple to show: areas **nest**, and their
 children's `top`/`left` are **area-relative**, so each area is sorted within itself and spliced in at
 its own position rather than sorted against the sheet.
+[tests/test_implicit_plot_domain.py](tests/test_implicit_plot_domain.py) covers
+`references/plotting-wo-var.mcdx`: an `<xyPlot>` of an **undefined** variable, for which Mathcad
+invents the domain -10..10. Both traces are compared point-for-point against the cached
+`<ml:Trace2dResult>` vectors, which pin the interval, the 499-point step, and that the interval
+belongs to the *free variable* rather than the axis — the second trace plots `x/2` against `cos(x)`,
+so it spans -5..5 while its `cos` still sees the full -10..10. Plus: that the invented variable stays
+in a private `_domain_x` and doesn't leak into the module namespace, and — on synthetic worksheet XML
+— the cases where a domain must *not* be invented (a parametric plot of two defined vectors, two free
+names, an already-defined scalar or range) versus the ones where it must (a definition sitting *below*
+the plot, out of scope; `π` in the expression, which is an identifier in the IR and would otherwise
+count as a second free name).
 
 [tools/strip_mcdx_metadata.py](tools/strip_mcdx_metadata.py) removes the authoring metadata a
 `.mcdx` carries in parts you never see in Prime (`docProps/core.xml`'s `creator`/`lastModifiedBy`,
@@ -210,7 +221,8 @@ branching/clamp function is wrapped `elementwise` so the vectorize arrow applies
 RC_col schema notes). Square roots now emit `nth_root(x, n)` (a *dimensioned* radicand keeps its unit; a
 dimensionless one reduces first). Parametric xy plots (both axes are data vectors, e.g. a section
 outline) now render correctly — a sampling domain is only inferred when an axis is a bare *range* (see
-the schema note). The **trig and hyperbolic families are complete** (including `sec`/`csc`/`sinc`,
+the schema note) — and an xy plot whose variable is never *defined* gets Mathcad's invented -10..10
+domain (also a schema note). The **trig and hyperbolic families are complete** (including `sec`/`csc`/`sinc`,
 `atan2`/`angle`, and all six inverse hyperbolics), with `acot`'s Maple/MuPAD `(0, π)` branch confirmed
 against a cached negative argument (see the schema note). The **vector & matrix family is complete**
 too, bar the table-search functions (`lookup`/`match`/`vlookup`/`hlookup`) — and with it come the
