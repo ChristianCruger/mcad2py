@@ -42,7 +42,12 @@ def _run_convert(args: argparse.Namespace) -> int:
     fmt = args.format or _infer_format(args.output)
     try:
         result = convert_file(args.input, fmt=fmt)
-    except (FileNotFoundError, ValueError) as exc:
+    except (OSError, ValueError) as exc:
+        # The loader raises these with user-facing messages (missing file, not a
+        # zip, no worksheet.xml), so print the message rather than a traceback.
+        # OSError (which FileNotFoundError subclasses) also covers the read
+        # failures underneath -- a permission problem, a dead network drive --
+        # which are equally not the user's bug to debug.
         print(f"error: {exc}", file=sys.stderr)
         return 1
 

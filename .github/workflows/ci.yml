@@ -1,0 +1,41 @@
+name: CI
+
+# Runs the suite on every push and pull request, so a regression shows up as a
+# failed commit rather than as a failed release three weeks later.
+#
+# The matrix exists to back up the `requires-python = ">=3.10"` claim in
+# pyproject.toml: development happens on a much newer interpreter, so without
+# this the floor is an assertion nobody has ever tested.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Test
+        run: pytest -q

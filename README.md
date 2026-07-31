@@ -56,6 +56,13 @@ Mathcad trig handles angle units automatically; generated code matches this via 
 angle-aware helpers (`from mcad2py.runtime import sin, cos, tan, cot`), so
 `tan(phi)` works whether `phi` is in `deg` or `rad`.
 
+> **Converted code needs `mcad2py` installed to run.** The output isn't standalone: it
+> imports `mcad2py.runtime` for the unit- and shape-aware helpers that give Mathcad's
+> semantics rather than Python's (angle-aware trig, `matmul`, `index_build`, `solve_block`,
+> …). If you send a converted `.py` or `.ipynb` to someone else, they need `pip install
+> mcad2py` too — along with the dependencies above, since the generated code uses Pint,
+> NumPy, SciPy and matplotlib directly.
+
 ## What's supported
 
 - `:=` definitions and inline `=` evaluations, with display-unit overrides

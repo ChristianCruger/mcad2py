@@ -49,12 +49,28 @@ class McdxPackage:
 
 
 def load_mcdx(path: str | Path) -> McdxPackage:
-    """Open a ``.mcdx`` file and return its key parts."""
+    """Open a ``.mcdx`` file and return its key parts.
+
+    Raises ``FileNotFoundError`` if the path doesn't exist and ``ValueError``
+    if it isn't a readable Prime worksheet -- either not a zip at all (a
+    corrupt download, or a legacy ``.xmcd``, which is a different format) or a
+    zip without ``mathcad/worksheet.xml``. Both carry a message meant to be
+    shown to a user as-is; the CLI prints them without a traceback.
+    """
     path = Path(path)
     if not path.exists():
-        raise FileNotFoundError(path)
+        raise FileNotFoundError(f"no such file: {path}")
 
-    with zipfile.ZipFile(path) as zf:
+    try:
+        zf = zipfile.ZipFile(path)
+    except zipfile.BadZipFile as exc:
+        raise ValueError(
+            f"{path}: not a readable .mcdx file ({exc}). A Mathcad Prime "
+            "worksheet is a zip archive; a Mathcad 15 .xmcd file is not one "
+            "and is not supported yet."
+        ) from exc
+
+    with zf:
         names = set(zf.namelist())
 
         worksheet_name = _find(names, "mathcad/worksheet.xml")
