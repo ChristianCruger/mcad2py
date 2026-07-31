@@ -1,17 +1,23 @@
-name: Publish to PyPI
+name: Publish
 
-# Releases are cut by pushing a version tag:
+# Two routes, deliberately kept apart so a rehearsal can never hit real PyPI:
 #
-#     git tag v0.1.0 && git push origin v0.1.0
+#   * push a v* tag           -> builds and publishes to PyPI
+#   * run the workflow by hand -> builds and publishes to TestPyPI
 #
-# The suite has to pass first -- every test converts and *executes* a real
-# .mcdx fixture from references/, so a green run means the published converter
-# still reproduces Mathcad's own cached results.
+# Either way the suite has to pass first: every test converts and *executes* a
+# real .mcdx fixture from references/, so a green run means the published
+# converter still reproduces Mathcad's own cached results.
 #
-# Uploading uses PyPI Trusted Publishing (OIDC): no API token is stored in the
-# repo. One-time setup at https://pypi.org/manage/account/publishing/ --
-# owner "ChristianCruger", repository "mcad2py", workflow "publish.yml",
-# environment "pypi".
+# Uploading uses Trusted Publishing (OIDC) -- no API token is stored anywhere.
+# PyPI and TestPyPI are separate services with separate accounts, so each needs
+# its own pending publisher registered before its first upload:
+#
+#   https://pypi.org/manage/account/publishing/
+#   https://test.pypi.org/manage/account/publishing/
+#
+#   project mcad2py | owner ChristianCruger | repo mcad2py
+#   workflow publish.yml | environment "pypi" and "testpypi" respectively
 
 on:
   push:
@@ -43,6 +49,26 @@ jobs:
             exit 1
           fi
 
+      # A version number can only ever be uploaded once, on TestPyPI as much as
+      # on PyPI, so rehearsals get a unique .devN suffix and stay repeatable.
+      # (Install one with `pip install --pre`; pip skips dev releases by default.)
+      - name: Stamp a dev version for the TestPyPI rehearsal
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          python - <<'PY'
+          import os, pathlib, re
+          p = pathlib.Path("pyproject.toml")
+          run = os.environ["GITHUB_RUN_NUMBER"]
+          text, n = re.subn(
+              r'^version = "([^"]+)"',
+              lambda m: f'version = "{m.group(1)}.dev{run}"',
+              p.read_text(), count=1, flags=re.M,
+          )
+          assert n == 1, "version line not found in pyproject.toml"
+          p.write_text(text)
+          print(re.search(r'^version = .*$', text, re.M).group())
+          PY
+
       - name: Test
         run: pytest -q
 
@@ -63,12 +89,32 @@ jobs:
           name: dist
           path: dist/
 
-  publish:
+  # Rehearsal: manual runs only.
+  publish-testpypi:
+    if: github.event_name == 'workflow_dispatch'
+    needs: build
+    runs-on: ubuntu-latest
+    environment: testpypi
+    permissions:
+      id-token: write # required for Trusted Publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  # The real thing: tagged releases only.
+  publish-pypi:
+    if: startsWith(github.ref, 'refs/tags/v')
     needs: build
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
-      id-token: write # required for Trusted Publishing
+      id-token: write
     steps:
       - uses: actions/download-artifact@v4
         with:
