@@ -1,4 +1,4 @@
-"""``Beton_Bæreevne_støbeskel.mcdx`` -- shear capacity of a concrete joint.
+"""``RC_interface.mcdx`` -- shear capacity of a concrete joint.
 
 The new construct here is the native ``<ml:ComboBoxControl>`` row-selector: the
 user picks a row (``SelectedRow``, 0-based) from a named table and its column
@@ -8,7 +8,7 @@ value(s) are assigned to the left-hand-side target(s) -- a single id or a
 
   * a ``<ml:program>`` used directly as a scalar value (with ``alsoif`` = elif)
     -> an inline conditional-expression chain;
-  * the ``and`` connective and a *boolean* ``=`` (``revne = "Ja"``), which must
+  * the ``and`` connective and a *boolean* ``=`` (``crack = "yes"``), which must
     emit ``and`` / ``==`` -- not a SymPy ``Eq`` (the sheet imports no SymPy).
 
 We execute the generated module and compare to Mathcad's cached ``result.xml``.
@@ -28,11 +28,11 @@ from pathlib import Path
 from mcad2py import ir
 from mcad2py.convert import convert_file
 
-REFERENCE = Path(__file__).parent.parent / "references" / "Beton_Bæreevne_støbeskel.mcdx"
+REFERENCE = Path(__file__).parent.parent / "references" / "RC_interface.mcdx"
 
 # Mathcad's cached results (result.xml), C40 selection.
 F_YD = 416.66666666666663      # id 18: f_yd = f_yk / gamma_s
-TAU_RD = 0.70704384581105162   # id 27: tau_Rd
+TAU_RD = 0.8995070989304812    # id 27: tau_Rd
 TAU_SD = 0.0634                # id 28: tau_Sd
 ACCEPT = "ok"                  # id 29: Accept_tau
 
@@ -66,22 +66,22 @@ def test_combobox_selects_row_values():
     ns = _exec()
     # Multi-column control -> the selected row maps onto a matrix of targets.
     assert _mag(ns["f_ck"]) == 40 and _mag(ns["f_ctk"]) == 2.5   # C40 (row 6)
-    assert _mag(ns["c"]) == 0.4 and _mag(ns["mu"]) == 0.7        # "Ru" (row 1)
+    assert _mag(ns["c"]) == 0.5 and _mag(ns["mu"]) == 0.9        # "Fortandet" (row 0)
     # Single-column controls.
     assert _mag(ns["f_yk"]) == 550   # B550 (row 2)
-    assert _mag(ns["k"]) == 0.5      # "Dynamisk last" (row 1)
+    assert _mag(ns["k"]) == 0.5      # "Dynamic" (row 1)
 
 
 def test_combobox_empty_values_yields_row_name():
     # A control with no <ml:ComboBoxValues> assigns the selected row *name*.
-    assert _exec()["revne"] == "Ja"
+    assert _exec()["crack"] == "No"
 
 
 def test_combobox_emits_comment_and_assignments():
     src = _src()
     assert '# Mathcad ComboBoxControl: selected "C40"' in src
     assert "f_ck = 40" in src and "f_ctk = 2.5" in src
-    assert "revne = 'Ja'" in src
+    assert "crack = 'No'" in src
 
 
 def test_program_value_becomes_inline_conditional():
@@ -94,8 +94,8 @@ def test_program_value_becomes_inline_conditional():
 
 def test_boolean_equal_is_comparison_not_sympy_eq():
     src = _src()
-    assert "revne == 'Ja'" in src
-    assert "and revne ==" in src   # the `and` connective
+    assert "crack == 'yes'" in src
+    assert "and crack ==" in src   # the `and` connective
     assert "Eq(" not in src        # boolean `=` must not become a SymPy Eq
     assert "from sympy" not in src
 

@@ -1,4 +1,4 @@
-"""``LT91.mcdx`` -- a large reinforced-concrete column check.
+"""``RC_col.mcdx`` -- a large reinforced-concrete column check.
 
 This sheet introduces several constructs at once. Stage 1 covers the *leaf*
 features (the multi-line imperative programs are Stage 2); this test asserts
@@ -33,7 +33,7 @@ import pint
 from mcad2py.convert import convert_file
 from mcad2py.runtime import augment, col, matcol, matmul, matrix, total
 
-REFERENCE = Path(__file__).parent.parent / "references" / "LT91.mcdx"
+REFERENCE = Path(__file__).parent.parent / "references" / "RC_col.mcdx"
 
 
 def _src() -> str:
@@ -197,7 +197,7 @@ def _exec_full():
             continue
         out.append(line)
     ns: dict = {}
-    exec(compile("\n".join(out), "<lt91>", "exec"), ns)  # noqa: S102
+    exec(compile("\n".join(out), "<rc-col>", "exec"), ns)  # noqa: S102
     return ns
 
 
@@ -253,7 +253,7 @@ def test_parametric_plots_render_with_section_geometry():
     import matplotlib.pyplot as plt
 
     plt.close("all")
-    exec(compile(_src(), "<lt91-plots>", "exec"), {})  # noqa: S102
+    exec(compile(_src(), "<rc-col-plots>", "exec"), {})  # noqa: S102
 
     # Collect every real data trace (skip the axhline/axvline guides).
     traces = {

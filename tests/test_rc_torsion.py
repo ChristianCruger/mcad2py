@@ -1,4 +1,4 @@
-"""``Beton_Vridning.mcdx`` -- torsion in a concrete cross-section (DS/EN 1992).
+"""``RC_torsion.mcdx`` -- torsion in a concrete cross-section (DS/EN 1992).
 
 The sheet is built on *range-indexed vector assignment*: a range variable
 ``i := 1 .. n`` and a family of vectors defined element-wise over it
@@ -21,7 +21,7 @@ from mcad2py import ir
 from mcad2py.convert import convert_file
 from mcad2py.emit.codegen import expr_to_str
 
-REFERENCE = Path(__file__).parent.parent / "references" / "Beton_Vridning.mcdx"
+REFERENCE = Path(__file__).parent.parent / "references" / "RC_torsion.mcdx"
 
 # Mathcad's cached results (result.xml).
 U = 7770                          # id 3/22: u
@@ -150,10 +150,10 @@ def test_floor_and_round_builtins():
 
 
 def test_inline_if_with_string_literals():
-    # accept[i] := if(k[i] >= 0, "ok", "tværsnit overudnyttet")
+    # accept[i] := if(k[i] >= 0, "ok", "not ok!")
     # -> a conditional *expression* (ternary), not a call or a def.
     src = _src()
-    assert "'ok' if k[i] >= 0 else 'tværsnit overudnyttet'" in src
+    assert "'ok' if k[i] >= 0 else 'not ok!'" in src
     # The inline if must not become a function definition.
     assert "def accept" not in src
 
@@ -166,4 +166,6 @@ def test_inline_if_ir_is_program_ternary():
 
 def test_string_literal_repr():
     assert expr_to_str(ir.Str("ok")) == "'ok'"
+    # Emitted via repr(), so a non-ASCII message survives intact -- Mathcad
+    # worksheets are routinely written in the engineer's own language.
     assert expr_to_str(ir.Str("tværsnit overudnyttet")) == "'tværsnit overudnyttet'"

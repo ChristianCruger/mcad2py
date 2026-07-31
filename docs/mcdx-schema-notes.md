@@ -63,7 +63,8 @@ read this file when parsing a new schema construct or debugging a parser edge ca
   the same `ir.Program` (branches `[(cond, then), (None, else)]`) so it renders as a ternary
   (`then if cond else else`) — *not* a call to a Python `if`.
 - `<ml:str>` = a Mathcad string literal → `ir.Str` → a Python `str` (emitted via `repr`, so unicode
-  like `"tværsnit overudnyttet"` survives). No units.
+  like `"tværsnit overudnyttet"` survives — worksheets are routinely written in the engineer's
+  own language). No units.
 - `<ml:range>` = `start, next .. stop` → `arange(start, stop, step)` (step = `next - start`), a
   unit-aware, **inclusive** range runtime helper. Plain numbers → a NumPy array; unit-bearing bounds
   (`z_plot := -h/2, … .. h/2`) → a Pint array (steps over magnitudes in `start`'s unit, reattaches it).
@@ -80,7 +81,7 @@ read this file when parsing a new schema construct or debugging a parser edge ca
   symbolic arrow forms route to SymPy. A symbolic `∫…→` would be a SymPy `Integrate`, not handled yet.
 - Comparison ops (`lessThan`/`greaterThan`/`lessOrEqual`/`greaterOrEqual`/`equal`) live in
   `OPERATOR_TAGS` and emit `< > <= >= ==`; boolean connectives `and`/`or` (in `OPERATOR_TAGS` as
-  `and_`/`or_`) emit `and`/`or` (used in program tests, e.g. `rho <= x and revne == "Ja"`).
+  `and_`/`or_`) emit `and`/`or` (used in program tests, e.g. `rho <= x and crack == "yes"`).
 - `<ml:equal/>` is **context-dependent**: by default it parses as a `==` comparison (`BinOp` `eq`) for
   boolean use in tests/inline-`if`. In a genuinely *symbolic* region — a standalone equation, a
   `solve` input, or a solve-block constraint — it means an equation, so those three parsers route it
@@ -165,9 +166,9 @@ read this file when parsing a new schema construct or debugging a parser edge ca
   row-selector: a `rows×cols` table (`<ml:ComboBoxValues>`, row-major; named by `<ml:ComboBoxRowNames>`)
   with a `SelectedRow` (0-based, per `array-origin`). The selected row's `cols` value(s) map onto the
   LHS target(s) — a single `<ml:id>` or a `<ml:matrix>` of ids (`[f_ck; f_ctk] := …`). A control with
-  **no** `<ml:ComboBoxValues>` yields the selected row *name* as a string (a Ja/Nej flag → `revne := "Ja"`).
+  **no** `<ml:ComboBoxValues>` yields the selected row *name* as a string (a Yes/No flag → `crack := "No"`).
   Emits one `target = value` per column plus a `#` comment documenting the pick; `ComboBoxScaleFactors`
-  (all placeholders in samples seen) are ignored. (`Beton_Bæreevne_støbeskel.mcdx`'s cached `result.xml`
+  (all placeholders in samples seen) are ignored. (`RC_interface.mcdx`'s cached `result.xml`
   is internally **stale** — `ν_v`'s `0.525` implies an old C35 pick while `τ_Rd` reflects the live C40
   `SelectedRow=6`; we reproduce the live selection, which `τ_Rd`/`f_yd` corroborate.)
 - Echo display units (`echo_expr` → `_display`): a real unit override emits `x.to(<unit>)`, but a
@@ -178,7 +179,7 @@ read this file when parsing a new schema construct or debugging a parser edge ca
   per-file, default `0.001`). Not consumed yet — `TOL`/`CTOL` will drive `find`/`quad` tolerances
   when solve blocks land.
 
-## `LT91.mcdx` constructs (Stage 1 — leaf features)
+## `RC_col.mcdx` constructs (Stage 1 — leaf features)
 
 - **Data table** = a `<region>` whose child is `<ml:spec-table>` holding one `<math><define>` per
   column (Mathcad names the resulting vectors by their column headers). `_parse_region` returns a
@@ -208,7 +209,7 @@ read this file when parsing a new schema construct or debugging a parser edge ca
   one, or a nested matmul on the left; and an array-shaped right operand (matrix/vector literal,
   `matcol`, transpose, augment, matmul). A matrix times a *scalar*, and an element-wise vector product
   under `vectorize`, stay ordinary `*`. This is a heuristic (a matmul between two *named* matrix
-  variables is not detected) but covers every product in `LT91`.
+  variables is not detected) but covers every product in `RC_col`.
 - **Multi-target destructuring** `[a; b; c] := <expr>` = a `<ml:matrix>` of ids as the define target
   with an ordinary value → `ir.MultiAssign` → `a, b, c = tuple(<expr>)` (unpack a returned vector).
   Guarded so a `<matrix>` target whose value is a native `…Control` still routes to the ComboBox path.
@@ -221,7 +222,7 @@ read this file when parsing a new schema construct or debugging a parser edge ca
   `<ml:vals>` message (`"All loadcases pass!"`, `"OK!"`), so the reader sees how the value drove the
   message. (Contrast `_parse_scriptable_control`, which recovers a define-*driving* control's cached
   `RL` value.)
-## `LT91.mcdx` constructs (Stage 2 — imperative programs)
+## `RC_col.mcdx` constructs (Stage 2 — imperative programs)
 
 - **Multi-line program** (`<ml:program>` with statements) → a new statement IR (`ir.ProgramBlock` of
   `LocalAssign`/`ForLoop`/`IfStmt`/`Return`/`TryCatch`), distinct from the value-`Program` (piecewise
@@ -266,7 +267,7 @@ read this file when parsing a new schema construct or debugging a parser edge ca
   a plain *zero* is absorbed into the prevailing unit (`[[w,0],[0,l]]`).
 - **Parametric `<xyPlot>`s** — a plot has a *sampling domain* only when one axis is a bare **range**
   variable (`y = f(x)` over a range `x`, sampled element-wise with `sample(lambda x: …, x)`). When both
-  axes are plain data vectors (`LT91`'s section outline, rebar scatter, neutral-axis line — e.g. x =
+  axes are plain data vectors (`RC_col`'s section outline, rebar scatter, neutral-axis line — e.g. x =
   `matcol(Contour, 0)`, y = `matcol(Contour, 1)`), there is no domain: each axis expression is emitted
   directly (`plot_axis(matcol(Contour, 0), ureg.mm)`) and the traces are plotted point-by-point.
   `_detect_domain` therefore only accepts a `Name` that is in `range_names`; a bare data-vector `Name`
@@ -295,7 +296,7 @@ constructs — the parser already handled them — but they pin down several **s
   reduced number, but Pint leaves `sin(θ)/θ` as `0.0164 1/degree` and `ρ = A/(b·d)` as
   `783.98 mm²/m²`. So an echo whose value contains a **division** is wrapped `disp(<expr>)` (one-arg
   form → `_reduce_dimensionless`); other echoes stay bare, keeping generated cells readable. This is
-  what makes `LT91`'s `ε_yd`, `ρ`, `n_0` and the `UR_vc` utilisation vector match the cache — they
+  what makes `RC_col`'s `ε_yd`, `ρ`, `n_0` and the `UR_vc` utilisation vector match the cache — they
   were previously displayed ~1000× off, with the residual unit as the only hint.
 - **Conventions that differ from Python/NumPy** — worth checking against, not guessing:
   `atan2(x, y)` takes its arguments in the **opposite** order to `math.atan2(y, x)`; `angle(x, y)` is
@@ -360,7 +361,7 @@ rewrites every `BinOp("mul", …)` whose **both** operands are array-shaped into
 - Anything not *provably* an array stays a plain `*`, so the inference only has to be right about
   what it knows. `2·identity(4)`, `λ_0·R_0` and `M·kg` all keep `*`.
 - Nothing under a **vectorize arrow** is rewritten — the arrow is precisely how Mathcad asks for the
-  element-wise product (`vectorize(F_ci(…) * Y_c)` in `LT91.mcdx` must stay `*`).
+  element-wise product (`vectorize(F_ci(…) * Y_c)` in `RC_col.mcdx` must stay `*`).
 - Names bound in a smaller scope (a function's params, a program's locals, a lambda's bound var) are
   masked to `unknown` there, so a product inside one is only rewritten when the operands are
   structurally array-shaped on their own (a matrix literal, `augment(...)`, a transpose).

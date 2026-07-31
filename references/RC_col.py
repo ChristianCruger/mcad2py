@@ -8,13 +8,7 @@ from mcad2py.runtime import augment, mround, nth_root, power, disp, elementwise,
 ureg = pint.UnitRegistry()
 
 
-# LT91
-
-# 1 Introduction
-
-# ...
-
-# 2 Properties
+# Example: Biaxial bending verification of RC column
 
 # Column dimensions
 
@@ -44,8 +38,6 @@ h_c = z - (FUK + t)
 print(h_c)
 
 # Height of column:
-
-# 2.1 Materials
 
 # Concrete properties:
 
@@ -92,8 +84,6 @@ sigma_c = elementwise(sigma_c)
 
 sigma_s = lambda e: mc_min(f_yd, mc_max(-f_yd, E_s * e))
 sigma_s = elementwise(sigma_s)
-
-# 2.1 Reinforcement
 
 # Stirrup:
 
@@ -151,8 +141,6 @@ print(disp((s), ureg.mm))
 
 print(n)
 
-# 2.3 Gross section properties
-
 # Area:
 
 A_c = w_c * l_c
@@ -170,8 +158,6 @@ A_s = _A_s()
 Iy = 1 / 12 * w_c * l_c**3
 
 Ix = 1 / 12 * w_c**3 * l_c
-
-# 2.3 Cross section
 
 # The cross section is divided into 10x10 fibers to solve the biaxial problem
 
@@ -217,15 +203,15 @@ plt.show()
 
 # Center of each sub-division fiber shown as grey marker:
 
-# 3 Forces
+# Forces
 
 LS = col('ULS', 'ULS', 'ULS', 'ULS', 'ALS', 'ALS', 'ULS', 'ULS', 'ULS', 'ULS', 'ULS', 'ULS')
 
-ID = col('LT91', 'LT91', 'LT91', 'LT91', 'LT91', 'LT91', 'LT91', 'LT91', 'LT91', 'LT91', 'LT91', 'LT91')
+ID = col('Col1', 'Col1', 'Col1', 'Col1', 'Col1', 'Col1', 'Col1', 'Col1', 'Col1', 'Col1', 'Col1', 'Col1')
 
 Side = col('North', 'South', 'North', 'South', 'North', 'South', 'North', 'South', 'North', 'South', 'North', 'South')
 
-Case = col('After Launching', 'After Launching', 'After Launching', 'After Launching', 'After Launching', 'After Launching', 'During Launching', 'During Launching', 'Park case 2', 'Park case 2', 'Park case 2', 'Park case 2')
+Case = col('Phase1', 'Phase1', 'Phase1', 'Phase1', 'Phase1', 'Phase1', 'Phase2', 'Phase2', 'Phase3', 'Phase3', 'Phase3', 'Phase3')
 
 WindDir = col('NorthToSouth', 'NorthToSouth', 'SouthToNorth', 'SouthToNorth', '-', '-', '-', '-', 'NorthToSouth', 'NorthToSouth', 'SouthToNorth', 'SouthToNorth')
 
@@ -240,7 +226,7 @@ Fx = col(0, 0, 0, 0, 0, 0, 776, 805, 0, 0, 0, 0) * ureg.kN
 G_c = w_c * l_c * h_c * (25 * (ureg.kN / ureg.m**3))
 print(disp(G_c, ureg.kN))
 
-# 3.1 Second order effects and imperfections
+# Second order effects and imperfections
 
 # Effective height (Assumption based on cantilever with elastic rotation stiffness)
 

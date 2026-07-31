@@ -7,74 +7,63 @@ from mcad2py.runtime import ceil, disp, mc_min, mc_max, arange, index_build
 ureg = pint.UnitRegistry()
 
 
-# VRIDNING I BETONTVÆRSNIT
-# _
+# Torsion in concrete section
 
-# _
-
-# Beregninger af vridning i betontværsnit i henhold til DS/EN 1992-1-1, afsnit 6.3.2.
-
-# _
-
-# Areal [mm2]
+# Area [mm2]
 
 A = 2217000
 
-# Styrke [MPa]       Partialk.
+# perimeter [mm]
 
-# Beton
+u = 3501 + 2 * 250 + 1185 + 1380 + 1204
+print(u)
+
+# Number of stirrups
+
+n_t = 1
+
+# Material properties:
+
+# stirrup dia [mm]
+
+phi_t = 16
 
 f_ck = 45
 
 gamma_c = 1.5 / 0.85
 
-# Omkreds [mm]
+# shear strut angle
 
-u = 3501 + 2 * 250 + 1185 + 1380 + 1204
-print(u)
+cottheta = 2
 
-# Armering
+# rebar:
 
 f_yk = 500
 
 gamma_s = 1.15
 
-# Antal bøjletværsnit
+# cover layer [mm]
 
-n_t = 1
+c = 75
 
-# Antal snit
+# sections
 
 n = 1
 
 i = arange(1, n, 1)
 
-# Bøjlediameter  [mm]
+# Longitudinal reinforcement dia
 
-phi_t = 16
+phi = 32
 
-# Betontrykvinkelen
-
-cottheta = 2
-
-# Vridningsmoment [kNm]
+# Torsion [kNm]
 
 T_Ed = index_build(i, lambda i: 400)
-
-# Dæklag [mm]
-
-c = 75
 
 AS1_unused = 150.49 * ureg.cm**2 - (136 * ureg.cm**2 + 62 * ureg.cm**2) / 2
 print(disp(AS1_unused, ureg.mm**2))
 
-# Diameter på længdearmering
-
-phi = 32
-
-# Beregninger                                                                                                                                          _
-
-# Beregningsparametre
+# calculation parameters:
 
 f_cd = f_ck / gamma_c
 
@@ -85,7 +74,7 @@ print(disp(A_t))
 
 nu_t = 0.7 * (0.7 - f_ck / 200)
 
-# Tværsnitsparamtre
+# cross section:
 
 t_ef = mc_max(A / u, 2 * (c + phi_t + phi / 2))
 
@@ -105,7 +94,7 @@ print(A_k)
 
 print(u_k)
 
-# Bæreevne og bøjleafstand
+# Strength:
 
 T_Rdmax = 2 * nu_t * f_cd * t_ef * A_k * 10**-6 / (cottheta + 1 / cottheta)
 
@@ -121,14 +110,9 @@ print(disp(s_t[i]))
 k = index_build(i, lambda i: T_Ed[i] / T_Rdmax)
 print(disp(k[i]))
 
-accept = index_build(i, lambda i: 'ok' if k[i] >= 0 else 'tværsnit overudnyttet')
+accept = index_build(i, lambda i: 'ok' if k[i] >= 0 else 'not ok!')
 
-# Resultater                                                                                                                                            _
-
-# Nødvendig længde-     Ikke udnyttet skrå
-# armering  [mm2]/antal       betonspænding         _
-
-# Bæreevne [MPa]  Bøjleafstand [mm]_
+# Results
 
 print(T_Rdmax)
 

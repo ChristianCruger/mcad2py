@@ -39,3 +39,15 @@ jobs:
 
       - name: Test
         run: pytest -q
+
+  # A worksheet added later must not bring its author's name back with it.
+  # Runs once, not per interpreter -- it only reads zip metadata.
+  fixtures:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check reference worksheets carry no authoring metadata
+        run: python tools/strip_mcdx_metadata.py --check references/*.mcdx

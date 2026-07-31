@@ -95,17 +95,17 @@ shrinkage): the `linterp`/`transpose` pair (`k_h` interpolates and extrapolates,
 a Given/Find block whose solver region is a *function definition* `f(a, b) := find(x)` (the constraint
 `a·x²−b = cos(x)` closing over the params) — it asserts the emitted `def f(a, b):`, that `f(1, 3)`
 recovers the cached root `1.6957…`, and that `f` is reusable with other arguments.
-[tests/test_beton_vridning.py](tests/test_beton_vridning.py) covers `references/Beton_Vridning.mcdx`
+[tests/test_rc_torsion.py](tests/test_rc_torsion.py) covers `references/RC_torsion.mcdx`
 (torsion): the **range-indexed vector backbone** — it executes the whole sheet and checks the
 `index_build` vectors (`T_Ed`/`A_sl`/`n_sl`/`s_t`/`k`/`accept`) against Mathcad's cached `1×1`
 matrices, that `T_Ed` is 0-based and zero-filled (`[0, 400]`), and that the index variable `i` is an
 integer array. Plus the supporting leaf features asserted on the generated source: the stepless range
 `i := 1 .. n` (→ `arange(1, n, 1)`), `ceil`/`floor`/`round`, and an inline
-`if(cond, "ok", "tværsnit overudnyttet")` rendered as a ternary with string literals.
-[tests/test_beton_baereevne.py](tests/test_beton_baereevne.py) covers
-`references/Beton_Bæreevne_støbeskel.mcdx` (joint shear capacity): the native `<ml:ComboBoxControl>`
+`if(cond, "ok", "not ok!")` rendered as a ternary with string literals.
+[tests/test_rc_interface.py](tests/test_rc_interface.py) covers
+`references/RC_interface.mcdx` (joint shear capacity): the native `<ml:ComboBoxControl>`
 row-selector — single- and multi-column picks (`[f_ck; f_ctk]`, `c`/`μ`) and the empty-values
-name-as-string case (`revne := "Ja"`) — plus a `<ml:program>`-as-value becoming an inline ternary
+name-as-string case (`crack := "No"`) — plus a `<ml:program>`-as-value becoming an inline ternary
 (with `alsoif`/`and`) and a boolean `=` emitting `==` (not a SymPy `Eq`). Executes the whole sheet and
 matches the cache for `f_yd`/`τ_Rd`/`τ_Sd`/`Accept`; `ν_v` is asserted at the live-`f_ck=40` value
 `0.5` (the cache's `0.525` is a documented stale leftover, see the `ComboBoxControl` schema note).
@@ -129,7 +129,7 @@ zero (seen when the whole integration domain sits inside one flat branch of a pi
 reproduced with a fast synthetic residual, a mocked first `fsolve` call forcing the false-positive, and
 a genuinely-stuck case asserting the honest "couldn't confirm convergence" warning (not a silently wrong
 answer).
-[tests/test_lt91.py](tests/test_lt91.py) covers `references/LT91.mcdx` (a large biaxial column check) —
+[tests/test_rc_col.py](tests/test_rc_col.py) covers `references/RC_col.mcdx` (a large biaxial column check) —
 the **imperative-program engine** and its supporting features. It executes the whole sheet (all 7
 multi-line programs, the `solve_strain(N,Mx,My) := find(e,kx,ky)` function-defining solve block, and the
 12-loadcase `try`/`for`/`if`/`return` loop that builds vectors with `vec_set`) and matches the cached
@@ -175,6 +175,13 @@ values as a **set** (LAPACK's order is Mathcad's for the symmetric cases, not fo
 `genvals`) and vectors by their **defining equation** (signs are arbitrary in any implementation), with
 the PCA's cached principal components confirming the invariant end result.
 
+[tools/strip_mcdx_metadata.py](tools/strip_mcdx_metadata.py) removes the authoring metadata a
+`.mcdx` carries in parts you never see in Prime (`docProps/core.xml`'s `creator`/`lastModifiedBy`,
+`docProps/app.xml`'s `Company`, and the printed header/footer). It rewrites only those parts —
+`worksheet.xml` and `result.xml` stay **byte-identical**, so no cached value or test expectation
+moves. Run it on any new fixture before committing; `--check` is the same scan as a report and is
+wired into CI so a later worksheet can't quietly reintroduce a name.
+
 **Reference files are test fixtures — don't edit them.** Tests compare generated output against each
 `.mcdx`'s cached `result.xml`; changing a worksheet (e.g. a `phi` value) silently shifts every
 dependent cached number and breaks the hardcoded expected values.
@@ -194,7 +201,7 @@ wrong answer.
 Multi-line **imperative programs** (loops, local `←` assigns, `return`, `tryCatch`, program-built
 vectors) are now supported (`ir.ProgramBlock` → a Python `def`; `X[i] :=` → `vec_set`); a single-arg
 branching/clamp function is wrapped `elementwise` so the vectorize arrow applies it per element (see the
-LT91 schema notes). Square roots now emit `nth_root(x, n)` (a *dimensioned* radicand keeps its unit; a
+RC_col schema notes). Square roots now emit `nth_root(x, n)` (a *dimensioned* radicand keeps its unit; a
 dimensionless one reduces first). Parametric xy plots (both axes are data vectors, e.g. a section
 outline) now render correctly — a sampling domain is only inferred when an axis is a bare *range* (see
 the schema note). The **trig and hyperbolic families are complete** (including `sec`/`csc`/`sinc`,

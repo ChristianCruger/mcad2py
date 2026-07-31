@@ -346,7 +346,7 @@ def _parse_combobox(target_elem: ET.Element, control: ET.Element) -> ir.Region:
     with named rows (``<ml:ComboBoxRowNames>``); ``SelectedRow`` (0-based, per the
     worksheet's ``array-origin``) picks the row. Its ``cols`` value(s) map onto
     the LHS target(s) -- a single id or a ``<ml:matrix>`` of ids. A control with
-    no values yields the selected row *name* as a string (e.g. a Ja/Nej flag).
+    no values yields the selected row *name* as a string (e.g. a Yes/No flag).
     """
     if localname(target_elem.tag) == "matrix":
         targets = [_parse_target(c) for c in target_elem if localname(c.tag) == "id"]

@@ -108,7 +108,7 @@ Ranked by expected payoff × frequency in the kind of sheets this repo converts,
    Mathcad-specific "not found" behaviour pinned by a sample. *(The rest of that item — `rows`,
    `cols`, `last`, `identity`, `diag`, `stack`, `submatrix`, `sort`/`reverse` — is **done**, together
    with `lsolve`, the norms/conditions, and the eigen family. Note `ones` is **not** a Prime builtin:
-   `LT91.mcdx` defines its own, which is why the generated code calls one.)*
+   `RC_col.mcdx` defines its own, which is why the generated code calls one.)*
 2. **Statistics basics** — `median`, `var`/`Var`, `stdev`/`Stdev`, `hist` (`mean` is done with the
    matrix batch). Simple NumPy wraps; watch the population-vs-sample `var` vs `Var` distinction
    (lowercase = population, capital = sample).
