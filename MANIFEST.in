@@ -1,0 +1,22 @@
+# What ships in the *source* distribution.
+#
+# The wheel is already limited to the mcad2py package by
+# [tool.setuptools.packages.find] in pyproject.toml. The sdist is broader by
+# default -- setuptools sweeps in a top-level tests/ directory on its own -- so
+# the development-only trees are pruned explicitly here.
+#
+# tests/ and references/ are excluded deliberately and go together: every test
+# converts and executes a real .mcdx fixture from references/, so shipping the
+# tests without the ~800 KB of worksheets would only ship something that cannot
+# run. Both stay in the git repo; clone it to run the suite.
+
+include README.md
+include LICENSE
+
+prune tests
+prune references
+prune docs
+prune .claude
+prune .github
+
+global-exclude *.py[cod] __pycache__/* .DS_Store

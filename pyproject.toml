@@ -8,6 +8,27 @@ version = "0.1.0"
 description = "Convert PTC Mathcad Prime (.mcdx) worksheets into runnable Jupyter notebooks / Python."
 readme = "README.md"
 requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+# Name only, no address: PyPI publishes author-email verbatim on the project
+# page and in every artifact's METADATA, where it is scraped (package
+# maintainers are a standing phishing target). Contact goes through the Issues
+# URL below, which is also where bug reports belong.
+authors = [{ name = "Christian Cruger" }]
+keywords = ["mathcad", "mcdx", "prime", "jupyter", "units", "pint", "engineering", "converter"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Software Development :: Code Generators",
+    "Topic :: Utilities",
+]
 dependencies = [
     "pint>=0.23",
     "nbformat>=5.9",
@@ -19,7 +40,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7"]
+dev = ["pytest>=7", "build>=1.0", "twine>=5"]
+
+[project.urls]
+Homepage = "https://github.com/ChristianCruger/mcad2py"
+Repository = "https://github.com/ChristianCruger/mcad2py"
+Issues = "https://github.com/ChristianCruger/mcad2py/issues"
 
 [project.scripts]
 mcad2py = "mcad2py.cli:main"
@@ -30,4 +56,7 @@ mcad2py = "mcad2py.cli:main"
 filterwarnings = ["ignore:FigureCanvasAgg is non-interactive"]
 
 [tool.setuptools.packages.find]
+# Ships the library only. tests/ and references/ (the .mcdx fixtures the tests
+# convert and execute) stay in the git repo -- see MANIFEST.in, which prunes
+# them from the sdist too.
 include = ["mcad2py*"]

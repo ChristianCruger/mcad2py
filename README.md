@@ -10,10 +10,19 @@ conversion walks that tree into an intermediate representation and emits Python 
 ## Install
 
 ```bash
-pip install -e .
+pip install mcad2py
 ```
 
-Dependencies: `pint`, `nbformat` (and `pytest` for the tests).
+Or from a clone, for development:
+
+```bash
+git clone https://github.com/ChristianCruger/mcad2py
+cd mcad2py
+pip install -e ".[dev]"
+```
+
+Requires Python 3.10+. Dependencies: `pint`, `nbformat`, `sympy`, `numpy`, `scipy`,
+`matplotlib`, `Pillow`.
 
 ## Usage
 
@@ -49,26 +58,52 @@ angle-aware helpers (`from mcad2py.runtime import sin, cos, tan, cot`), so
 
 ## What's supported
 
-- `:=` definitions and inline `=` evaluations (with display-unit overrides)
-- Arithmetic (`+ - * / ^`), unit scaling (`30 MPa`), roots, parentheses
-- Built-in functions (`sin`, `cos`, `tan`, `cot`, `exp`, `ln`, `log`, `sqrt`, ...)
-- Constants (`π`, `e`), Greek/subscripted identifiers (`f_cd`, `β`, `ϕ` -> `f_cd`, `beta`, `phi`)
-- Text/comment regions -> markdown cells / comments
+- `:=` definitions and inline `=` evaluations, with display-unit overrides
+- Arithmetic, unit scaling (`30 MPa`), roots, `%`, comparisons and boolean connectives
+- Constants (`π`, `e`, `∞`), Greek/subscripted identifiers (`f_cd`, `β`, `ϕ` → `f_cd`, `beta`, `phi`)
+- **Vectors and matrices** — literals, 0-based indexing (including the two-subscript form),
+  ranges, range-built vectors and matrices, and the full built-in family: `rows`/`cols`/`identity`/
+  `augment`/`submatrix`, `det`/`lsolve`/`geninv`/`rank`/`rref`, the norm and condition sets, the
+  eigen and singular-value set, `sort`/`reverse`. Mathcad's one `·` is resolved into a scalar,
+  matrix or dot product by inferring shapes across the whole sheet.
+- **Functions** — the complete trigonometric and hyperbolic families (angle-aware), logs,
+  powers and roots, rounding, `min`/`max`, `linterp`
+- **Programs** — inline and block `if`, plus multi-line imperative programs (loops, local `←`
+  assignments, `return`, `try`) emitted as real Python `def`s
+- **Solve blocks** — numeric Given/Find (via `scipy.optimize`), including a block that *defines a
+  function*; symbolic `solve`/`simplify`/`factor`/`expand` via SymPy
+- **Integrals and sums** — definite and double integrals (`scipy.integrate`), indexed Σ
+- **Plots** — x-y (function and parametric), contour and 3D, rendered with matplotlib
+- **Controls and tables** — ComboBox row selectors, data tables, scriptable controls (via their
+  cached value), text/comment regions → markdown cells
+- Images embedded from picture regions
 
-Unsupported constructs (solve blocks, programs, plots, ranges, matrices) are emitted as
-clearly marked `# TODO unsupported` stubs so output still loads; these are the next targets.
+Anything not yet handled is emitted as a clearly marked `# TODO unsupported` stub rather than
+dropped, so the output always loads. See
+[docs/mathcad-function-coverage.md](docs/mathcad-function-coverage.md) for the full
+category-by-category map and what's next.
 
 ## Tests
 
+The suite lives in the git repository (it is not part of the published package, since each test
+converts and **executes** a real `.mcdx` fixture from `references/`):
+
 ```bash
+git clone https://github.com/ChristianCruger/mcad2py
+cd mcad2py
+pip install -e ".[dev]"
 pytest
 ```
 
-The suite converts the reference worksheet in `references/`, executes the generated code, and
-checks the computed values against Mathcad's own cached results in the file's `result.xml`.
+Every test converts a reference worksheet, runs the generated code, and checks the computed
+values against Mathcad's own cached results in that file's `result.xml`.
 
 ## Scope
 
 Targets Mathcad **Prime** (`.mcdx`, `worksheet50`/`math50` schema). Legacy Mathcad 15
 (`.xmcd`) is a future target — the parser is structured behind an intermediate representation
 so a second front-end can be added without changing the code generators.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

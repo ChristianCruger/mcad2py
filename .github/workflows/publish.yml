@@ -1,0 +1,78 @@
+name: Publish to PyPI
+
+# Releases are cut by pushing a version tag:
+#
+#     git tag v0.1.0 && git push origin v0.1.0
+#
+# The suite has to pass first -- every test converts and *executes* a real
+# .mcdx fixture from references/, so a green run means the published converter
+# still reproduces Mathcad's own cached results.
+#
+# Uploading uses PyPI Trusted Publishing (OIDC): no API token is stored in the
+# repo. One-time setup at https://pypi.org/manage/account/publishing/ --
+# owner "ChristianCruger", repository "mcad2py", workflow "publish.yml",
+# environment "pypi".
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Check the tag matches the project version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version=$(python -c "import tomllib,pathlib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")
+          if [ "$tag" != "$version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match pyproject version $version"
+            exit 1
+          fi
+
+      - name: Test
+        run: pytest -q
+
+      - name: Build
+        run: python -m build
+
+      - name: Check the distributions
+        run: |
+          python -m twine check dist/*
+          # tests/ and references/ are development-only; they must not ship.
+          if tar -tzf dist/*.tar.gz | grep -Eq '/(tests|references)/'; then
+            echo "::error::sdist contains tests/ or references/"
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write # required for Trusted Publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
