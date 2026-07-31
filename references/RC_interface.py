@@ -22,9 +22,9 @@ N_Sd = 0
 
 gamma_ct = 1.87
 
-V_Sd = 31.7
-
 # Shear in casting joint [kN]
+
+V_Sd = 31.7
 
 # Rebar
 
@@ -87,7 +87,7 @@ sigma_nd = sigma_nd if sigma_nd < 0.6 * f_cd else 0.6 * f_cd
 
 rho = A_s / A_j
 
-c = 0 if sigma_nd < 0 else 0 if rho <= (0.02 * f_cd - sigma_nd) / f_yd and crack == 'yes' else c
+c = 0 if sigma_nd < 0 else 0 if rho <= (0.02 * f_cd - sigma_nd) / f_yd and crack == 'Yes' else c
 
 # Interface capacity:
 

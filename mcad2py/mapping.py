@@ -20,7 +20,7 @@ OPERATOR_TAGS = {
     "lessOrEqual": "le",
     "greaterOrEqual": "ge",
     "equal": "eq",
-    # Boolean connectives (program tests, e.g. ``rho <= x and crack = "yes"``).
+    # Boolean connectives (program tests, e.g. ``rho <= x and crack = "Yes"``).
     "and": "and_",
     "or": "or_",
 }

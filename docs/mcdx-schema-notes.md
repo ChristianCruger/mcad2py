@@ -81,7 +81,7 @@ read this file when parsing a new schema construct or debugging a parser edge ca
   symbolic arrow forms route to SymPy. A symbolic `∫…→` would be a SymPy `Integrate`, not handled yet.
 - Comparison ops (`lessThan`/`greaterThan`/`lessOrEqual`/`greaterOrEqual`/`equal`) live in
   `OPERATOR_TAGS` and emit `< > <= >= ==`; boolean connectives `and`/`or` (in `OPERATOR_TAGS` as
-  `and_`/`or_`) emit `and`/`or` (used in program tests, e.g. `rho <= x and crack == "yes"`).
+  `and_`/`or_`) emit `and`/`or` (used in program tests, e.g. `rho <= x and crack == "Yes"`).
 - `<ml:equal/>` is **context-dependent**: by default it parses as a `==` comparison (`BinOp` `eq`) for
   boolean use in tests/inline-`if`. In a genuinely *symbolic* region — a standalone equation, a
   `solve` input, or a solve-block constraint — it means an equation, so those three parsers route it

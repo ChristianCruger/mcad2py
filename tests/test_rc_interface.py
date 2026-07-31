@@ -8,7 +8,7 @@ value(s) are assigned to the left-hand-side target(s) -- a single id or a
 
   * a ``<ml:program>`` used directly as a scalar value (with ``alsoif`` = elif)
     -> an inline conditional-expression chain;
-  * the ``and`` connective and a *boolean* ``=`` (``crack = "yes"``), which must
+  * the ``and`` connective and a *boolean* ``=`` (``crack = "Yes"``), which must
     emit ``and`` / ``==`` -- not a SymPy ``Eq`` (the sheet imports no SymPy).
 
 We execute the generated module and compare to Mathcad's cached ``result.xml``.
@@ -94,7 +94,7 @@ def test_program_value_becomes_inline_conditional():
 
 def test_boolean_equal_is_comparison_not_sympy_eq():
     src = _src()
-    assert "crack == 'yes'" in src
+    assert "crack == 'Yes'" in src
     assert "and crack ==" in src   # the `and` connective
     assert "Eq(" not in src        # boolean `=` must not become a SymPy Eq
     assert "from sympy" not in src
