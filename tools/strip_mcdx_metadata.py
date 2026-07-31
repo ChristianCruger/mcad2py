@@ -38,23 +38,29 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-# Parts rewritten wholesale, and the replacement content.
-_CORE_XML = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:dcmitype="http://purl.org/dc/dcmitype/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dc:creator>{author}</dc:creator><cp:lastModifiedBy>{author}</cp:lastModifiedBy></cp:coreProperties>"""
+# Elements in docProps/core.xml whose *text* is blanked. Everything else in the
+# part -- the XML declaration, namespaces, <cp:revision>, whitespace -- is left
+# byte-for-byte alone, so what Prime reads back still has the shape it wrote.
+_CORE_FIELDS = (
+    "creator", "lastModifiedBy", "title", "subject", "description",
+    "keywords", "category", "contentStatus",
+)
 
-# docProps/app.xml is optional and Prime tolerates it being minimal.
-_APP_XML = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"><Application>PTC Mathcad Prime</Application></Properties>"""
+# NOTE: docProps/app.xml is deliberately **not** touched. Despite the OOXML-ish
+# name it is not the Office extended-properties part -- Prime keeps its format
+# manifest there (`serializationVersion`, `engineVersion`, `schemaPropertiesList`)
+# and refuses to open a worksheet without it: "The file type is not supported."
+# It is identical across every worksheet a given Prime build writes and holds no
+# personal data, so there is nothing to strip anyway.
 
-# Header/footer: keep the part (Prime expects it) but empty its text.
-_EMPTY_TEXT = re.compile(r">[^<>]+<")
+# The printed page header/footer are worksheet50 documents whose <regions> hold
+# the field text (project number, date, company). Emptying the region list is
+# exactly the state Prime itself writes for a sheet with no header/footer, which
+# is far safer than blanking text nodes inside the nested XAML.
+_REGIONS = re.compile(rb"<regions\b(?:(?!/>)[^>])*>.*?</regions>|<regions\s*/>", re.S)
 
-# Fields worth reporting on in --check, by part.
-_SENSITIVE = {
-    "docProps/core.xml": ("creator", "lastModifiedBy", "title", "subject",
-                          "description", "keywords", "category"),
-    "docProps/app.xml": ("Company", "Manager", "Template"),
-}
+# Parts scanned by --check.
+_SENSITIVE = {"docProps/core.xml": _CORE_FIELDS}
 
 
 def _localname(tag: str) -> str:
@@ -86,6 +92,25 @@ def inspect(path: Path) -> list[str]:
     return findings
 
 
+def _blank_core_fields(data: bytes, author: str = "") -> bytes:
+    """Replace the text of each identifying element in ``docProps/core.xml``.
+
+    Operates on the raw bytes so the declaration, namespace declarations,
+    element order, indentation and ``<cp:revision>`` all survive untouched --
+    only the characters between an opening and closing tag change. Handles the
+    prefixed (``<dc:creator>``) and unprefixed spellings alike, and leaves an
+    already-empty or self-closing element alone.
+    """
+    replacement = author.encode("utf-8")
+    for field in _CORE_FIELDS:
+        pattern = re.compile(
+            rb"(<(?:[\w.-]+:)?" + field.encode() + rb"\b[^>]*>)[^<]*(</(?:[\w.-]+:)?"
+            + field.encode() + rb">)"
+        )
+        data = pattern.sub(rb"\1" + replacement + rb"\2", data)
+    return data
+
+
 def strip(path: Path, author: str = "") -> bool:
     """Rewrite ``path``'s metadata parts in place. True if anything changed.
 
@@ -101,14 +126,11 @@ def strip(path: Path, author: str = "") -> bool:
     for item, data in entries:
         name = item.filename
         if name == "docProps/core.xml":
-            new = _CORE_XML.format(author=author).encode("utf-8")
-        elif name == "docProps/app.xml":
-            new = _APP_XML.encode("utf-8")
+            new = _blank_core_fields(data, author)
         elif name in ("mathcad/header.xml", "mathcad/footer.xml"):
-            # Blank the text runs but keep the element structure intact.
-            new = _EMPTY_TEXT.sub("><", data.decode("utf-8", "replace")).encode("utf-8")
+            new = _REGIONS.sub(b"<regions />", data, count=1)
         else:
-            new = data
+            new = data  # includes docProps/app.xml -- see the note above
         changed = changed or new != data
         rewritten.append((item, new))
 
