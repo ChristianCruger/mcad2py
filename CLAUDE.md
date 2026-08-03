@@ -209,6 +209,17 @@ point and draws a gap, so `sample` fills `None` with a unit-carrying NaN (feedin
 mask, and the plot pins the other half of the implicit-domain rule — author-set x-axis limits (-7..1)
 replace Mathcad's default -10..10.
 
+[tests/test_mixed_plot_traces.py](tests/test_mixed_plot_traces.py) covers
+`references/mixed_plot_traces.mcdx`: one plot carrying **both** a parametric trace (two data vectors)
+and a function trace (`sin(t)` over a plotting range). Each kind worked alone, but mixed they didn't —
+the plot's single domain was applied to every trace, so the parametric one became
+`sample(lambda t: v, t)` and `plot_axis` raised on the nested array. Sampling is now decided per axis
+expression, on whether it references the domain. The test asserts both traces against Mathcad's cached
+`TraceType="Vector"` (3 points) and `"Range"` (101) — the differing lengths being exactly what one
+shared domain can't express — plus `static_axis`'s vector/scalar split (a scalar is a *reference line*
+and still spans the domain) and, on synthetic XML, that a purely parametric and a purely function plot
+are both emitted unchanged.
+
 [tests/test_auto_labels.py](tests/test_auto_labels.py) covers `labels="*"` — the **auto-labelled**
 identifiers a worksheet Prime converted from a legacy `.xmcd` is full of (Mathcad 15's schema didn't
 record whether a name was a unit, so the converter leaves it uncommitted). Purely synthetic XML, no

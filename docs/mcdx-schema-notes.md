@@ -477,6 +477,27 @@ extents). The interval is read off the cached `<ml:Trace2dResult>` instead:
   axis isn't the domain") doesn't decide the `x/2` vs `cos(x)` trace, where *neither* axis is the bare
   variable.
 
+## Mixed trace kinds on one plot (`mixed_plot_traces.mcdx`)
+
+An `<xyPlot>`'s traces need not all be the same kind. A **parametric** trace has data vectors on
+both axes (a section outline); a **function** trace has the plotting range on one axis and a
+function of it on the other. Mathcad records which is which in the cached result — `TraceType`
+is `"Vector"` vs `"Range"` — and, decisively, **their lengths differ**: the fixture caches a
+3-point `Vector` trace beside a 101-point `Range` one.
+
+Nothing in `<plotEquations>` marks the difference; both are ordinary expression `<math>`s. So the
+kind has to be inferred, per trace, from whether the axis expression **references the plotting
+variable**. `_detect_domain` finds one domain for the whole plot (the first bare-`Name` axis that is
+a range), which is right for the plot but wrong per trace: applying it everywhere emitted
+`sample(lambda t: v, t)` for the parametric trace, evaluating a constant vector once per domain point
+into a nested object array that `plot_axis` can't flatten.
+
+`_plot_axis_call` ([emit/codegen.py](../mcad2py/emit/codegen.py)) now samples only expressions that
+actually mention the domain. A domain-independent expression is emitted through `static_axis`, which
+settles the one case codegen can't: a **vector** is a parametric trace and keeps its own length,
+while a **scalar** is a reference line and is broadcast across the domain (which is what `sample`
+incidentally did for it before — the only part of the old behaviour worth keeping).
+
 ## Auto-labelled identifiers (`labels="*"`) — worksheets converted from `.xmcd`
 
 An `<ml:id>` normally declares its role: `labels="UNIT"`, `"VARIABLE"`, `"FUNCTION"`, `"CONSTANT"`.

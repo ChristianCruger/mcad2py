@@ -1385,6 +1385,24 @@ def _nan_fill(values):
     return [blank if v is None else v for v in values]
 
 
+def static_axis(value, domain):
+    """A plot axis expression that doesn't reference the plotting variable.
+
+    Two different things look alike in the worksheet, and only the value tells
+    them apart. A **vector** is a parametric trace -- a section outline, a
+    rebar scatter -- plotted as its own data, keeping its own length even when
+    it shares a plot with a function of the plotting range (Mathcad caches the
+    two as ``TraceType="Vector"`` and ``"Range"``, of different lengths). A
+    **scalar** is a reference line, which spans the whole domain instead.
+    """
+    magnitude = getattr(value, "magnitude", value)
+    if np.ndim(magnitude) > 0:
+        return value
+    units = getattr(value, "units", None)
+    line = np.full(len(domain), magnitude, dtype=float)
+    return line if units is None else line * units
+
+
 def plot_domain(start=-10.0, stop=10.0, num=499):
     """The array Mathcad invents for a plot over an *undefined* variable.
 
