@@ -209,6 +209,15 @@ point and draws a gap, so `sample` fills `None` with a unit-carrying NaN (feedin
 mask, and the plot pins the other half of the implicit-domain rule — author-set x-axis limits (-7..1)
 replace Mathcad's default -10..10.
 
+[tests/test_auto_labels.py](tests/test_auto_labels.py) covers `labels="*"` — the **auto-labelled**
+identifiers a worksheet Prime converted from a legacy `.xmcd` is full of (Mathcad 15's schema didn't
+record whether a name was a unit, so the converter leaves it uncommitted). Purely synthetic XML, no
+fixture. It pins that `*` is read as a unit *only* in slots that are a unit by definition (a display
+override, a plot axis unit), including inside a compound `kN·m`, and that the three things that must
+not move don't: a numeric scale override still divides, an explicit `labels="VARIABLE"` in a unit slot
+stays a variable, and an auto-labelled name *outside* such a slot stays a variable (a converted sheet
+auto-labels its loop index `i` — a name-based rule would emit `ureg.i`).
+
 [tools/strip_mcdx_metadata.py](tools/strip_mcdx_metadata.py) removes the authoring metadata a
 `.mcdx` carries in parts you never see in Prime (`docProps/core.xml`'s `creator`/`lastModifiedBy`,
 `docProps/app.xml`'s `Company`, and the printed header/footer). It rewrites only those parts —

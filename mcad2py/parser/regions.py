@@ -10,7 +10,13 @@ from typing import Callable
 from .. import ir
 from ..mapping import CONSTANTS, SYMBOLIC_COMMANDS
 from ..shapes import annotate_products
-from .expressions import parse_eval, parse_expr, read_identifier, sanitize
+from .expressions import (
+    as_units,
+    parse_eval,
+    parse_expr,
+    read_identifier,
+    sanitize,
+)
 from .namespaces import localname
 
 # A callable that resolves a text region's ``item-idref`` to its plain text.
@@ -579,7 +585,7 @@ def _parse_grid_plot(
     if len(maths) > 1 and len(maths[1]):
         sub = maths[1][0]
         if localname(sub.tag) != "placeholder":
-            z_unit = parse_expr(sub)
+            z_unit = as_units(parse_expr(sub))
 
     # An expression referencing exactly two ranges anywhere in it -- a direct
     # call (f(x0, y0)) or a composition (sigma(epsilon(x0*mm, y0*mm))) alike
@@ -637,7 +643,7 @@ def _parse_plot_equations(
         if len(maths) > 1 and len(maths[1]):
             sub = maths[1][0]
             if localname(sub.tag) != "placeholder":
-                unit = parse_expr(sub)
+                unit = as_units(parse_expr(sub))
         out.append((expr, unit))
     return out
 

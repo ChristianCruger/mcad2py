@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
+from dataclasses import replace
 
 from .. import ir
 from ..mapping import GREEK, OPERATOR_TAGS
@@ -247,8 +248,33 @@ def _parse_unit_override(elem: ET.Element) -> ir.Expr | None:
     for sub in elem:
         if localname(sub.tag) == "placeholder":
             return None
-        return parse_expr(sub)
+        return as_units(parse_expr(sub))
     return None
+
+
+def as_units(node: ir.Expr) -> ir.Expr:
+    """Read *auto-labelled* identifiers in a unit slot as units.
+
+    ``labels="*"`` means Mathcad never committed the name to a label and
+    resolves it from context -- which is what a worksheet **converted from
+    legacy .xmcd** is full of, since Mathcad 15's schema didn't carry the
+    distinction. In a slot that is a unit by definition (a display override, a
+    plot axis unit) the context says unit, so ``MPa`` there must become a
+    ``UnitRef`` and not a bare ``Name`` -- the latter emits ``x / (MPa)``,
+    a ``NameError`` against a name nothing defines.
+
+    Only ``*`` is reinterpreted. An explicit ``labels="VARIABLE"`` in a unit
+    slot is a real variable used as a scale, which already divides correctly,
+    and ``i`` (auto-labelled but plainly a loop index elsewhere in the sheet)
+    shows why the rule has to stay tied to the slot rather than the name.
+    """
+    if isinstance(node, ir.Name) and node.role == "*":
+        return ir.UnitRef(name=node.original)
+    if isinstance(node, ir.BinOp):
+        return replace(node, left=as_units(node.left), right=as_units(node.right))
+    if isinstance(node, ir.UnaryOp):
+        return replace(node, operand=as_units(node.operand))
+    return node
 
 
 def _call_args(rest: list[ET.Element]) -> list[ir.Expr]:

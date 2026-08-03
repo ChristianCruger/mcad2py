@@ -477,6 +477,32 @@ extents). The interval is read off the cached `<ml:Trace2dResult>` instead:
   axis isn't the domain") doesn't decide the `x/2` vs `cos(x)` trace, where *neither* axis is the bare
   variable.
 
+## Auto-labelled identifiers (`labels="*"`) — worksheets converted from `.xmcd`
+
+An `<ml:id>` normally declares its role: `labels="UNIT"`, `"VARIABLE"`, `"FUNCTION"`, `"CONSTANT"`.
+A worksheet **Prime converted from a legacy Mathcad 15 `.xmcd`** carries `labels="*"` on a large
+share of them instead — Mathcad 15's `math30` schema didn't record the distinction, so the converter
+leaves the name uncommitted and resolves it from context at evaluation time. One real converted sheet:
+1522 `VARIABLE`, 134 `UNIT`, **125 `*`**, 81 `FUNCTION`, 8 `CONSTANT`.
+
+`_parse_id` maps only `labels="UNIT"` to `ir.UnitRef`, so an auto-labelled `MPa` became a plain
+`Name` and the echo emitted `x / (MPa)` — a `NameError` against a name nothing defines — instead of
+`disp(x, ureg.MPa)`.
+
+**Resolve by slot, never by name.** In the same sheet, the 114 auto-labelled ids inside
+`<ml:unitOverride>` are all units (`mm`, `MPa`, `kN`, `GPa`, `m`) while the 11 outside it are all the
+loop index `i` — auto-labelled at its *use* even though the enclosing `<ml:for>` declares it
+`labels="VARIABLE"`. So a name-based rule ("is it a known unit?") would turn `i` into `ureg.i`, and
+would break any sheet with a variable called `m`. `as_units()`
+([parser/expressions.py](../mcad2py/parser/expressions.py)) instead reinterprets `*` **only** in slots
+that are a unit by definition — the display override and a plot axis's/`plot3D`'s unit `<math>` —
+recursing through compound units (`kN·m` is a `<mult>` of two ids). An explicit `labels="VARIABLE"`
+there is left alone: a variable used as a display scale is legal and already divides correctly.
+
+Not yet handled: an auto-labelled unit in a *value* expression (`f_ck := 30 MPa` written with `*`).
+The converted sheet inspected labels those `UNIT`, so no sample forces the issue; resolving it would
+need the sheet-wide defined-name set to tell a unit from a variable that shadows one.
+
 ## Blank lines and uncovered cases in programs (`incomplete_ifs.mcdx`)
 
 - **A blank line in a program is a bare `<ml:placeholder/>`** child of `<ml:program>` — the same tag
