@@ -93,7 +93,7 @@ def parse_expr(elem: ET.Element) -> ir.Expr:
         # ``σ_nd := <program with one if>``) reduces to that expression (a
         # ternary); a genuinely imperative program (local assigns, loops,
         # ``return``, ``tryCatch``) becomes a ProgramBlock emitted as a ``def``.
-        kids = list(elem)
+        kids = _program_lines(elem)
         if any(localname(k.tag) in _STMT_TAGS for k in kids) or len(kids) > 1:
             return _parse_program_block(elem)
         if len(kids) == 1:
@@ -336,7 +336,8 @@ def _unwrap_program(elem: ET.Element) -> ir.Expr:
     """
     inner = elem[0] if len(elem) else None
     if inner is not None and localname(inner.tag) == "program":
-        return parse_expr(inner[0]) if len(inner) else ir.Placeholder()
+        lines = _program_lines(inner)
+        return parse_expr(lines[0]) if lines else ir.Placeholder()
     return parse_expr(inner) if inner is not None else ir.Placeholder()
 
 
@@ -370,9 +371,20 @@ def _parse_range(elem: ET.Element) -> ir.Expr:
 _STMT_TAGS = frozenset({"localDefine", "for", "return", "tryCatch"})
 
 
+def _program_lines(elem: ET.Element) -> list[ET.Element]:
+    """The body lines of a ``<ml:program>``, minus the blank ones.
+
+    A blank line in a Mathcad program is a bare ``<ml:placeholder/>`` child, and
+    Mathcad simply ignores it. It must not become a statement: a bare expression
+    line is an implicit return, so a blank one would emit ``return None`` and
+    swallow every line below it.
+    """
+    return [c for c in elem if localname(c.tag) != "placeholder"]
+
+
 def _parse_program_block(elem: ET.Element) -> ir.ProgramBlock:
     """Parse an imperative ``<ml:program>`` into a :class:`ir.ProgramBlock`."""
-    return ir.ProgramBlock(statements=[_parse_stmt(c) for c in elem])
+    return ir.ProgramBlock(statements=[_parse_stmt(c) for c in _program_lines(elem)])
 
 
 def _parse_stmt(child: ET.Element) -> ir.Stmt:

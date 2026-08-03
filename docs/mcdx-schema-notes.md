@@ -466,3 +466,30 @@ extents). The interval is read off the cached `<ml:Trace2dResult>` instead:
 - The legend names the **y** expression whenever the domain is implicit. The usual rule ("whichever
   axis isn't the domain") doesn't decide the `x/2` vs `cos(x)` trace, where *neither* axis is the bare
   variable.
+
+## Blank lines and uncovered cases in programs (`incomplete_ifs.mcdx`)
+
+- **A blank line in a program is a bare `<ml:placeholder/>`** child of `<ml:program>` — the same tag
+  as an empty slot anywhere else, with no marker distinguishing "empty line" from "empty operand":
+
+  ```xml
+  <ml:program>
+    <ml:if>…</ml:if>
+    <ml:placeholder />   <!-- a blank line the author left in the middle -->
+    <ml:if>…</ml:if>
+  ```
+
+  Mathcad ignores it, so `_program_lines()` ([parser/expressions.py](../mcad2py/parser/expressions.py))
+  filters it out before anything else looks at the body. This **must not** be parsed as a statement:
+  a bare expression line is an *implicit return*, so a blank one emitted `return None` mid-function and
+  made every branch below it unreachable. Filtering happens *before* the "more than one line" test that
+  decides value-`Program` (ternary) vs. imperative `ProgramBlock` (`def`) too, so a lone trailing blank
+  can't flip a one-line `σ := if …` into a function definition. Blanks are stripped in the same way
+  inside a `<ml:then>`/`<ml:else>` body, where the first line is the branch's value.
+- **A program need not cover every case.** Mathcad accepts `if`-chains with no `else`; the sheet only
+  errors if an argument actually reaches the end — `This program has no return value. You must account
+  for all cases when using conditional statements in a Mathcad program.`, cached as an
+  `<engineErrors><engineError>` in place of that region's `<ml:result>`. Our `def` just falls off the
+  end and returns `None`, so the *reachable* calls (the point of such a sheet) match Mathcad and only
+  the erroring one diverges. Worth knowing when reading a cached `result.xml`: a region with no result
+  isn't necessarily one Mathcad didn't evaluate.

@@ -192,6 +192,16 @@ names, an already-defined scalar or range) versus the ones where it must (a defi
 the plot, out of scope; `π` in the expression, which is an identifier in the IR and would otherwise
 count as a second free name).
 
+[tests/test_incomplete_ifs.py](tests/test_incomplete_ifs.py) covers `references/incomplete_ifs.mcdx`:
+a **blank line inside a program** (a bare `<ml:placeholder/>` body child) is ignored rather than parsed
+as a statement — it used to emit `return None` mid-function and make every branch below it unreachable,
+so the sheet's `σ_cI` piecewise curve returned `None` for its second branch instead of the cached
+-30 MPa. It runs the sheet and matches the cache, asserts all six branches below the blank survive, and
+— on synthetic program XML — pins the placements the fixture doesn't show (leading/trailing/inside a
+`then`, where a trailing blank must *not* flip a one-line ternary into a `def`). Also documents the
+divergence the sheet is named for: for an argument matching no branch, Mathcad caches an `engineError`
+("This program has no return value") where we return `None`.
+
 [tools/strip_mcdx_metadata.py](tools/strip_mcdx_metadata.py) removes the authoring metadata a
 `.mcdx` carries in parts you never see in Prime (`docProps/core.xml`'s `creator`/`lastModifiedBy`,
 `docProps/app.xml`'s `Company`, and the printed header/footer). It rewrites only those parts —
