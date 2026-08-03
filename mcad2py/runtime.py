@@ -1365,8 +1365,24 @@ def sample(func, xs):
     Unlike ``np.vectorize`` this preserves Pint units and copes with *branching*
     functions (a Mathcad program's ``if``/``elif`` can't take an array), so it's
     how plot trace expressions are applied to the domain array.
+
+    A point the function has no value at comes back ``None`` -- a Mathcad
+    program whose ``if`` chain covers only part of the domain returns nothing
+    there. Mathcad plots those as gaps (its cached trace holds a literal
+    ``NaN``), so they become NaN here too, carrying the unit of the points that
+    *are* defined so the trace stays one dimensioned array.
     """
-    return col(*[func(x) for x in xs])
+    return col(*_nan_fill([func(x) for x in xs]))
+
+
+def _nan_fill(values):
+    """Replace ``None`` entries with NaN in the units of the defined ones."""
+    if not any(v is None for v in values):
+        return values
+    defined = next((v for v in values if v is not None), None)
+    units = getattr(defined, "units", None)
+    blank = float("nan") if units is None else float("nan") * units
+    return [blank if v is None else v for v in values]
 
 
 def plot_domain(start=-10.0, stop=10.0, num=499):

@@ -190,7 +190,9 @@ in a private `_domain_x` and doesn't leak into the module namespace, and — on 
 — the cases where a domain must *not* be invented (a parametric plot of two defined vectors, two free
 names, an already-defined scalar or range) versus the ones where it must (a definition sitting *below*
 the plot, out of scope; `π` in the expression, which is an identifier in the IR and would otherwise
-count as a second free name).
+count as a second free name). Plus that -10..10 is only the *default*: author-set x-axis limits
+(`<xyDomain>`'s start/end values, as opposed to the auto-scaled `start`/`end` attributes) become the
+sampled interval instead — pinned end-to-end by `incomplete_ifs.mcdx`'s -7..1.
 
 [tests/test_incomplete_ifs.py](tests/test_incomplete_ifs.py) covers `references/incomplete_ifs.mcdx`:
 a **blank line inside a program** (a bare `<ml:placeholder/>` body child) is ignored rather than parsed
@@ -200,7 +202,12 @@ so the sheet's `σ_cI` piecewise curve returned `None` for its second branch ins
 — on synthetic program XML — pins the placements the fixture doesn't show (leading/trailing/inside a
 `then`, where a trailing blank must *not* flip a one-line ternary into a `def`). Also documents the
 divergence the sheet is named for: for an argument matching no branch, Mathcad caches an `engineError`
-("This program has no return value") where we return `None`.
+("This program has no return value") where we return `None`. Its **plot** covers what that means for a
+trace: drawn over a domain running past the last branch, Mathcad caches a literal `NaN` per undefined
+point and draws a gap, so `sample` fills `None` with a unit-carrying NaN (feeding `None` into
+`plot_axis` used to raise). The trace is checked point-for-point against the cache including the NaN
+mask, and the plot pins the other half of the implicit-domain rule — author-set x-axis limits (-7..1)
+replace Mathcad's default -10..10.
 
 [tools/strip_mcdx_metadata.py](tools/strip_mcdx_metadata.py) removes the authoring metadata a
 `.mcdx` carries in parts you never see in Prime (`docProps/core.xml`'s `creator`/`lastModifiedBy`,

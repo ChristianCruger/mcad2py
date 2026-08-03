@@ -451,6 +451,16 @@ extents). The interval is read off the cached `<ml:Trace2dResult>` instead:
   `x/2` on the x axis against `cos(x)`; its cached `RangeInfo` is `Min="-5" Max="5"` and its y values
   are `cos(x)` for `x` over the *full* -10..10 (checked against `cos(x/2)`, which they are not). So
   the axis expression is just another function sampled over the domain — exactly like the y axis.
+- **-10..10 is the default, not the rule.** Setting the x-axis limits makes Mathcad sample the free
+  variable over *those* instead (still 499 points). The limits live in the axis's
+  `<xyDomain><startValue>/<endValue>` as full `<math>` expressions with their own `resultRef`s;
+  while the axis auto-scales they are `<ml:placeholder/>`. The `start`/`end` **attributes** are not
+  the setting — they hold the drawn window either way, computed from the data when auto-scaling, so
+  reading them back would be circular (`plotting-wo-var.mcdx`'s second trace draws -5..5 from a full
+  -10..10). `_parse_axis_limits` ([parser/regions.py](../mcad2py/parser/regions.py)) therefore reads
+  the `<xyDomain>` values and only when both are plain numbers (`incomplete_ifs.mcdx`: -7..1,
+  confirmed by its cached 499-point trace running -7..1). A limit that is an arbitrary expression
+  falls back to the default — no sample pins what Mathcad does there.
 - **Inference** is a post-parse pass, `_infer_implicit_plot_domains`
   ([parser/regions.py](../mcad2py/parser/regions.py)), because it needs to know which names the sheet
   ever defines. Walking the regions in order, a `Plot` with no range-typed domain whose axis
@@ -493,3 +503,10 @@ extents). The interval is read off the cached `<ml:Trace2dResult>` instead:
   end and returns `None`, so the *reachable* calls (the point of such a sheet) match Mathcad and only
   the erroring one diverges. Worth knowing when reading a cached `result.xml`: a region with no result
   isn't necessarily one Mathcad didn't evaluate.
+- **Plotting one draws a gap, not an error.** Where such a program has no branch, the cached trace
+  holds a literal **`NaN`** (`[…,-0.3162650602409639,NaN,NaN,…]` — note `json.loads` won't parse that
+  vector, though `float()` will). So `sample` ([runtime.py](../mcad2py/runtime.py)) maps a `None`
+  sample to NaN, and matplotlib breaks the line exactly where Mathcad does. The NaN takes the
+  **unit** of the points that are defined, without which the column stays a mixed `object` array and
+  `plot_axis`'s `data / unit` raises. Only `None` is filled — a point that *raises* is left to
+  propagate, since swallowing exceptions here would turn a conversion bug into a silently empty plot.

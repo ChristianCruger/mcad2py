@@ -152,7 +152,9 @@ def _synthetic(body: str) -> ir.Worksheet:
     )
 
 
-def _plot(x_eqs: list[str], y_eqs: list[str], top: str = "100") -> str:
+def _plot(
+    x_eqs: list[str], y_eqs: list[str], top: str = "100", x_domain: str = ""
+) -> str:
     def equations(maths: list[str]) -> str:
         return "<plotEquations>" + "".join(
             f"<plotEquation><math>{m}</math>"
@@ -162,10 +164,21 @@ def _plot(x_eqs: list[str], y_eqs: list[str], top: str = "100") -> str:
 
     return (
         f'<region top="{top}" left="0"><plot><xyPlot><axes>'
-        f"<xAxis>{equations(x_eqs)}</xAxis>"
+        f"<xAxis>{equations(x_eqs)}{x_domain}</xAxis>"
         f"<yAxis>{equations(y_eqs)}</yAxis>"
         "</axes></xyPlot></plot></region>"
     )
+
+
+def _xy_domain(start: str, end: str) -> str:
+    """An ``<xyDomain>`` holding the two axis-limit ``<math>``s."""
+    return (
+        '<xyDomain scale-type="linear" auto-scale="true">'
+        f"<startValue>{start}</startValue><endValue>{end}</endValue></xyDomain>"
+    )
+
+
+_AUTO = _xy_domain("<ml:placeholder />", "<ml:placeholder />")
 
 
 _ID = '<ml:id xml:space="preserve">{}</ml:id>'
@@ -259,6 +272,91 @@ def test_a_constant_in_the_expression_is_not_a_second_free_name():
     )
     assert plot.domain == "x"
     assert plot.implicit_domain == (-10.0, 10.0, 499)
+
+
+# ---------------------------------------------------------------------------
+# -10..10 is the *default*, not the rule: author-set x-axis limits replace it.
+
+
+def test_author_set_axis_limits_become_the_domain():
+    """Setting the x-axis limits re-samples the free variable over exactly
+    those -- pinned by ``incomplete_ifs.mcdx``, whose -7..1 limits give a
+    cached trace of 499 points from -7 to 1 (see test_incomplete_ifs.py)."""
+    ws = _synthetic(
+        _plot(
+            [_ID.format("x")],
+            [_SIN.format("x")],
+            x_domain=_xy_domain("<ml:real>-7</ml:real>", "<ml:real>1</ml:real>"),
+        )
+    )
+    plot = _only_plot(ws)
+    assert plot.x_limits == (-7.0, 1.0)
+    assert plot.implicit_domain == (-7.0, 1.0, 499)
+
+
+def test_a_negated_limit_is_read():
+    """A limit may reach the IR as ``<neg>`` over a literal rather than a
+    signed literal, depending on how it was typed."""
+    neg_two = "<ml:apply><ml:neg /><ml:real>2</ml:real></ml:apply>"
+    plot = _only_plot(
+        _synthetic(
+            _plot(
+                [_ID.format("x")],
+                [_SIN.format("x")],
+                x_domain=_xy_domain(neg_two, "<ml:real>4</ml:real>"),
+            )
+        )
+    )
+    assert plot.implicit_domain == (-2.0, 4.0, 499)
+
+
+@pytest.mark.parametrize(
+    "x_domain",
+    [
+        pytest.param("", id="no-xyDomain"),
+        pytest.param(_AUTO, id="placeholder-limits"),
+        # Not a plain number: no sample pins what Mathcad does, so default.
+        pytest.param(
+            _xy_domain(
+                '<ml:id xml:space="preserve">a</ml:id>', "<ml:real>4</ml:real>"
+            ),
+            id="expression-limit",
+        ),
+    ],
+)
+def test_without_author_set_limits_the_default_interval_stands(x_domain):
+    """An auto-scaling axis stores its *drawn* window in the ``start``/``end``
+    attributes while the ``<xyDomain>`` values stay placeholders. That window
+    is computed from the data, so it must not be read back as the domain --
+    ``plotting-wo-var.mcdx``'s second trace draws -5..5 from a full -10..10."""
+    plot = _only_plot(
+        _synthetic(_plot([_ID.format("x")], [_SIN.format("x")], x_domain=x_domain))
+    )
+    assert plot.x_limits is None
+    assert plot.implicit_domain == (-10.0, 10.0, 499)
+
+
+def test_limits_do_not_touch_an_explicit_range_domain():
+    """Axis limits only decide the interval Mathcad *invents*. A plot with a
+    real plotting variable is sampled over that variable, whatever the axis
+    window is set to."""
+    range_def = (
+        '<region top="10" left="0"><math><ml:define>'
+        '<ml:id labels="VARIABLE">x</ml:id><ml:range><ml:real>0</ml:real>'
+        "<ml:real>10</ml:real></ml:range></ml:define></math></region>"
+    )
+    plot = _only_plot(
+        _synthetic(
+            range_def
+            + _plot(
+                [_ID.format("x")],
+                [_SIN.format("x")],
+                x_domain=_xy_domain("<ml:real>2</ml:real>", "<ml:real>3</ml:real>"),
+            )
+        )
+    )
+    assert plot.domain == "x"
+    assert plot.implicit_domain is None
 
 
 def test_runtime_plot_domain_defaults_match_the_cache():

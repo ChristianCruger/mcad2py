@@ -503,7 +503,48 @@ def _parse_xy_plot(xy: ET.Element, range_names: set[str]) -> ir.Region:
         traces.append(ir.PlotTrace(x=xe, y=ye, x_unit=xu, y_unit=yu, color=color))
 
     domain = _detect_domain(x_eqs + y_eqs, range_names)
-    return ir.Plot(traces=traces, domain=domain)
+    return ir.Plot(
+        traces=traces, domain=domain, x_limits=_parse_axis_limits(x_axis)
+    )
+
+
+def _parse_axis_limits(axis_elem: ET.Element | None) -> tuple[float, float] | None:
+    """An axis's *author-set* interval, from ``<xyDomain>``'s start/end values.
+
+    Both are ``<ml:placeholder/>`` while the axis auto-scales, in which case
+    there is no author interval (the ``start``/``end`` *attributes* alongside
+    them are the drawn window Mathcad computed, not a setting). Anything that
+    isn't a plain number is ignored -- a limit may be an arbitrary expression,
+    and we have no sample of one to pin the behaviour down.
+    """
+    if axis_elem is None:
+        return None
+    dom = next((c for c in axis_elem if localname(c.tag) == "xyDomain"), None)
+    if dom is None:
+        return None
+    bounds: list[float] = []
+    for tag in ("startValue", "endValue"):
+        elem = next((c for c in dom if localname(c.tag) == tag), None)
+        if elem is None or not len(elem):
+            return None
+        value = _const_float(parse_expr(elem[0]))
+        if value is None:
+            return None
+        bounds.append(value)
+    return (bounds[0], bounds[1])
+
+
+def _const_float(node: ir.Expr) -> float | None:
+    """``node`` as a float if it is a numeric literal (optionally negated)."""
+    if isinstance(node, ir.UnaryOp) and node.op == "neg":
+        inner = _const_float(node.operand)
+        return None if inner is None else -inner
+    if isinstance(node, ir.Number):
+        try:
+            return float(node.value)
+        except ValueError:
+            return None
+    return None
 
 
 def _parse_grid_plot(
@@ -852,6 +893,7 @@ def _collect_var_names(node: ir.Expr, acc: list[str]) -> None:
 # ``<ml:Trace2dResult>``: -10..10 in 499 steps of 20/498 (the ``<trace>``
 # element's own ``num-of-points`` says 500, but the data vector holds 499).
 _IMPLICIT_PLOT_DOMAIN = (-10.0, 10.0, 499)
+_IMPLICIT_PLOT_POINTS = _IMPLICIT_PLOT_DOMAIN[2]
 
 
 def _infer_implicit_plot_domains(ws: ir.Worksheet) -> None:
@@ -868,6 +910,9 @@ def _infer_implicit_plot_domains(ws: ir.Worksheet) -> None:
     with the default interval attached. Two free names, or none, is not a
     function plot (a parametric outline plots two data vectors directly) and is
     left alone.
+
+    -10..10 is only the default. Setting the **x-axis limits** re-samples the
+    free variable over exactly those, so author-set limits win.
     """
     defined: set[str] = set()
     for region in ws.regions:
@@ -875,7 +920,11 @@ def _infer_implicit_plot_domains(ws: ir.Worksheet) -> None:
             free = _free_plot_names(region, defined)
             if len(free) == 1:
                 region.domain = free[0]
-                region.implicit_domain = _IMPLICIT_PLOT_DOMAIN
+                region.implicit_domain = (
+                    _IMPLICIT_PLOT_DOMAIN
+                    if region.x_limits is None
+                    else (*region.x_limits, _IMPLICIT_PLOT_POINTS)
+                )
         defined |= _bound_names(region)
 
 

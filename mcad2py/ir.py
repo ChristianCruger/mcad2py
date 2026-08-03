@@ -530,13 +530,20 @@ class Plot(Region):
     ``implicit_domain`` is set when that variable is never *defined* in the
     sheet: Mathcad plots a function of a free variable by inventing a domain
     for it, so we invent the same one. It holds ``(start, stop, points)`` --
-    Mathcad's default interval -- and codegen builds the array itself rather
+    Mathcad's default interval, unless the author set the x-axis limits, which
+    is what ``x_limits`` carries -- and codegen builds the array itself rather
     than reading a name that doesn't exist.
+
+    ``x_limits`` is the *author-set* x-axis interval (``<xyDomain>``'s
+    ``startValue``/``endValue``), or ``None`` when those are placeholders and
+    Mathcad auto-scales. It only matters for an implicit domain, where it is
+    the interval the free variable is sampled over.
     """
 
     traces: list[PlotTrace]
     domain: str | None = None
     implicit_domain: tuple[float, float, int] | None = None
+    x_limits: tuple[float, float] | None = None
 
 
 @dataclass
