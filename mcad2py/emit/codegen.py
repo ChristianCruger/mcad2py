@@ -89,7 +89,7 @@ def _emit(node: ir.Expr) -> tuple[str, int]:
 
     if isinstance(node, ir.MatrixLiteral):
         elems = ", ".join(expr_to_str(e) for e in node.elements)
-        if node.rows <= 1 or node.cols <= 1:  # vector -> 1-D array
+        if node.cols <= 1:  # vector -> 1-D array
             return f"col({elems})", _ATOM
         return f"matrix({node.rows}, {node.cols}, {elems})", _ATOM
 
@@ -883,7 +883,7 @@ def _used_runtime(ws: ir.Worksheet) -> set[str]:
                 if isinstance(sub, ir.Call) and FUNCTIONS.get(sub.func, sub.func) in RUNTIME_IMPORTS:
                     found.add(FUNCTIONS.get(sub.func, sub.func))
                 elif isinstance(sub, ir.MatrixLiteral):
-                    found.add("col" if sub.rows <= 1 or sub.cols <= 1 else "matrix")
+                    found.add("col" if sub.cols <= 1 else "matrix")
                 elif isinstance(sub, ir.Range):
                     found.add("arange")
                 elif isinstance(sub, ir.Vectorize):

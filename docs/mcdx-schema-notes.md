@@ -247,9 +247,25 @@ read this file when parsing a new schema construct or debugging a parser edge ca
   rule is **zero only** — a nonzero plain entry mixed with dimensioned ones is genuinely dimensionless
   (RC_col's `[1; −l/2; −w/2]` constant column) and must keep its own per-element type, exactly as
   `_build_array` treats a matrix literal.
-- **A column vector is 1-D.** `col()` and `stack()` of single-column blocks return a 1-D array, not
-  `n × 1` — a single subscript `z[0]` must read the *element*, where an `n × 1` shape would hand back a
-  one-row slice (`[0.0]`). `stack` only keeps a 2-D result when a block is genuinely wider.
+- **A column vector is 1-D; a row vector is a matrix.** `<ml:matrix rows="N" cols="1">` → `col(…)`, a
+  1-D array — a single subscript `z[0]` must read the *element*, where an `n × 1` shape would hand back
+  a one-row slice (`[0.0]`). But `<ml:matrix rows="1" cols="N">` is a genuine `1 × N` and emits
+  `matrix(1, N, …)`. Mathcad says so itself: `match` on a `3 × 1` column returns a bare index, on a
+  `1 × 3` row an index **pair** — and only a matrix has `(row, col)` positions. Collapsing both to 1-D
+  loses the orientation `stack`/`augment` need, so a header literal `("A" "B" "C")` landed down
+  column 0 instead of across row 0 (`references/stack_augment_lookup.mcdx`).
+  `transpose` moves between the two forms, which it must do explicitly — NumPy's transpose of a 1-D
+  array is itself, and Mathcad's usual way of *typing* a column vector is the transposed row literal
+  `(a b c)ᵀ` (see `shrinkage.mcdx`, `RC_col.mcdx`), which has to come back 1-D.
+- **`stack`/`augment` take blocks, not just vectors** — matrices join edge to edge (a scalar counts as
+  `1 × 1`), which is how a labelled table is built: `stack(("A" "B" "C"), s)` captions the columns,
+  `augment(("X" "Y" "Z")ᵀ, s)` the rows, and both together give the `vhlookup` shape.
+- **Table search** — `match(z, A)` returns the positions of `z` in `A` (scalar indices for a vector,
+  `(row, col)` pairs for a matrix), `lookup(z, A, B)` the elements of a parallel `B` at those
+  positions, `vlookup(z, A, c)`/`hlookup(z, A, r)` search `A`'s first column/row and read out
+  column `c`/row `r`, and `vhlookup(z_v, z_h, A)` reads the intersection. All five return a **vector**
+  even for a single hit (Mathcad caches a `1 × 1` matrix, not a scalar); a matrix is scanned
+  **column-major**; a value that isn't there is an error, not an empty result.
 - **`max`/`min` are reductions**, always: Mathcad flattens *all* arguments (scalars and vectors) and
   returns the single min/max — `mc_max`/`mc_min` (equivalent to `np.min`/`np.max` over the flattened
   args, unit-aware). There is no element-wise `np.minimum`/`np.maximum`; element-wise behaviour comes

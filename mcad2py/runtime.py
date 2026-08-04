@@ -407,17 +407,32 @@ def _magnitudes(v):
     return np.asarray(v, dtype=float)
 
 
+def _transposed(mag):
+    """``mag`` transposed in this module's vector representation.
+
+    A **column** vector is 1-D here (what ``col()`` builds) while a **row**
+    vector is a genuine ``1 x N``, so transpose has to move between the two
+    rather than lean on NumPy -- ``np.transpose`` of a 1-D array is itself.
+    That matters for Mathcad's common ``(a b c)ᵀ`` idiom, which writes a column
+    vector as a transposed row literal and must come back 1-D.
+    """
+    if mag.ndim == 1:
+        return mag.reshape(1, -1)
+    if mag.ndim == 2 and mag.shape[0] == 1:
+        return mag.reshape(-1)
+    return np.transpose(mag)
+
+
 def transpose(x):
     """Mathcad matrix/vector transpose, unit-aware.
 
-    For the 1-D vectors built by ``col()`` this is effectively identity (NumPy
-    treats a 1-D array's transpose as itself), which is exactly what feeding a
-    transposed data column to ``linterp`` needs; a true 2-D matrix transposes
-    normally. Pint quantities keep their units.
+    A true 2-D matrix transposes normally; a vector flips orientation between
+    the 1-D column form and the ``1 x N`` row form (see :func:`_transposed`).
+    Pint quantities keep their units.
     """
     if hasattr(x, "magnitude"):
-        return x._REGISTRY.Quantity(np.transpose(x.magnitude), x.units)
-    return np.transpose(np.asarray(x))
+        return x._REGISTRY.Quantity(_transposed(np.asarray(x.magnitude)), x.units)
+    return _transposed(np.asarray(x))
 
 
 def _is_arraylike(x):
@@ -584,22 +599,42 @@ def _has_object(x):
     return getattr(np.asarray(mag), "dtype", None) == object
 
 
-def augment(*columns):
-    """Mathcad ``augment``: stack column vectors side by side into a matrix.
+def _blocks(items):
+    """Each of ``items`` as a 2-D object block, ready to be tiled.
 
-    Each argument is a 1-D vector; they become the columns of the result. The
-    columns may carry *different* units (Mathcad allows a heterogeneous matrix
-    here, e.g. a dimensionless column beside two length columns), so the result
-    is an object array of per-element Pint scalars -- a later ``matmul`` then
-    propagates units column by column.
+    A **scalar** is ``1 x 1`` (Mathcad lets a bare value be a block -- e.g. a
+    string caption above a data column); a **1-D vector** is a column ``n x 1``,
+    this module's column-vector form; a **matrix** is itself. Blocks may carry
+    different units, so they stay object arrays and a later ``matmul``
+    propagates units element by element.
     """
-    cols_ = [_to_object_matrix(c).reshape(-1) for c in columns]
-    nrows = max((len(c) for c in cols_), default=0)
-    out = np.empty((nrows, len(cols_)), dtype=object)
-    for j, c in enumerate(cols_):
-        for i in range(nrows):
-            out[i, j] = c[i]
-    return out
+    parts = [_to_object_matrix(b) for b in items]
+    return [
+        p.reshape(1, 1) if p.ndim == 0 else p.reshape(-1, 1) if p.ndim == 1 else p
+        for p in parts
+    ]
+
+
+def augment(*blocks):
+    """Mathcad ``augment``: join matrices/vectors side by side.
+
+    The horizontal counterpart of :func:`stack`. Blocks must have the same
+    number of rows; a shorter one is zero-filled. Augmenting a header *column*
+    onto a matrix (``augment(("X" "Y" "Z")ᵀ, s)``) is the labelled-table idiom,
+    so a matrix block has to keep all of its columns rather than be flattened.
+
+    A single-column result is a column vector, returned 1-D (see :func:`stack`).
+    """
+    parts = _blocks(blocks)
+    nrows = max((p.shape[0] for p in parts), default=0)
+    ncols = sum(p.shape[1] for p in parts)
+    out = np.empty((nrows, ncols), dtype=object)
+    out[:] = 0
+    c = 0
+    for p in parts:
+        out[: p.shape[0], c : c + p.shape[1]] = p
+        c += p.shape[1]
+    return out.reshape(-1) if ncols == 1 else out
 
 
 def stack(*blocks):
@@ -617,9 +652,7 @@ def stack(*blocks):
     for captioning a data column with a string header -- is a scalar above a
     vector, and a 0-d block would otherwise have no ``shape[1]`` at all.
     """
-    parts = [_to_object_matrix(b) for b in blocks]
-    parts = [p.reshape(1, 1) if p.ndim == 0 else p for p in parts]
-    parts = [p.reshape(-1, 1) if p.ndim == 1 else p for p in parts]
+    parts = _blocks(blocks)
     ncols = max((p.shape[1] for p in parts), default=0)
     nrows = sum(p.shape[0] for p in parts)
     out = np.empty((nrows, ncols), dtype=object)
@@ -1027,6 +1060,113 @@ def rsort(a, n):
     mag, unit = _split(a)
     m = _as_2d(mag)
     return _join(m[:, np.argsort(m[int(n), :], kind="stable")], unit)
+
+
+# --- Table search (match / lookup / vlookup / hlookup / vhlookup) -----------
+#
+# Mathcad scans a matrix **column-major** and every one of these returns a
+# *vector* of results, even when there is exactly one hit (its cache shows a
+# 1x1 matrix, not a bare scalar). Not finding the value at all is an error in
+# Mathcad, so these raise rather than return an empty vector.
+
+
+def _same(a, b):
+    """Mathcad's equality for a table search: never raises, never coerces.
+
+    A search table routinely mixes strings with numbers (a labelled table), and
+    a bare number is not a dimensioned one, so a mismatch of *kind* is simply
+    "not equal" rather than an error.
+    """
+    if isinstance(a, str) or isinstance(b, str):
+        return isinstance(a, str) and isinstance(b, str) and a == b
+    try:
+        return bool(a == b)
+    except Exception:
+        return False
+
+
+def _search_grid(a):
+    """``a`` as an object array, keeping its 1-D/2-D distinction."""
+    return _to_object_matrix(a)
+
+
+def _found(hits, z, what):
+    if len(hits) == 0:
+        raise ValueError(f"{what}: {z!r} not found")
+    return col(*hits)
+
+
+def _positions(z, grid):
+    """Indices of ``z`` in ``grid``, column-major.
+
+    A 1-D grid (a column vector) yields plain integer indices; a 2-D grid
+    yields ``(row, col)`` pairs -- which is why Mathcad's cache for
+    ``match(7, R)`` on a ``1x3`` *row* holds a nested ``[0; 2]`` while
+    ``match(3, V)`` on a ``3x1`` column holds the bare ``2``.
+    """
+    if grid.ndim == 1:
+        return [i for i, v in enumerate(grid) if _same(v, z)]
+    nrows, ncols = grid.shape
+    return [
+        col(i, j)
+        for j in range(ncols)
+        for i in range(nrows)
+        if _same(grid[i, j], z)
+    ]
+
+
+def match(z, A):
+    """Mathcad ``match(z, A)``: the indices at which ``z`` occurs in ``A``.
+
+    A vector gives scalar indices, a matrix ``(row, col)`` index pairs.
+    """
+    return _found(_positions(z, _search_grid(A)), z, "match")
+
+
+def lookup(z, A, B):
+    """Mathcad ``lookup(z, A, B)``: the elements of ``B`` at the positions
+    where ``A`` equals ``z`` (``A`` and ``B`` sharing a shape)."""
+    grid, out = _search_grid(A), _search_grid(B)
+    values = [
+        out[p] if grid.ndim == 1 else out[int(p[0]), int(p[1])]
+        for p in _positions(z, grid)
+    ]
+    return _found(values, z, "lookup")
+
+
+def vlookup(z, A, c):
+    """Mathcad ``vlookup(z, A, c)``: search the **first column** of ``A`` for
+    ``z``; return column ``c`` of each matching row."""
+    grid = _as_2d_grid(A)
+    values = [grid[i, int(c)] for i in range(grid.shape[0]) if _same(grid[i, 0], z)]
+    return _found(values, z, "vlookup")
+
+
+def hlookup(z, A, r):
+    """Mathcad ``hlookup(z, A, r)``: search the **first row** of ``A`` for
+    ``z``; return row ``r`` of each matching column."""
+    grid = _as_2d_grid(A)
+    values = [grid[int(r), j] for j in range(grid.shape[1]) if _same(grid[0, j], z)]
+    return _found(values, z, "hlookup")
+
+
+def vhlookup(z_v, z_h, A):
+    """Mathcad ``vhlookup(z_v, z_h, A)``: the elements where the row labelled
+    ``z_v`` (first column) meets the column labelled ``z_h`` (first row)."""
+    grid = _as_2d_grid(A)
+    rows = [i for i in range(grid.shape[0]) if _same(grid[i, 0], z_v)]
+    cols_ = [j for j in range(grid.shape[1]) if _same(grid[0, j], z_h)]
+    if not rows:
+        raise ValueError(f"vhlookup: {z_v!r} not found in the first column")
+    if not cols_:
+        raise ValueError(f"vhlookup: {z_h!r} not found in the first row")
+    return col(*[grid[i, j] for j in cols_ for i in rows])
+
+
+def _as_2d_grid(a):
+    """A 2-D object view; a 1-D vector counts as a single column."""
+    grid = _search_grid(a)
+    return grid.reshape(-1, 1) if grid.ndim == 1 else grid
 
 
 def IsArray(x):  # noqa: N802 -- Mathcad's own spelling

@@ -243,6 +243,23 @@ mixed with dimensioned ones — RC_col's `[1; −l/2; −w/2]` — must still bl
 incompatible units), `vec_set`'s gap in 1-D and 2-D, and that `stack` keeps 2-D when a block is
 genuinely wider.
 
+[tests/test_stack_augment_lookup.py](tests/test_stack_augment_lookup.py) covers
+`references/stack_augment_lookup.mcdx`: **row vs. column vectors** and the **table-search family**.
+We emitted any literal with a dimension of 1 as `col(...)` (1-D), so a `1×3` header literal came back
+a *column* and `stack(("A" "B" "C"), s)` wrote the labels down column 0 instead of across row 0 — every
+later `matelem` then read a label where a number belonged. The sheet's cache states the distinction
+itself: `match` on the `3×1` `V` returns the bare index `2`, on the `1×3` `R` the *pair* `[0; 2]` —
+index pairs are what a matrix has. So `cols == 1` is the column vector (1-D) and `1×N` a genuine 2-D
+matrix; `transpose` moves between the two (Mathcad's usual way of typing a column vector is a
+transposed row literal `(a b c)ᵀ`, which must come back 1-D — NumPy's 1-D transpose is the identity, so
+this can't lean on it). `augment` also had to stop flattening its arguments, so a *matrix* block keeps
+its columns. All 15 echoes are matched to the cache, plus the labelled-table shapes
+(header row / header column / both), `transpose`'s round trip, and `augment`/`stack` on matrix and
+scalar blocks. The searches all return a **vector** even for one hit (the cache holds `1×1` matrices,
+not scalars), scan a matrix **column-major** (`match(3, s)` → `[1;1]` before `[0;2]`), raise when the
+value is absent, and compare mixed string/number cells without raising. Region 0's cached `4×1` is a
+documented **stale leftover** (a plain define with nothing to echo, so Mathcad never refreshed it).
+
 [tools/strip_mcdx_metadata.py](tools/strip_mcdx_metadata.py) removes the authoring metadata a
 `.mcdx` carries in parts you never see in Prime (`docProps/core.xml`'s `creator`/`lastModifiedBy`,
 `docProps/app.xml`'s `Company`, and the printed header/footer). It rewrites only those parts —
@@ -275,8 +292,8 @@ outline) now render correctly — a sampling domain is only inferred when an axi
 the schema note) — and an xy plot whose variable is never *defined* gets Mathcad's invented -10..10
 domain (also a schema note). The **trig and hyperbolic families are complete** (including `sec`/`csc`/`sinc`,
 `atan2`/`angle`, and all six inverse hyperbolics), with `acot`'s Maple/MuPAD `(0, π)` branch confirmed
-against a cached negative argument (see the schema note). The **vector & matrix family is complete**
-too, bar the table-search functions (`lookup`/`match`/`vlookup`/`hlookup`) — and with it come the
+against a cached negative argument (see the schema note). The **vector & matrix family is complete**,
+the **table searches** (`match`/`lookup`/`vlookup`/`hlookup`/`vhlookup`) included — and with it come the
 two-subscript read/write forms and the `·`-disambiguating shape pass. Two things there are *not*
 byte-reproducible and shouldn't be treated as bugs: LAPACK's **eigenvalue ordering** differs from
 Mathcad's for nonsymmetric matrices and for `genvals` (the multisets agree), and **eigenvector signs**

@@ -101,8 +101,12 @@ def test_percent_emitted_source():
 
 
 def test_linterp_and_transpose_emitted():
+    """The data rows are ``1x6`` *row* literals transposed into columns --
+    Mathcad's usual way of typing a column vector. A row vector is a genuine
+    ``1 x N`` matrix (not a 1-D array), so ``transpose`` is what brings it back
+    to the 1-D column form ``linterp`` reads."""
     src = convert_file(REFERENCE, fmt="py")
-    assert "transpose(col(" in src
+    assert "transpose(matrix(1, 6, " in src
     assert "linterp(transpose(" in src
 
 

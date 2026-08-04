@@ -138,6 +138,12 @@ FUNCTIONS = {
     "mean": "mean",
     "IsArray": "IsArray",
     "IsScalar": "IsScalar",
+    # Table search
+    "match": "match",
+    "lookup": "lookup",
+    "vlookup": "vlookup",
+    "hlookup": "hlookup",
+    "vhlookup": "vhlookup",
 }
 
 # Runtime helpers that are *called by name* in generated code (so a Call to one
@@ -160,6 +166,7 @@ RUNTIME_IMPORTS = (
     "cond1", "cond2", "conde", "condi",
     "eigenvals", "eigenvec", "eigenvecs", "genvals", "genvecs", "svds",
     "sort", "reverse", "csort", "rsort", "mean", "IsArray", "IsScalar",
+    "match", "lookup", "vlookup", "hlookup", "vhlookup",
     "matrow", "matelem", "matmul",
 )
 

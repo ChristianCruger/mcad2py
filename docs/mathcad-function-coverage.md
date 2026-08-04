@@ -77,7 +77,7 @@ Legend: ✅ done · 🟡 partial · ⬜ not started · ⛔ out of scope (unlikel
 | **Log & exponential** | 🟡 | exp ln log10 | `log(z, b)` two-arg base |
 | **Piecewise / conditional** | 🟡 | `if` (inline + block) | `sign`/`signum`, `Φ` Heaviside, `δ` Kronecker, `ε` Levi-Civita, `until` |
 | **Truncation & round-off** | 🟡 | ceil floor round | `trunc`, `Ceil/Floor/Round/Trunc(x, y)` (round-to-multiple), `mantissa` |
-| **Vector & matrix** | ✅ | the full list above (see `references/matrices.mcdx`) | `lookup` `match` `vlookup` `hlookup` (table search) |
+| **Vector & matrix** | ✅ | the full list above (see `references/matrices.mcdx`), plus the table searches `match` `lookup` `vlookup` `hlookup` `vhlookup` (see `references/stack_augment_lookup.mcdx`) | — |
 | **Solving & optimization** | 🟡 | `find` (numeric), `solve` (symbolic), `lsolve` (linear systems) | `root`, `polyroots`, `minerr`, `maximize` `minimize`, `Isolve` |
 | **Interpolation & prediction** | 🟡 | `linterp` | `cspline`/`pspline`/`lspline` + `interp`, `bicubic`/`bilinear`, `predict`, `sinterp` |
 | **Statistics** | 🟡 | `mean` | `median` `mode` `var` `Var` `stdev` `Stdev` `gmean` `hmean` `corr` `cvar` `kurt` `skew` `hist`/`histogram` |
@@ -104,26 +104,20 @@ Legend: ✅ done · 🟡 partial · ⬜ not started · ⛔ out of scope (unlikel
 
 Ranked by expected payoff × frequency in the kind of sheets this repo converts, and roughly by effort.
 
-1. **Table search** — `lookup`, `match`, `vlookup`, `hlookup`. The one part of the vector/matrix
-   category `references/matrices.mcdx` doesn't exercise; thin NumPy wraps, but each needs its
-   Mathcad-specific "not found" behaviour pinned by a sample. *(The rest of that item — `rows`,
-   `cols`, `last`, `identity`, `diag`, `stack`, `submatrix`, `sort`/`reverse` — is **done**, together
-   with `lsolve`, the norms/conditions, and the eigen family. Note `ones` is **not** a Prime builtin:
-   `RC_col.mcdx` defines its own, which is why the generated code calls one.)*
-2. **Statistics basics** — `median`, `var`/`Var`, `stdev`/`Stdev`, `hist` (`mean` is done with the
+1. **Statistics basics** — `median`, `var`/`Var`, `stdev`/`Stdev`, `hist` (`mean` is done with the
    matrix batch). Simple NumPy wraps; watch the population-vs-sample `var` vs `Var` distinction
    (lowercase = population, capital = sample).
-3. **Cubic-spline interpolation** — `cspline`/`lspline`/`pspline` + `interp`, extending the existing
+2. **Cubic-spline interpolation** — `cspline`/`lspline`/`pspline` + `interp`, extending the existing
    `linterp`. Maps onto `scipy.interpolate`. Common for material curves.
-4. **More solving** — `root` (scalar) and `polyroots`, then `minerr`/`maximize`/`minimize` (extend the
+3. **More solving** — `root` (scalar) and `polyroots`, then `minerr`/`maximize`/`minimize` (extend the
    `solve_block` machinery: `minerr` = least-squares residual, the optimizers = `scipy.optimize`).
-5. **Complex-number accessors** — `Re`, `Im`, `arg`, conjugate. Trivial; occasionally needed.
-6. **`mod`, `gcd`, `lcm`** — trivial, high-completeness-per-line. *(The trig and hyperbolic families
+4. **Complex-number accessors** — `Re`, `Im`, `arg`, conjugate. Trivial; occasionally needed.
+5. **`mod`, `gcd`, `lcm`** — trivial, high-completeness-per-line. *(The trig and hyperbolic families
    that used to head this item are done — see `references/trig.mcdx` / `references/hyperbolic.mcdx`.)*
-7. **Special functions** — `erf`/`erfc`, `Γ` — thin `scipy.special` wraps; occasional.
-8. **Differential equations** (`odesolve`, `rkfixed`, …) — a larger effort (a solve-block-like block
+6. **Special functions** — `erf`/`erfc`, `Γ` — thin `scipy.special` wraps; occasional.
+7. **Differential equations** (`odesolve`, `rkfixed`, …) — a larger effort (a solve-block-like block
    construct over `scipy.integrate.solve_ivp`). Do only when a sample needs it.
-9. **Fourier** (`fft`/`ifft`) — low priority for structural work; `scipy.fft` wraps if needed.
+8. **Fourier** (`fft`/`ifft`) — low priority for structural work; `scipy.fft` wraps if needed.
 
 Explicitly **not** planned: finance, image processing, file I/O, wavelets/signal — out of scope for a
 structural worksheet converter.
@@ -131,6 +125,10 @@ structural worksheet converter.
 ### Known behavioral gaps (already noted elsewhere, repeated here for the checklist)
 
 - `find` solve blocks work; `minerr`/`maximize`/`minimize` do **not** yet.
+- `ones` is **not** a Prime builtin — `RC_col.mcdx` defines its own, which is why the generated code
+  calls one. Don't add it to `mapping.py`.
+- A **row** vector (`1 × N`) is a matrix, a **column** vector (`N × 1`) a 1-D array; `transpose` moves
+  between them. See the schema notes — conflating the two silently misplaces `stack`/`augment` headers.
 - `TOL`/`CTOL` from `calculation.xml` aren't consumed — solve uses `fsolve` defaults.
 - A *branching* program applied to an array still relies on `elementwise`/`sample`; a raw
   `np.vectorize(fn)` path for the general case isn't wired.
