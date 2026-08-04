@@ -190,7 +190,75 @@ in a private `_domain_x` and doesn't leak into the module namespace, and — on 
 — the cases where a domain must *not* be invented (a parametric plot of two defined vectors, two free
 names, an already-defined scalar or range) versus the ones where it must (a definition sitting *below*
 the plot, out of scope; `π` in the expression, which is an identifier in the IR and would otherwise
-count as a second free name).
+count as a second free name). Plus that -10..10 is only the *default*: author-set x-axis limits
+(`<xyDomain>`'s start/end values, as opposed to the auto-scaled `start`/`end` attributes) become the
+sampled interval instead — pinned end-to-end by `incomplete_ifs.mcdx`'s -7..1.
+
+[tests/test_incomplete_ifs.py](tests/test_incomplete_ifs.py) covers `references/incomplete_ifs.mcdx`:
+a **blank line inside a program** (a bare `<ml:placeholder/>` body child) is ignored rather than parsed
+as a statement — it used to emit `return None` mid-function and make every branch below it unreachable,
+so the sheet's `σ_cI` piecewise curve returned `None` for its second branch instead of the cached
+-30 MPa. It runs the sheet and matches the cache, asserts all six branches below the blank survive, and
+— on synthetic program XML — pins the placements the fixture doesn't show (leading/trailing/inside a
+`then`, where a trailing blank must *not* flip a one-line ternary into a `def`). Also documents the
+divergence the sheet is named for: for an argument matching no branch, Mathcad caches an `engineError`
+("This program has no return value") where we return `None`. Its **plot** covers what that means for a
+trace: drawn over a domain running past the last branch, Mathcad caches a literal `NaN` per undefined
+point and draws a gap, so `sample` fills `None` with a unit-carrying NaN (feeding `None` into
+`plot_axis` used to raise). The trace is checked point-for-point against the cache including the NaN
+mask, and the plot pins the other half of the implicit-domain rule — author-set x-axis limits (-7..1)
+replace Mathcad's default -10..10.
+
+[tests/test_mixed_plot_traces.py](tests/test_mixed_plot_traces.py) covers
+`references/mixed_plot_traces.mcdx`: one plot carrying **both** a parametric trace (two data vectors)
+and a function trace (`sin(t)` over a plotting range). Each kind worked alone, but mixed they didn't —
+the plot's single domain was applied to every trace, so the parametric one became
+`sample(lambda t: v, t)` and `plot_axis` raised on the nested array. Sampling is now decided per axis
+expression, on whether it references the domain. The test asserts both traces against Mathcad's cached
+`TraceType="Vector"` (3 points) and `"Range"` (101) — the differing lengths being exactly what one
+shared domain can't express — plus `static_axis`'s vector/scalar split (a scalar is a *reference line*
+and still spans the domain) and, on synthetic XML, that a purely parametric and a purely function plot
+are both emitted unchanged.
+
+[tests/test_auto_labels.py](tests/test_auto_labels.py) covers `labels="*"` — the **auto-labelled**
+identifiers a worksheet Prime converted from a legacy `.xmcd` is full of (Mathcad 15's schema didn't
+record whether a name was a unit, so the converter leaves it uncommitted). Purely synthetic XML, no
+fixture. It pins that `*` is read as a unit *only* in slots that are a unit by definition (a display
+override, a plot axis unit), including inside a compound `kN·m`, and that the three things that must
+not move don't: a numeric scale override still divides, an explicit `labels="VARIABLE"` in a unit slot
+stays a variable, and an auto-labelled name *outside* such a slot stays a variable (a converted sheet
+auto-labels its loop index `i` — a name-based rule would emit `ureg.i`).
+
+[tests/test_implied_index0_unit.py](tests/test_implied_index0_unit.py) covers
+`references/implied_index0_unit.mcdx`: a program vector whose loop runs `i := 1 .. 10`, so Mathcad
+auto-grows `z` and **zero-fills the untouched index 0**. Its cache is an `11×1` matrix carrying one
+unit (metre) including the gap — `0` is `0` in any unit — where we left the gap a bare `0`, so the
+array never fused out of `dtype=object`. Two compounding faults, both runtime-side (the emitted source
+was already right): the unfused array is *dimensionless* to Pint, so a later `z / m` read `1/meter`
+and the sheet it came from died with a `DimensionalityError` regions downstream of the mistake; and
+`stack` returned `n×1` rather than the 1-D form column vectors use here, so the single-subscript echo
+`z[0] =` read a one-row slice (`[0.0] / millimeter`) instead of the cached `0`. Both echoes are matched
+to the cache, plus direct tests of `_consolidate`'s absorb-zero-only rule (a **nonzero** plain entry
+mixed with dimensioned ones — RC_col's `[1; −l/2; −w/2]` — must still block fusing, as must
+incompatible units), `vec_set`'s gap in 1-D and 2-D, and that `stack` keeps 2-D when a block is
+genuinely wider.
+
+[tests/test_stack_augment_lookup.py](tests/test_stack_augment_lookup.py) covers
+`references/stack_augment_lookup.mcdx`: **row vs. column vectors** and the **table-search family**.
+We emitted any literal with a dimension of 1 as `col(...)` (1-D), so a `1×3` header literal came back
+a *column* and `stack(("A" "B" "C"), s)` wrote the labels down column 0 instead of across row 0 — every
+later `matelem` then read a label where a number belonged. The sheet's cache states the distinction
+itself: `match` on the `3×1` `V` returns the bare index `2`, on the `1×3` `R` the *pair* `[0; 2]` —
+index pairs are what a matrix has. So `cols == 1` is the column vector (1-D) and `1×N` a genuine 2-D
+matrix; `transpose` moves between the two (Mathcad's usual way of typing a column vector is a
+transposed row literal `(a b c)ᵀ`, which must come back 1-D — NumPy's 1-D transpose is the identity, so
+this can't lean on it). `augment` also had to stop flattening its arguments, so a *matrix* block keeps
+its columns. All 15 echoes are matched to the cache, plus the labelled-table shapes
+(header row / header column / both), `transpose`'s round trip, and `augment`/`stack` on matrix and
+scalar blocks. The searches all return a **vector** even for one hit (the cache holds `1×1` matrices,
+not scalars), scan a matrix **column-major** (`match(3, s)` → `[1;1]` before `[0;2]`), raise when the
+value is absent, and compare mixed string/number cells without raising. Region 0's cached `4×1` is a
+documented **stale leftover** (a plain define with nothing to echo, so Mathcad never refreshed it).
 
 [tools/strip_mcdx_metadata.py](tools/strip_mcdx_metadata.py) removes the authoring metadata a
 `.mcdx` carries in parts you never see in Prime (`docProps/core.xml`'s `creator`/`lastModifiedBy`,
@@ -224,8 +292,8 @@ outline) now render correctly — a sampling domain is only inferred when an axi
 the schema note) — and an xy plot whose variable is never *defined* gets Mathcad's invented -10..10
 domain (also a schema note). The **trig and hyperbolic families are complete** (including `sec`/`csc`/`sinc`,
 `atan2`/`angle`, and all six inverse hyperbolics), with `acot`'s Maple/MuPAD `(0, π)` branch confirmed
-against a cached negative argument (see the schema note). The **vector & matrix family is complete**
-too, bar the table-search functions (`lookup`/`match`/`vlookup`/`hlookup`) — and with it come the
+against a cached negative argument (see the schema note). The **vector & matrix family is complete**,
+the **table searches** (`match`/`lookup`/`vlookup`/`hlookup`/`vhlookup`) included — and with it come the
 two-subscript read/write forms and the `·`-disambiguating shape pass. Two things there are *not*
 byte-reproducible and shouldn't be treated as bugs: LAPACK's **eigenvalue ordering** differs from
 Mathcad's for nonsymmetric matrices and for `genvals` (the multisets agree), and **eigenvector signs**

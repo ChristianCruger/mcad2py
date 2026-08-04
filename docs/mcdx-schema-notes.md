@@ -239,6 +239,33 @@ read this file when parsing a new schema construct or debugging a parser edge ca
   `X = vec_set(X, i, v)` (codegen pre-declares `X = None`). `vec_set` grows an object array and
   **consolidates** it back to a fused Pint array once homogeneous (so downstream `kx * X` broadcasts).
   A `<ml:sequence>` index `Ans[j, 0]` = a 2-D element (`ir.Index2D`) → `vec_set(Ans, (j, 0), v)`.
+  A **zero-fill gap counts as homogeneous**: `0` is `0` in any unit, so a loop running `i = 1 .. n`
+  still consolidates despite the bare `0` left at index 0 (Mathcad caches such a vector with one unit
+  for the whole matrix — see `references/implied_index0_unit.mcdx`). Absorbing it matters far
+  downstream: an unfused `dtype=object` vector is *dimensionless* to Pint, so a later `z / m` reads as
+  `1/meter` and the sheet dies with a `DimensionalityError` regions away from the actual cause. The
+  rule is **zero only** — a nonzero plain entry mixed with dimensioned ones is genuinely dimensionless
+  (RC_col's `[1; −l/2; −w/2]` constant column) and must keep its own per-element type, exactly as
+  `_build_array` treats a matrix literal.
+- **A column vector is 1-D; a row vector is a matrix.** `<ml:matrix rows="N" cols="1">` → `col(…)`, a
+  1-D array — a single subscript `z[0]` must read the *element*, where an `n × 1` shape would hand back
+  a one-row slice (`[0.0]`). But `<ml:matrix rows="1" cols="N">` is a genuine `1 × N` and emits
+  `matrix(1, N, …)`. Mathcad says so itself: `match` on a `3 × 1` column returns a bare index, on a
+  `1 × 3` row an index **pair** — and only a matrix has `(row, col)` positions. Collapsing both to 1-D
+  loses the orientation `stack`/`augment` need, so a header literal `("A" "B" "C")` landed down
+  column 0 instead of across row 0 (`references/stack_augment_lookup.mcdx`).
+  `transpose` moves between the two forms, which it must do explicitly — NumPy's transpose of a 1-D
+  array is itself, and Mathcad's usual way of *typing* a column vector is the transposed row literal
+  `(a b c)ᵀ` (see `shrinkage.mcdx`, `RC_col.mcdx`), which has to come back 1-D.
+- **`stack`/`augment` take blocks, not just vectors** — matrices join edge to edge (a scalar counts as
+  `1 × 1`), which is how a labelled table is built: `stack(("A" "B" "C"), s)` captions the columns,
+  `augment(("X" "Y" "Z")ᵀ, s)` the rows, and both together give the `vhlookup` shape.
+- **Table search** — `match(z, A)` returns the positions of `z` in `A` (scalar indices for a vector,
+  `(row, col)` pairs for a matrix), `lookup(z, A, B)` the elements of a parallel `B` at those
+  positions, `vlookup(z, A, c)`/`hlookup(z, A, r)` search `A`'s first column/row and read out
+  column `c`/row `r`, and `vhlookup(z_v, z_h, A)` reads the intersection. All five return a **vector**
+  even for a single hit (Mathcad caches a `1 × 1` matrix, not a scalar); a matrix is scanned
+  **column-major**; a value that isn't there is an error, not an empty result.
 - **`max`/`min` are reductions**, always: Mathcad flattens *all* arguments (scalars and vectors) and
   returns the single min/max — `mc_max`/`mc_min` (equivalent to `np.min`/`np.max` over the flattened
   args, unit-aware). There is no element-wise `np.minimum`/`np.maximum`; element-wise behaviour comes
@@ -451,6 +478,16 @@ extents). The interval is read off the cached `<ml:Trace2dResult>` instead:
   `x/2` on the x axis against `cos(x)`; its cached `RangeInfo` is `Min="-5" Max="5"` and its y values
   are `cos(x)` for `x` over the *full* -10..10 (checked against `cos(x/2)`, which they are not). So
   the axis expression is just another function sampled over the domain — exactly like the y axis.
+- **-10..10 is the default, not the rule.** Setting the x-axis limits makes Mathcad sample the free
+  variable over *those* instead (still 499 points). The limits live in the axis's
+  `<xyDomain><startValue>/<endValue>` as full `<math>` expressions with their own `resultRef`s;
+  while the axis auto-scales they are `<ml:placeholder/>`. The `start`/`end` **attributes** are not
+  the setting — they hold the drawn window either way, computed from the data when auto-scaling, so
+  reading them back would be circular (`plotting-wo-var.mcdx`'s second trace draws -5..5 from a full
+  -10..10). `_parse_axis_limits` ([parser/regions.py](../mcad2py/parser/regions.py)) therefore reads
+  the `<xyDomain>` values and only when both are plain numbers (`incomplete_ifs.mcdx`: -7..1,
+  confirmed by its cached 499-point trace running -7..1). A limit that is an arbitrary expression
+  falls back to the default — no sample pins what Mathcad does there.
 - **Inference** is a post-parse pass, `_infer_implicit_plot_domains`
   ([parser/regions.py](../mcad2py/parser/regions.py)), because it needs to know which names the sheet
   ever defines. Walking the regions in order, a `Plot` with no range-typed domain whose axis
@@ -466,3 +503,84 @@ extents). The interval is read off the cached `<ml:Trace2dResult>` instead:
 - The legend names the **y** expression whenever the domain is implicit. The usual rule ("whichever
   axis isn't the domain") doesn't decide the `x/2` vs `cos(x)` trace, where *neither* axis is the bare
   variable.
+
+## Mixed trace kinds on one plot (`mixed_plot_traces.mcdx`)
+
+An `<xyPlot>`'s traces need not all be the same kind. A **parametric** trace has data vectors on
+both axes (a section outline); a **function** trace has the plotting range on one axis and a
+function of it on the other. Mathcad records which is which in the cached result — `TraceType`
+is `"Vector"` vs `"Range"` — and, decisively, **their lengths differ**: the fixture caches a
+3-point `Vector` trace beside a 101-point `Range` one.
+
+Nothing in `<plotEquations>` marks the difference; both are ordinary expression `<math>`s. So the
+kind has to be inferred, per trace, from whether the axis expression **references the plotting
+variable**. `_detect_domain` finds one domain for the whole plot (the first bare-`Name` axis that is
+a range), which is right for the plot but wrong per trace: applying it everywhere emitted
+`sample(lambda t: v, t)` for the parametric trace, evaluating a constant vector once per domain point
+into a nested object array that `plot_axis` can't flatten.
+
+`_plot_axis_call` ([emit/codegen.py](../mcad2py/emit/codegen.py)) now samples only expressions that
+actually mention the domain. A domain-independent expression is emitted through `static_axis`, which
+settles the one case codegen can't: a **vector** is a parametric trace and keeps its own length,
+while a **scalar** is a reference line and is broadcast across the domain (which is what `sample`
+incidentally did for it before — the only part of the old behaviour worth keeping).
+
+## Auto-labelled identifiers (`labels="*"`) — worksheets converted from `.xmcd`
+
+An `<ml:id>` normally declares its role: `labels="UNIT"`, `"VARIABLE"`, `"FUNCTION"`, `"CONSTANT"`.
+A worksheet **Prime converted from a legacy Mathcad 15 `.xmcd`** carries `labels="*"` on a large
+share of them instead — Mathcad 15's `math30` schema didn't record the distinction, so the converter
+leaves the name uncommitted and resolves it from context at evaluation time. One real converted sheet:
+1522 `VARIABLE`, 134 `UNIT`, **125 `*`**, 81 `FUNCTION`, 8 `CONSTANT`.
+
+`_parse_id` maps only `labels="UNIT"` to `ir.UnitRef`, so an auto-labelled `MPa` became a plain
+`Name` and the echo emitted `x / (MPa)` — a `NameError` against a name nothing defines — instead of
+`disp(x, ureg.MPa)`.
+
+**Resolve by slot, never by name.** In the same sheet, the 114 auto-labelled ids inside
+`<ml:unitOverride>` are all units (`mm`, `MPa`, `kN`, `GPa`, `m`) while the 11 outside it are all the
+loop index `i` — auto-labelled at its *use* even though the enclosing `<ml:for>` declares it
+`labels="VARIABLE"`. So a name-based rule ("is it a known unit?") would turn `i` into `ureg.i`, and
+would break any sheet with a variable called `m`. `as_units()`
+([parser/expressions.py](../mcad2py/parser/expressions.py)) instead reinterprets `*` **only** in slots
+that are a unit by definition — the display override and a plot axis's/`plot3D`'s unit `<math>` —
+recursing through compound units (`kN·m` is a `<mult>` of two ids). An explicit `labels="VARIABLE"`
+there is left alone: a variable used as a display scale is legal and already divides correctly.
+
+Not yet handled: an auto-labelled unit in a *value* expression (`f_ck := 30 MPa` written with `*`).
+The converted sheet inspected labels those `UNIT`, so no sample forces the issue; resolving it would
+need the sheet-wide defined-name set to tell a unit from a variable that shadows one.
+
+## Blank lines and uncovered cases in programs (`incomplete_ifs.mcdx`)
+
+- **A blank line in a program is a bare `<ml:placeholder/>`** child of `<ml:program>` — the same tag
+  as an empty slot anywhere else, with no marker distinguishing "empty line" from "empty operand":
+
+  ```xml
+  <ml:program>
+    <ml:if>…</ml:if>
+    <ml:placeholder />   <!-- a blank line the author left in the middle -->
+    <ml:if>…</ml:if>
+  ```
+
+  Mathcad ignores it, so `_program_lines()` ([parser/expressions.py](../mcad2py/parser/expressions.py))
+  filters it out before anything else looks at the body. This **must not** be parsed as a statement:
+  a bare expression line is an *implicit return*, so a blank one emitted `return None` mid-function and
+  made every branch below it unreachable. Filtering happens *before* the "more than one line" test that
+  decides value-`Program` (ternary) vs. imperative `ProgramBlock` (`def`) too, so a lone trailing blank
+  can't flip a one-line `σ := if …` into a function definition. Blanks are stripped in the same way
+  inside a `<ml:then>`/`<ml:else>` body, where the first line is the branch's value.
+- **A program need not cover every case.** Mathcad accepts `if`-chains with no `else`; the sheet only
+  errors if an argument actually reaches the end — `This program has no return value. You must account
+  for all cases when using conditional statements in a Mathcad program.`, cached as an
+  `<engineErrors><engineError>` in place of that region's `<ml:result>`. Our `def` just falls off the
+  end and returns `None`, so the *reachable* calls (the point of such a sheet) match Mathcad and only
+  the erroring one diverges. Worth knowing when reading a cached `result.xml`: a region with no result
+  isn't necessarily one Mathcad didn't evaluate.
+- **Plotting one draws a gap, not an error.** Where such a program has no branch, the cached trace
+  holds a literal **`NaN`** (`[…,-0.3162650602409639,NaN,NaN,…]` — note `json.loads` won't parse that
+  vector, though `float()` will). So `sample` ([runtime.py](../mcad2py/runtime.py)) maps a `None`
+  sample to NaN, and matplotlib breaks the line exactly where Mathcad does. The NaN takes the
+  **unit** of the points that are defined, without which the column stays a mixed `object` array and
+  `plot_axis`'s `data / unit` raises. Only `None` is filled — a point that *raises* is left to
+  propagate, since swallowing exceptions here would turn a conversion bug into a silently empty plot.

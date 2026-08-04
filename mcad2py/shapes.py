@@ -61,6 +61,12 @@ _CALL_KINDS = {
     "lsolve": VECTOR,
     "cross": VECTOR,
     "matrow": VECTOR,
+    # The table searches all return a *vector* of results, even for one hit.
+    "match": VECTOR,
+    "lookup": VECTOR,
+    "vlookup": VECTOR,
+    "hlookup": VECTOR,
+    "vhlookup": VECTOR,
     # -> scalar
     "rows": SCALAR,
     "cols": SCALAR,

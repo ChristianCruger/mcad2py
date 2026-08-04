@@ -89,7 +89,7 @@ def _emit(node: ir.Expr) -> tuple[str, int]:
 
     if isinstance(node, ir.MatrixLiteral):
         elems = ", ".join(expr_to_str(e) for e in node.elements)
-        if node.rows <= 1 or node.cols <= 1:  # vector -> 1-D array
+        if node.cols <= 1:  # vector -> 1-D array
             return f"col({elems})", _ATOM
         return f"matrix({node.rows}, {node.cols}, {elems})", _ATOM
 
@@ -667,15 +667,33 @@ def _plot_axis_call(
     expr: ir.Expr, unit: ir.Expr | None, domain: str | None, domain_var: str
 ) -> str:
     """``plot_axis(<data>, <unit>)`` where data is the domain array directly or
-    the expression sampled element-wise over the domain."""
+    the expression sampled element-wise over the domain.
+
+    An expression that never mentions the domain variable is **not** a function
+    of it, so it isn't sampled: one plot may carry both a parametric trace (two
+    data vectors, cached ``TraceType="Vector"``) and a function trace (cached
+    ``TraceType="Range"``), and the parametric one keeps its own length rather
+    than being evaluated once per domain point. ``static_axis`` settles the one
+    ambiguous case at runtime -- a *scalar* that ignores the domain is a
+    reference line and does span it.
+    """
     if _is_domain(expr, domain):
         data = domain_var
     elif domain is None:
         data = expr_to_str(expr)
+    elif not _references(expr, domain):
+        data = f"static_axis({expr_to_str(expr)}, {domain_var})"
     else:
         data = f"sample(lambda {domain}: {expr_to_str(expr)}, {domain_var})"
     unit_s = expr_to_str(unit) if unit is not None else "None"
     return f"plot_axis({data}, {unit_s})"
+
+
+def _references(expr: ir.Expr, name: str) -> bool:
+    """True if ``expr`` reads the variable ``name`` anywhere inside it."""
+    return any(
+        isinstance(sub, ir.Name) and sub.py == name for sub in _walk(expr)
+    )
 
 
 def _axis_label(region: ir.Plot, *, axis: str) -> str:
@@ -779,7 +797,8 @@ def header_lines(ws: ir.Worksheet) -> list[str]:
             "col", "matrix", "arange", "index_build", "index_build_2d",
             "vectorize", "transpose", "matmul", "matcol", "total", "vec_set",
             "unpack", "integral", "double_integral", "summation", "solve_block",
-            "sample", "plot_domain", "plot_axis", "mesh_grid", "resolve_plot_grid",
+            "sample", "static_axis", "plot_domain", "plot_axis", "mesh_grid",
+            "resolve_plot_grid",
         ]
         seen: set[str] = set()
         names = ", ".join(
@@ -845,6 +864,13 @@ def _used_runtime(ws: ir.Worksheet) -> set[str]:
             found.update(("sample", "plot_axis"))
             if region.implicit_domain is not None:
                 found.add("plot_domain")
+            if region.domain and any(
+                not _is_domain(e, region.domain)
+                and not _references(e, region.domain)
+                for t in region.traces
+                for e in (t.x, t.y)
+            ):
+                found.add("static_axis")
         if isinstance(region, ir.GridPlot):
             found.update(("resolve_plot_grid", "plot_axis"))
             if region.mesh_names is not None:
@@ -857,7 +883,7 @@ def _used_runtime(ws: ir.Worksheet) -> set[str]:
                 if isinstance(sub, ir.Call) and FUNCTIONS.get(sub.func, sub.func) in RUNTIME_IMPORTS:
                     found.add(FUNCTIONS.get(sub.func, sub.func))
                 elif isinstance(sub, ir.MatrixLiteral):
-                    found.add("col" if sub.rows <= 1 or sub.cols <= 1 else "matrix")
+                    found.add("col" if sub.cols <= 1 else "matrix")
                 elif isinstance(sub, ir.Range):
                     found.add("arange")
                 elif isinstance(sub, ir.Vectorize):
