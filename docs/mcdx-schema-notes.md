@@ -239,6 +239,17 @@ read this file when parsing a new schema construct or debugging a parser edge ca
   `X = vec_set(X, i, v)` (codegen pre-declares `X = None`). `vec_set` grows an object array and
   **consolidates** it back to a fused Pint array once homogeneous (so downstream `kx * X` broadcasts).
   A `<ml:sequence>` index `Ans[j, 0]` = a 2-D element (`ir.Index2D`) → `vec_set(Ans, (j, 0), v)`.
+  A **zero-fill gap counts as homogeneous**: `0` is `0` in any unit, so a loop running `i = 1 .. n`
+  still consolidates despite the bare `0` left at index 0 (Mathcad caches such a vector with one unit
+  for the whole matrix — see `references/implied_index0_unit.mcdx`). Absorbing it matters far
+  downstream: an unfused `dtype=object` vector is *dimensionless* to Pint, so a later `z / m` reads as
+  `1/meter` and the sheet dies with a `DimensionalityError` regions away from the actual cause. The
+  rule is **zero only** — a nonzero plain entry mixed with dimensioned ones is genuinely dimensionless
+  (RC_col's `[1; −l/2; −w/2]` constant column) and must keep its own per-element type, exactly as
+  `_build_array` treats a matrix literal.
+- **A column vector is 1-D.** `col()` and `stack()` of single-column blocks return a 1-D array, not
+  `n × 1` — a single subscript `z[0]` must read the *element*, where an `n × 1` shape would hand back a
+  one-row slice (`[0.0]`). `stack` only keeps a 2-D result when a block is genuinely wider.
 - **`max`/`min` are reductions**, always: Mathcad flattens *all* arguments (scalars and vectors) and
   returns the single min/max — `mc_max`/`mc_min` (equivalent to `np.min`/`np.max` over the flattened
   args, unit-aware). There is no element-wise `np.minimum`/`np.maximum`; element-wise behaviour comes

@@ -435,6 +435,20 @@ def _as_int(x):
     return int(getattr(x, "magnitude", x))
 
 
+def _is_plain_zero(x):
+    """True for a bare (unitless) numeric zero -- a zero-fill gap.
+
+    ``0`` is ``0`` in any unit, so such an entry is unit-agnostic and must not
+    stop a vector fusing into a single dimensioned array.
+    """
+    if hasattr(x, "units") or _is_arraylike(x) or isinstance(x, str):
+        return False
+    try:
+        return x == 0
+    except Exception:
+        return False
+
+
 def _grow_1d(vec, n):
     if vec is None:
         out = np.empty(n, dtype=object)
@@ -484,17 +498,27 @@ def _consolidate(vec):
     When every element is a Pint scalar of one unit, return a fused Pint array
     (so ``kx * X`` and the like broadcast correctly instead of Pint mis-wrapping
     an object array); when every element is a plain number, a float array; a
-    heterogeneous/gappy array (mixed units, zero-fill gaps, nested sub-vectors)
-    stays as-is.
+    genuinely heterogeneous array (mixed units, nested sub-vectors) stays as-is.
+
+    A **zero-fill gap** does not make an array heterogeneous: a Mathcad program
+    that writes ``z[i] :=`` from ``i = 1`` leaves a bare ``0`` at index 0, and
+    ``0`` is ``0`` in any unit. Those entries are absorbed into the prevailing
+    unit -- the same rule ``_build_array`` applies to a literal ``[[w,0],[0,l]]``.
+    Left unabsorbed the array stays ``dtype=object``, and any later ``z / m``
+    then reads as ``1/meter`` instead of dimensionless.
     """
     flat = list(vec.reshape(-1))
     if not flat:
         return vec
-    if all(hasattr(x, "units") for x in flat):
-        reg = flat[0]._REGISTRY
-        unit = flat[0].units
+    united = [x for x in flat if hasattr(x, "units")]
+    if united and all(hasattr(x, "units") or _is_plain_zero(x) for x in flat):
+        reg = united[0]._REGISTRY
+        unit = united[0].units
         try:
-            mags = [float(x.to(unit).magnitude) for x in flat]
+            mags = [
+                float(x.to(unit).magnitude) if hasattr(x, "units") else float(x)
+                for x in flat
+            ]
         except Exception:
             return vec
         return reg.Quantity(np.array(mags).reshape(vec.shape), unit)
@@ -584,8 +608,17 @@ def stack(*blocks):
     The vertical counterpart of :func:`augment`. Every block must have the same
     number of columns (a 1-D vector counts as one column); the result is an
     object array of per-element values so blocks with different units survive.
+
+    Stacking column vectors gives a column vector, which this module represents
+    **1-D** (as :func:`col` does), not as an ``n x 1`` matrix -- so that a single
+    subscript ``z[0]`` reads the element rather than a one-row slice.
+
+    A **scalar** block counts as ``1 x 1``: ``stack("α", v)`` -- Mathcad's idiom
+    for captioning a data column with a string header -- is a scalar above a
+    vector, and a 0-d block would otherwise have no ``shape[1]`` at all.
     """
     parts = [_to_object_matrix(b) for b in blocks]
+    parts = [p.reshape(1, 1) if p.ndim == 0 else p for p in parts]
     parts = [p.reshape(-1, 1) if p.ndim == 1 else p for p in parts]
     ncols = max((p.shape[1] for p in parts), default=0)
     nrows = sum(p.shape[0] for p in parts)
@@ -595,6 +628,8 @@ def stack(*blocks):
     for p in parts:
         out[r : r + p.shape[0], : p.shape[1]] = p
         r += p.shape[0]
+    if ncols == 1:
+        out = out.reshape(-1)
     return _consolidate(out)
 
 

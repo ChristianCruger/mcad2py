@@ -229,6 +229,20 @@ not move don't: a numeric scale override still divides, an explicit `labels="VAR
 stays a variable, and an auto-labelled name *outside* such a slot stays a variable (a converted sheet
 auto-labels its loop index `i` — a name-based rule would emit `ureg.i`).
 
+[tests/test_implied_index0_unit.py](tests/test_implied_index0_unit.py) covers
+`references/implied_index0_unit.mcdx`: a program vector whose loop runs `i := 1 .. 10`, so Mathcad
+auto-grows `z` and **zero-fills the untouched index 0**. Its cache is an `11×1` matrix carrying one
+unit (metre) including the gap — `0` is `0` in any unit — where we left the gap a bare `0`, so the
+array never fused out of `dtype=object`. Two compounding faults, both runtime-side (the emitted source
+was already right): the unfused array is *dimensionless* to Pint, so a later `z / m` read `1/meter`
+and the sheet it came from died with a `DimensionalityError` regions downstream of the mistake; and
+`stack` returned `n×1` rather than the 1-D form column vectors use here, so the single-subscript echo
+`z[0] =` read a one-row slice (`[0.0] / millimeter`) instead of the cached `0`. Both echoes are matched
+to the cache, plus direct tests of `_consolidate`'s absorb-zero-only rule (a **nonzero** plain entry
+mixed with dimensioned ones — RC_col's `[1; −l/2; −w/2]` — must still block fusing, as must
+incompatible units), `vec_set`'s gap in 1-D and 2-D, and that `stack` keeps 2-D when a block is
+genuinely wider.
+
 [tools/strip_mcdx_metadata.py](tools/strip_mcdx_metadata.py) removes the authoring metadata a
 `.mcdx` carries in parts you never see in Prime (`docProps/core.xml`'s `creator`/`lastModifiedBy`,
 `docProps/app.xml`'s `Company`, and the printed header/footer). It rewrites only those parts —
