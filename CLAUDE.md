@@ -337,6 +337,22 @@ instead of the default self-contained base64 embed. Only meaningful for file out
 stdout); keep embedding as the default since it stays portable. Wanted mainly to keep git diffs
 clean when generated notebooks are committed.
 
+Nice-to-have: a **write path** into `mathcad/integration.xml` to tag a region as an Input/Output for
+MathcadPy automation when the sheet's author never used Prime's Input/Output panel — i.e. `--trace-source`
+reads these tags (see the Conventions bullet above), this would let Claude *add* one. Mechanically cheap:
+append `<region region-id="N" ioTagType="Input"><inputAliases><alias>NAME</alias></inputAliases></region>`
+to the part's `<regions>` (`Output`/`outputAliases` for the other direction) and rezip — confirmed via
+`references/io.mcdx` that `integration.xml` carries no checksum and isn't even referenced via an OPC
+relationship (Prime finds it by well-known path), so no other part needs to change. Two things a tool
+should check before writing: the target region should be a plain literal `ir.Define` (a formula region
+tagged Input would have automation overwrite the formula, not a value) and the new alias shouldn't collide
+with an existing one in the file. Unverified: whether Prime's automation engine honors a hand-inserted tag
+it didn't write itself, and whether it survives a later human re-save in Prime — no access to Prime/MathcadPy
+here to confirm round-trip fidelity. Shape: a small `tools/tag_mcdx_input.py` (mirroring
+`strip_mcdx_metadata.py`) doing the write, plus a skill layer that knows when to reach for it and applies
+the two checks above — not folded into the converter itself, since this is a write path into a proprietary
+format rather than `--trace-source`'s read-only annotation.
+
 ## Scope
 
 Prime `.mcdx` only (`worksheet50`/`math50`). Legacy `.xmcd` (Mathcad 15, `math30`) is a future
