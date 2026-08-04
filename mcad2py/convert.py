@@ -30,12 +30,17 @@ def convert_file(
     path: str | Path,
     *,
     fmt: str = "notebook",
+    trace_source: bool = False,
 ) -> str:
-    """Convert a ``.mcdx`` file to source. ``fmt`` is ``"notebook"`` or ``"py"``."""
+    """Convert a ``.mcdx`` file to source. ``fmt`` is ``"notebook"`` or ``"py"``.
+
+    ``trace_source`` annotates each generated statement with a back-reference
+    to its originating Mathcad worksheet region (see ``--trace-source``).
+    """
     pkg = load_mcdx(path)
     ws = convert_worksheet(pkg)
     if fmt == "py":
-        return to_python(ws)
+        return to_python(ws, trace_source=trace_source)
     if fmt == "notebook":
-        return to_ipynb_string(ws)
+        return to_ipynb_string(ws, trace_source=trace_source)
     raise ValueError(f"unknown format: {fmt!r} (expected 'notebook' or 'py')")

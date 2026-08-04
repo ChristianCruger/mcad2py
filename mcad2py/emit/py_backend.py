@@ -15,18 +15,29 @@ from .codegen import (
     multi_assign_lines,
     plot_lines,
     solve_block_lines,
+    source_comment,
     status_control_line,
     symbolic_eval_expr,
 )
 
 
-def to_python(ws: ir.Worksheet) -> str:
+def to_python(ws: ir.Worksheet, *, trace_source: bool = False) -> str:
     lines: list[str] = ['"""Auto-generated from a Mathcad worksheet by mcad2py."""']
     lines += header_lines(ws)
     lines.append("")
 
     for region in ws.regions:
-        lines += _render_region(region)
+        out = _render_region(region)
+        if trace_source and out:
+            comment = source_comment(region)
+            if comment is not None:
+                # Keep the leading blank separator (if any) ahead of the comment.
+                out = (
+                    [out[0], comment, *out[1:]]
+                    if out[0] == ""
+                    else [comment, *out]
+                )
+        lines += out
     return "\n".join(lines) + "\n"
 
 

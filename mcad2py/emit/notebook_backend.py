@@ -24,12 +24,13 @@ from .codegen import (
     multi_assign_lines,
     plot_lines,
     solve_block_lines,
+    source_comment,
     status_control_line,
     symbolic_eval_expr,
 )
 
 
-def to_notebook(ws: ir.Worksheet) -> nbformat.NotebookNode:
+def to_notebook(ws: ir.Worksheet, *, trace_source: bool = False) -> nbformat.NotebookNode:
     nb = nbformat.v4.new_notebook()
     cells: list[nbformat.NotebookNode] = [
         nbformat.v4.new_markdown_cell(
@@ -40,15 +41,20 @@ def to_notebook(ws: ir.Worksheet) -> nbformat.NotebookNode:
 
     for region in ws.regions:
         cell = _render_region(region)
-        if cell is not None:
-            cells.append(cell)
+        if cell is None:
+            continue
+        if trace_source and cell.cell_type == "code":
+            comment = source_comment(region)
+            if comment is not None:
+                cell.source = f"{comment}\n{cell.source}"
+        cells.append(cell)
 
     nb["cells"] = cells
     return nb
 
 
-def to_ipynb_string(ws: ir.Worksheet) -> str:
-    return nbformat.writes(to_notebook(ws))
+def to_ipynb_string(ws: ir.Worksheet, *, trace_source: bool = False) -> str:
+    return nbformat.writes(to_notebook(ws, trace_source=trace_source))
 
 
 def _render_region(region: ir.Region) -> nbformat.NotebookNode | None:

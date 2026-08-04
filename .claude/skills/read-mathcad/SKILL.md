@@ -37,6 +37,22 @@ python -m mcad2py.cli convert "<path/to/file.mcdx>"   # writes <file>.ipynb
 - `# TODO unsupported: ...` — a construct the converter doesn't translate yet
   (solve blocks, programs, plots, ranges, matrices). Note it; don't trust it as math.
 
+## Tracing back to the original file
+
+If you need to edit the worksheet itself (fix a bad formula, or set an input value via
+MathcadPy) rather than just read it, convert with `--trace-source`:
+
+```bash
+python -m mcad2py.cli convert "<path/to/file.mcdx>" -o - -f py --trace-source
+```
+
+Each statement is prefixed with `# mcdx region <id>` — that id is the `region-id`
+attribute on the matching `<region>` element in `mathcad/worksheet.xml` inside the
+`.mcdx` zip (unzip the file to find it). If the Python name was renamed from Mathcad's
+(Greek letters, subscripts), the same comment shows the original, e.g.
+`# mcdx region 12, "σ_c" -> sigma_c` — that's the name MathcadPy or Prime's UI actually
+knows the value by, not the sanitized Python identifier.
+
 ## Verifying numbers (optional)
 
 To confirm computed values, run the generated script — it executes with real Pint units:

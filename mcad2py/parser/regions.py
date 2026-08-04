@@ -54,10 +54,16 @@ def parse_worksheet(
     range_names: set[str] = set()
     for region in _ordered_regions(regions_elem):
         parsed = _parse_region(region, text_resolver, image_resolver, range_names)
+        region_id_attr = region.get("region-id")
+        try:
+            region_id = int(region_id_attr) if region_id_attr is not None else None
+        except ValueError:
+            region_id = None
         # A data table (<spec-table>) expands to one region per column.
         for item in parsed if isinstance(parsed, list) else [parsed]:
             if item is None:
                 continue
+            item.source_id = region_id
             if isinstance(item, ir.Define) and isinstance(item.value, ir.Range):
                 range_names.add(item.target.py)
             ws.regions.append(item)
