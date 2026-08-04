@@ -53,6 +53,15 @@ attribute on the matching `<region>` element in `mathcad/worksheet.xml` inside t
 `# mcdx region 12, "σ_c" -> sigma_c` — that's the name MathcadPy or Prime's UI actually
 knows the value by, not the sanitized Python identifier.
 
+If the author tagged regions with Prime's **Input/Output** panel (for MathcadPy's
+Application Automation), the comment also shows that region's automation **alias** —
+`# mcdx region 0, input alias "x"` / `# mcdx region 4, output alias "out"`. This alias
+is the literal name MathcadPy's Application Automation API sets/reads that region by —
+it's assigned separately from the Mathcad variable name and can differ from it (an
+un-named output defaults to something like `out`/`out_0`). Only regions the author
+explicitly flagged carry this; most don't. Check MathcadPy's own docs for the exact call
+to set/read a value by alias before using one.
+
 ## Verifying numbers (optional)
 
 To confirm computed values, run the generated script — it executes with real Pint units:

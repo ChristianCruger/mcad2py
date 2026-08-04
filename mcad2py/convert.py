@@ -23,6 +23,7 @@ def convert_worksheet(pkg: McdxPackage) -> ir.Worksheet:
         pkg.worksheet_xml,
         text_resolver=resolve_text,
         image_resolver=pkg.image,
+        integration_xml=pkg.integration_xml,
     )
 
 

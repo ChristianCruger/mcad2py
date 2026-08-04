@@ -17,6 +17,11 @@ MATH = "http://schemas.mathsoft.com/math50"
 UNITS = "http://schemas.mathsoft.com/units10"
 PROVENANCE = "http://schemas.mathsoft.com/provenance10"
 
+# mathcad/integration.xml -- Application Automation (MathcadPy) Input/Output
+# region tags. A sibling part to worksheet.xml, present (possibly empty) in
+# every .mcdx Prime writes.
+INTEGRATION = "http://schemas.ptc.com/integration10"
+
 # XAML (used inside <text> regions and subscripted identifiers).
 XAML = "http://schemas.microsoft.com/winfx/2006/xaml/presentation"
 

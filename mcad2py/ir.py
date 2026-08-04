@@ -338,6 +338,24 @@ class Unsupported(Expr):
 # ---------------------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class SourceRef:
+    """A region's origin in the Mathcad worksheet, for ``--trace-source``.
+
+    ``region_id`` is the originating ``<region>``'s ``region-id`` attribute in
+    ``worksheet.xml``. ``io_kind``/``io_alias`` are set when Prime's
+    Input/Output panel tagged the region for Application Automation
+    (MathcadPy): ``io_kind`` is ``"Input"`` or ``"Output"`` (from
+    ``mathcad/integration.xml``'s ``ioTagType``), and ``io_alias`` is the name
+    automation code addresses the region by -- which can differ from the
+    Mathcad variable name (e.g. an un-named output defaults to ``out``).
+    """
+
+    region_id: int
+    io_kind: str | None = None
+    io_alias: str | None = None
+
+
 class Region:
     """Base class for top-level worksheet regions (ordered by position)."""
 
@@ -353,7 +371,7 @@ class Define(Region):
     (``f(x) := ...``), in which case ``value`` is the body and the define emits
     a ``lambda``. ``comment`` is an optional note rendered as ``#`` lines above
     the assignment (used to document a scriptable control's cached value).
-    ``source_id`` is the originating ``<region>``'s ``region-id`` (see
+    ``source`` is the originating region's :class:`SourceRef` (see
     ``--trace-source``), or ``None`` if the sheet wasn't tagged.
     """
 
@@ -363,7 +381,7 @@ class Define(Region):
     display_unit: Expr | None = None
     params: list[str] = field(default_factory=list)
     comment: str | None = None
-    source_id: int | None = None
+    source: SourceRef | None = None
 
 
 @dataclass
@@ -372,7 +390,7 @@ class Evaluate(Region):
 
     value: Expr
     display_unit: Expr | None = None
-    source_id: int | None = None
+    source: SourceRef | None = None
 
 
 @dataclass
@@ -389,7 +407,7 @@ class StatusControl(Region):
 
     value: Expr
     message: str
-    source_id: int | None = None
+    source: SourceRef | None = None
 
 
 @dataclass
@@ -414,7 +432,7 @@ class IndexAssign(Region):
     evaluate: bool = False
     display_unit: Expr | None = None
     col_index: Name | None = None
-    source_id: int | None = None
+    source: SourceRef | None = None
 
 
 @dataclass
@@ -436,7 +454,7 @@ class MultiAssign(Region):
     evaluate: bool = False
     display_unit: Expr | None = None
     matrix_target: bool = False
-    source_id: int | None = None
+    source: SourceRef | None = None
 
 
 @dataclass
@@ -454,7 +472,7 @@ class ComboBoxAssign(Region):
     targets: list[Name]
     values: list[Expr]
     comment: str | None = None
-    source_id: int | None = None
+    source: SourceRef | None = None
 
 
 @dataclass
@@ -467,7 +485,7 @@ class SymbolDeclarations(Region):
     """
 
     names: list[str]
-    source_id: int | None = None
+    source: SourceRef | None = None
 
 
 @dataclass
@@ -475,7 +493,7 @@ class SymbolicEquation(Region):
     """A standalone symbolic equation shown as a step (assigned to nothing)."""
 
     equation: Equation
-    source_id: int | None = None
+    source: SourceRef | None = None
 
 
 @dataclass
@@ -492,7 +510,7 @@ class SymbolicEval(Region):
     command: str
     args: list[Expr] = field(default_factory=list)
     result: Expr | None = None
-    source_id: int | None = None
+    source: SourceRef | None = None
 
 
 @dataclass
@@ -517,7 +535,7 @@ class SolveBlock(Region):
     command: str = "find"
     display_unit: Expr | None = None
     params: list[str] = field(default_factory=list)
-    source_id: int | None = None
+    source: SourceRef | None = None
 
 
 @dataclass
@@ -556,7 +574,7 @@ class Plot(Region):
     domain: str | None = None
     implicit_domain: tuple[float, float, int] | None = None
     x_limits: tuple[float, float] | None = None
-    source_id: int | None = None
+    source: SourceRef | None = None
 
 
 @dataclass
@@ -582,7 +600,7 @@ class GridPlot(Region):
     z_unit: Expr | None = None
     mesh_names: tuple[str, str] | None = None
     threed: bool = False
-    source_id: int | None = None
+    source: SourceRef | None = None
 
 
 @dataclass
@@ -590,7 +608,7 @@ class TextRegion(Region):
     """A text/comment region."""
 
     text: str
-    source_id: int | None = None
+    source: SourceRef | None = None
 
 
 @dataclass
@@ -600,14 +618,14 @@ class ImageRegion(Region):
     data: bytes
     mime: str
     name: str = ""
-    source_id: int | None = None
+    source: SourceRef | None = None
 
 
 @dataclass
 class UnsupportedRegion(Region):
     note: str
     raw: str = ""
-    source_id: int | None = None
+    source: SourceRef | None = None
 
 
 # ---------------------------------------------------------------------------
