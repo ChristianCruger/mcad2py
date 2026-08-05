@@ -65,6 +65,11 @@ def parse_expr(elem: ET.Element) -> ir.Expr:
     if tag == "real":
         return ir.Number((elem.text or "0").strip())
 
+    if tag == "imag":
+        # ``<ml:imag symbol="i">1</ml:imag>`` -- a pure-imaginary literal; the
+        # magnitude plus a Python ``j`` suffix is already a valid complex literal.
+        return ir.Number((elem.text or "0").strip() + "j")
+
     if tag == "str":
         return ir.Str(elem.text or "")
 

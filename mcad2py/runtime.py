@@ -9,6 +9,7 @@ first. This keeps generated code clean (``tan(phi)`` instead of
 
 from __future__ import annotations
 
+import cmath
 import math
 from typing import NamedTuple
 
@@ -273,6 +274,40 @@ def power(base, exp):
     A dimensioned base keeps its (fractional) unit, as Pint intends.
     """
     return _reduce_dimensionless(base) ** exp
+
+
+def _is_negative_real(x):
+    return isinstance(x, (int, float)) and x < 0
+
+
+def ln(x):
+    """Mathcad ``ln``: natural log. A negative real returns a complex value
+    (``ln(-3) = ln(3) + iπ``) rather than raising -- only ``ln(0)`` is a
+    genuine Mathcad domain error, which ``math.log(0)`` also raises on.
+    """
+    if isinstance(x, complex) or _is_negative_real(x):
+        return cmath.log(x)
+    return math.log(x)
+
+
+def log(x, base=10):
+    """Mathcad ``log(x)`` (base 10 by default) / ``log(x, b)`` (explicit
+    base). Negative-argument behaviour matches :func:`ln`.
+    """
+    if isinstance(x, complex) or _is_negative_real(x):
+        return cmath.log(x, base)
+    if base == 10:
+        return math.log10(x)
+    return math.log(x, base)
+
+
+def ln0(x):
+    """Mathcad ``ln0(x)``: natural log, but ``ln0(0)`` returns a large negative
+    number (``-1e307``) instead of raising a domain error like plain ``ln``.
+    """
+    if x == 0:
+        return -1e307
+    return math.log(x)
 
 
 def _reduce_dimensionless(x):
@@ -1532,6 +1567,19 @@ def arange(start, stop, step):
     if lo.is_integer() and d.is_integer():
         return values.astype(int)
     return values
+
+
+def logspace(start, stop, n):
+    """Mathcad ``logspace(x1, x2, n)``: ``n`` points logarithmically spaced
+    between the *values* ``x1`` and ``x2`` (inclusive), unlike
+    ``numpy.logspace`` whose bounds are exponents.
+    """
+    n = int(n)
+    log_lo, log_hi = math.log10(start), math.log10(stop)
+    if n == 1:
+        return col(start)
+    step = (log_hi - log_lo) / (n - 1)
+    return col(*(10 ** (log_lo + i * step) for i in range(n)))
 
 
 def sample(func, xs):

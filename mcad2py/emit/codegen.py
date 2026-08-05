@@ -69,7 +69,13 @@ def _emit(node: ir.Expr) -> tuple[str, int]:
         # (``mc_min``/``mc_max``). Element-wise behaviour comes from the
         # vectorize *arrow* applying a function per element, not from min/max --
         # so there's no ``np.minimum``/``np.maximum`` here.
-        if node.func in ("min", "max"):
+        if node.role == "VARIABLE":
+            # Mathcad labels a call site VARIABLE (rather than FUNCTION) when
+            # the name resolves to a user definition rather than a builtin --
+            # including a *redefined* builtin name (``exp(x) := x + 2``), which
+            # must call the user's function, not ``math.exp``.
+            func = node.func
+        elif node.func in ("min", "max"):
             func = "mc_min" if node.func == "min" else "mc_max"
         else:
             func = FUNCTIONS.get(node.func, node.func)
@@ -852,7 +858,11 @@ def _uses_numpy(ws: ir.Worksheet) -> bool:
     for region in ws.regions:
         for node in _region_exprs(region):
             for sub in _walk(node):
-                if isinstance(sub, ir.Call) and FUNCTIONS.get(sub.func, "").startswith("np."):
+                if (
+                    isinstance(sub, ir.Call)
+                    and sub.role != "VARIABLE"
+                    and FUNCTIONS.get(sub.func, "").startswith("np.")
+                ):
                     return True
     return False
 
@@ -909,10 +919,14 @@ def _used_runtime(ws: ir.Worksheet) -> set[str]:
                 found.add("mesh_grid")
         for node in _region_exprs(region):
             for sub in _walk(node):
-                if isinstance(sub, ir.Call) and sub.func in ("min", "max"):
+                if isinstance(sub, ir.Call) and sub.role != "VARIABLE" and sub.func in ("min", "max"):
                     found.add("mc_min" if sub.func == "min" else "mc_max")
             for sub in _walk(node):
-                if isinstance(sub, ir.Call) and FUNCTIONS.get(sub.func, sub.func) in RUNTIME_IMPORTS:
+                if (
+                    isinstance(sub, ir.Call)
+                    and sub.role != "VARIABLE"
+                    and FUNCTIONS.get(sub.func, sub.func) in RUNTIME_IMPORTS
+                ):
                     found.add(FUNCTIONS.get(sub.func, sub.func))
                 elif isinstance(sub, ir.MatrixLiteral):
                     found.add("col" if sub.cols <= 1 else "matrix")

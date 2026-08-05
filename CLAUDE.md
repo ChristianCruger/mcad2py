@@ -288,6 +288,31 @@ annotation combine on one line when both apply, and a sheet with no Input/Output
 case — `collapsable-area.mcdx`'s `integration.xml` is a bare `<regions/>`) emits no alias text at
 all.
 
+[tests/test_sort.py](tests/test_sort.py) covers `references/sort.mcdx`: a small catalogue sheet for
+the ordering family (`sort`/`csort`/`reverse`/`rsort`), all of which already had runtime support from
+`matrices.mcdx`. It runs the whole sheet end-to-end and matches Mathcad's cache — mainly a regression
+guard that the *sheet* converts cleanly, not new runtime behavior. (`csort(M, 4)`, `reverse(M)` and
+`rsort(M, 2)` all happen to produce the same matrix here because `M`'s columns are individually
+monotonic — a property of this particular `M`, not a bug; each is still checked against its own cached
+value.)
+
+[tests/test_log_exp.py](tests/test_log_exp.py) covers `references/log-exp.mcdx`, which surfaced several
+real gaps in the log/exp family: `log(x, b)`'s explicit-base 2-arg form was silently passed as a second
+argument to `math.log10` (which doesn't take one) — `log`/`ln` are now a runtime helper pair instead of
+bare `math.log10`/`math.log`, and also return a **complex** value for a negative real argument
+(`ln(-3) = ln(3) + iπ`, matching Mathcad) rather than raising, since only `ln(0)` is a genuine Mathcad
+domain error (cached as an `engineError`) — which the runtime `ln` still raises on, so the test executes
+the sheet one top-level statement at a time (not a single `exec()`) and records the expected exception in
+place of that one echo. Also new: `ln0` (Mathcad's domain-error-avoiding natural log, returning `-1e307`
+at `x = 0` instead of raising); the `<ml:imag symbol="i">` literal (previously unparsed), needed for
+`e^(i·π) + 1` (Euler's identity, checked as "close to zero" rather than pinned to Mathcad's own
+float-noise residual); `logspace(x1, x2, n)` (points log-spaced between two *values*, unlike
+`numpy.logspace`'s exponent bounds); and — the sheet's last two lines redefine `exp`/`log` as plain
+functions (`exp(x) := x + 2`) and then call them — a call site whose name was redefined is codegen's cue
+to skip the builtin table entirely and call the name bare, since Mathcad marks such a call
+`labels="VARIABLE"` (the same label an ordinary user-defined function call gets), not `FUNCTION`; this
+was previously ignored, so a call to a redefined builtin silently kept calling the original.
+
 [tools/strip_mcdx_metadata.py](tools/strip_mcdx_metadata.py) removes the authoring metadata a
 `.mcdx` carries in parts you never see in Prime (`docProps/core.xml`'s `creator`/`lastModifiedBy`,
 `docProps/app.xml`'s `Company`, and the printed header/footer). It rewrites only those parts —
