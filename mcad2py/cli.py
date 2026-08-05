@@ -39,6 +39,12 @@ def main(argv: list[str] | None = None) -> int:
         choices=["notebook", "py"],
         help="output format (default: inferred from -o suffix, else notebook).",
     )
+    conv.add_argument(
+        "--trace-source",
+        action="store_true",
+        help="annotate each statement with its Mathcad worksheet region id "
+        "(and original name, if renamed).",
+    )
 
     args = parser.parse_args(argv)
     if args.command == "convert":
@@ -50,7 +56,7 @@ def main(argv: list[str] | None = None) -> int:
 def _run_convert(args: argparse.Namespace) -> int:
     fmt = args.format or _infer_format(args.output)
     try:
-        result = convert_file(args.input, fmt=fmt)
+        result = convert_file(args.input, fmt=fmt, trace_source=args.trace_source)
     except (OSError, ValueError) as exc:
         # The loader raises these with user-facing messages (missing file, not a
         # zip, no worksheet.xml), so print the message rather than a traceback.

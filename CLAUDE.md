@@ -64,6 +64,18 @@ adding support for a new XML construct.
   ratio (`mm²/m²`, `1/degree`) collapses the way Mathcad shows it.
 - Unknown/unsupported constructs emit a visible `# TODO unsupported: <note>` so output still
   loads — never silently drop a region.
+- `--trace-source` (opt-in, default off) annotates each generated statement with
+  `# mcdx region <id>` — the originating `<region>`'s `region-id` in `worksheet.xml` — plus any
+  renamed target's original Mathcad name (`# mcdx region 12, "σ_c" -> sigma_c`) and, if the region
+  is tagged via Prime's Input/Output panel, its Application Automation alias from
+  `mathcad/integration.xml` (`# mcdx region 0, input alias "x"`) — the literal name MathcadPy sets
+  or reads the region by, which can differ from both the Mathcad and Python names (an un-named
+  output defaults to e.g. `out`/`out_0`). This lets the `read-mathcad` skill trace a line of
+  generated Python back to the source XML node (to edit it) or the name MathcadPy automation
+  actually knows it by. `ir.Region.source` (an `ir.SourceRef`) is always populated during parsing
+  regardless of the flag; only emission is gated. A `<spec-table>` column group shares one
+  `region-id` (its per-column `resultRef` isn't captured). `integration.xml` is a sibling zip part
+  to `worksheet.xml`, present (usually as a bare `<regions/>`) in every `.mcdx`.
 - Add new builtins/units/constants to [mapping.py](mcad2py/mapping.py) (data, not code).
 - Mathcad's `·` is scalar, matrix *and* dot product; [shapes.py](mcad2py/shapes.py) decides which by
   inferring shapes across the whole sheet, and only rewrites to `matmul` when **both** operands are
@@ -260,6 +272,22 @@ not scalars), scan a matrix **column-major** (`match(3, s)` → `[1;1]` before `
 value is absent, and compare mixed string/number cells without raising. Region 0's cached `4×1` is a
 documented **stale leftover** (a plain define with nothing to echo, so Mathcad never refreshed it).
 
+[tests/test_trace_source.py](tests/test_trace_source.py) covers `--trace-source`: with the flag
+off (the default), output is byte-identical to a plain conversion — the regression guard that this
+feature can't silently change anyone's existing output. With it on, `references/collapsable-area.mcdx`
+pins that `ir.Region.source` (an `ir.SourceRef`) matches each region's XML `region-id` regardless of
+the flag (it's always populated), that `to_python`/`to_notebook` prefix each statement/cell with
+`# mcdx region <id>`, and — using a fixture with Greek/subscripted top-level names
+(`references/RC_col.mcdx`) — that a renamed target's original Mathcad display name is appended
+(`"σ_c" -> sigma_c`) while a plain ASCII target adds nothing extra. Plus a CLI check that
+`--trace-source` reaches the output. `references/io.mcdx` (two Input-tagged definitions, two
+Output-tagged regions, one of which is also a renamed `σ` -> `sigma`) covers reading
+`mathcad/integration.xml`'s Input/Output tags: the id->`(io_kind, io_alias)` map matches the raw
+XML, the alias is emitted (`# mcdx region 0, input alias "x"`), an alias and a renamed-name
+annotation combine on one line when both apply, and a sheet with no Input/Output tags (the common
+case — `collapsable-area.mcdx`'s `integration.xml` is a bare `<regions/>`) emits no alias text at
+all.
+
 [tools/strip_mcdx_metadata.py](tools/strip_mcdx_metadata.py) removes the authoring metadata a
 `.mcdx` carries in parts you never see in Prime (`docProps/core.xml`'s `creator`/`lastModifiedBy`,
 `docProps/app.xml`'s `Company`, and the printed header/footer). It rewrites only those parts —
@@ -308,6 +336,22 @@ regions as sidecar files next to the output notebook and references them with a 
 instead of the default self-contained base64 embed. Only meaningful for file output (not `-o -`
 stdout); keep embedding as the default since it stays portable. Wanted mainly to keep git diffs
 clean when generated notebooks are committed.
+
+Nice-to-have: a **write path** into `mathcad/integration.xml` to tag a region as an Input/Output for
+MathcadPy automation when the sheet's author never used Prime's Input/Output panel — i.e. `--trace-source`
+reads these tags (see the Conventions bullet above), this would let Claude *add* one. Mechanically cheap:
+append `<region region-id="N" ioTagType="Input"><inputAliases><alias>NAME</alias></inputAliases></region>`
+to the part's `<regions>` (`Output`/`outputAliases` for the other direction) and rezip — confirmed via
+`references/io.mcdx` that `integration.xml` carries no checksum and isn't even referenced via an OPC
+relationship (Prime finds it by well-known path), so no other part needs to change. Two things a tool
+should check before writing: the target region should be a plain literal `ir.Define` (a formula region
+tagged Input would have automation overwrite the formula, not a value) and the new alias shouldn't collide
+with an existing one in the file. Unverified: whether Prime's automation engine honors a hand-inserted tag
+it didn't write itself, and whether it survives a later human re-save in Prime — no access to Prime/MathcadPy
+here to confirm round-trip fidelity. Shape: a small `tools/tag_mcdx_input.py` (mirroring
+`strip_mcdx_metadata.py`) doing the write, plus a skill layer that knows when to reach for it and applies
+the two checks above — not folded into the converter itself, since this is a write path into a proprietary
+format rather than `--trace-source`'s read-only annotation.
 
 ## Scope
 

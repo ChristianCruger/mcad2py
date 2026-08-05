@@ -809,6 +809,38 @@ def header_lines(ws: ir.Worksheet) -> list[str]:
     return lines
 
 
+def source_comment(region: ir.Region) -> str | None:
+    """``# mcdx region <id>`` back-reference, for ``--trace-source``.
+
+    ``<id>`` is the originating ``<region>``'s ``region-id`` attribute in
+    ``worksheet.xml``. Any defined target whose sanitized Python name differs
+    from Mathcad's original display name is listed too, since that's the name
+    Prime's UI (or MathcadPy) actually knows the value by. If the region is
+    tagged in ``mathcad/integration.xml`` for Application Automation
+    (MathcadPy), the input/output alias is listed as well -- the literal key
+    automation code sets/reads the region by, which can differ from both the
+    Mathcad and Python names (an un-named output defaults to e.g. ``out``).
+    """
+    if region.source is None:
+        return None
+    text = f"# mcdx region {region.source.region_id}"
+    if region.source.io_kind:
+        text += f', {region.source.io_kind.lower()} alias "{region.source.io_alias}"'
+    renamed = _renamed_targets(region)
+    if renamed:
+        text += ", " + ", ".join(f'"{n.original}" -> {n.py}' for n in renamed)
+    return text
+
+
+def _renamed_targets(region: ir.Region) -> list[ir.Name]:
+    targets: list[ir.Name] = []
+    single = getattr(region, "target", None)
+    if isinstance(single, ir.Name):
+        targets.append(single)
+    targets.extend(getattr(region, "targets", None) or [])
+    return [n for n in targets if n.original != n.py]
+
+
 def _uses_numpy(ws: ir.Worksheet) -> bool:
     """True if the generated module needs ``np`` directly (``np.*`` calls).
 

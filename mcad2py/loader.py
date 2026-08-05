@@ -6,6 +6,9 @@ A ``.mcdx`` is a zip archive. The interesting parts:
     mathcad/result.xml      -> cached numeric results (used for verification)
     mathcad/xaml/*.XamlPackage -> text-region content (nested zips)
     mathcad/media/*         -> embedded images (picture regions)
+    mathcad/integration.xml -> Application Automation (MathcadPy) Input/Output
+                                region tags, keyed by the same region-id as
+                                worksheet.xml
 """
 
 from __future__ import annotations
@@ -22,6 +25,7 @@ class McdxPackage:
 
     worksheet_xml: str
     result_xml: str | None = None
+    integration_xml: str | None = None
     xaml_packages: dict[str, bytes] = field(default_factory=dict)
     # Basename -> bytes for embedded images (``mathcad/media/*``).
     media: dict[str, bytes] = field(default_factory=dict)
@@ -83,6 +87,11 @@ def load_mcdx(path: str | Path) -> McdxPackage:
         result_name = _find(names, "mathcad/result.xml")
         result_xml = zf.read(result_name).decode("utf-8") if result_name else None
 
+        integration_name = _find(names, "mathcad/integration.xml")
+        integration_xml = (
+            zf.read(integration_name).decode("utf-8") if integration_name else None
+        )
+
         xaml_packages = {
             name.rsplit("/", 1)[-1]: zf.read(name)
             for name in names
@@ -101,6 +110,7 @@ def load_mcdx(path: str | Path) -> McdxPackage:
     return McdxPackage(
         worksheet_xml=worksheet_xml,
         result_xml=result_xml,
+        integration_xml=integration_xml,
         xaml_packages=xaml_packages,
         media=media,
         rels=rels,

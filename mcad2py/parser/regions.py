@@ -39,6 +39,7 @@ def parse_worksheet(
     worksheet_xml: str,
     text_resolver: TextResolver | None = None,
     image_resolver: ImageResolver | None = None,
+    integration_xml: str | None = None,
 ) -> ir.Worksheet:
     root = ET.fromstring(worksheet_xml)
     regions_elem = next(
@@ -48,16 +49,28 @@ def parse_worksheet(
     if regions_elem is None:
         return ws
 
+    io_tags = _parse_integration(integration_xml)
+
     # Names defined as a Mathcad *range* (``x0 := -50, -49 .. 50``), tracked as
     # we go so a later contour/3D plot equation can tell "``f(x0, y0)`` over two
     # ranges" (needs an outer-product grid) apart from a plain call.
     range_names: set[str] = set()
     for region in _ordered_regions(regions_elem):
         parsed = _parse_region(region, text_resolver, image_resolver, range_names)
+        region_id_attr = region.get("region-id")
+        try:
+            region_id = int(region_id_attr) if region_id_attr is not None else None
+        except ValueError:
+            region_id = None
+        io_kind, io_alias = io_tags.get(region_id, (None, None))
+        source = (
+            ir.SourceRef(region_id, io_kind, io_alias) if region_id is not None else None
+        )
         # A data table (<spec-table>) expands to one region per column.
         for item in parsed if isinstance(parsed, list) else [parsed]:
             if item is None:
                 continue
+            item.source = source
             if isinstance(item, ir.Define) and isinstance(item.value, ir.Range):
                 range_names.add(item.target.py)
             ws.regions.append(item)
@@ -68,6 +81,35 @@ def parse_worksheet(
     # which is which needs the whole sheet's shapes, so it runs as a pass.
     annotate_products(ws)
     return ws
+
+
+def _parse_integration(integration_xml: str | None) -> dict[int | None, tuple[str | None, str | None]]:
+    """Map ``region-id`` -> ``(ioTagType, alias)`` from ``mathcad/integration.xml``.
+
+    Empty when the sheet has no Input/Output tags (the common case -- Prime
+    writes this part as a bare ``<regions/>`` unless the author used the
+    Input/Output panel) or when the part is missing entirely.
+    """
+    if not integration_xml:
+        return {}
+    root = ET.fromstring(integration_xml)
+    tags: dict[int | None, tuple[str | None, str | None]] = {}
+    for region in root:
+        if localname(region.tag) != "region":
+            continue
+        region_id_attr = region.get("region-id")
+        io_kind = region.get("ioTagType")
+        if region_id_attr is None or io_kind is None:
+            continue
+        alias_elem = next((c for c in region.iter() if localname(c.tag) == "alias"), None)
+        alias = (alias_elem.text or "").strip() if alias_elem is not None else ""
+        if not alias:
+            continue
+        try:
+            tags[int(region_id_attr)] = (io_kind, alias)
+        except ValueError:
+            continue
+    return tags
 
 
 def _ordered_regions(regions_elem: ET.Element) -> list[ET.Element]:
