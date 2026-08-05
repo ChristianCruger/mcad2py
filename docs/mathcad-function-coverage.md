@@ -29,7 +29,7 @@ sample worksheet will hit an unsupported builtin.
 |----------|-----------|-------|
 | Trigonometry | `sin` `cos` `tan` `cot` `sec` `csc` `sinc`, `asin` `acos` `atan` `acot` `asec` `acsc`, `atan2` `angle` | all runtime helpers: forward ones are **angle-aware** (deg/rad via Pint), inverses return bare radians. `atan2(x, y)` reverses Python's arg order; `angle` wraps to `[0, 2π)`; `sinc` is the *unnormalised* `sin(z)/z` |
 | Hyperbolic | `sinh` `cosh` `tanh` `coth` `sech` `csch` + all six inverses | argument reduced to a pure number first (Mathcad angles are dimensionless, so `sinh(103.2 deg)` = `sinh(1.80118)`) |
-| Log & exponential | `exp`, `ln`, `log` (→ `log10`) | only 1-arg `log`; no `log(z, b)` |
+| Log & exponential | `exp`, `ln`, `log` (1- and 2-arg), `ln0`, `logspace` | `ln`/`log` return a **complex** value for a negative real argument (matching Mathcad — only `ln(0)` is a genuine domain error); `ln0` avoids that one case, returning `-1e307` at `x=0` |
 | Powers & roots | `sqrt`, `nth_root`, `power` | dimension-aware: a dimensioned radicand keeps its unit, a dimensionless ratio is reduced first |
 | Rounding / truncation | `ceil`, `floor`, `round` (→ `mround`) | dimensionless-aware; keep a unit if dimensioned |
 | Min / max | `min` `max` (element-wise `np.minimum/maximum`), `mc_min` `mc_max` (flattening reductions) | Mathcad `max/min` flatten *all* args to a scalar; the element-wise form only appears under a vectorize arrow |
@@ -74,7 +74,7 @@ Legend: ✅ done · 🟡 partial · ⬜ not started · ⛔ out of scope (unlikel
 |----------|--------|------|------------------------|
 | **Trigonometric** | ✅ | sin cos tan cot sec csc sinc, asin acos atan acot asec acsc, atan2 angle | — (`acot`'s `(0, π)` branch confirmed against a cached negative argument) |
 | **Hyperbolic** | ✅ | sinh cosh tanh coth sech csch + all six inverses | — |
-| **Log & exponential** | 🟡 | exp ln log10 | `log(z, b)` two-arg base |
+| **Log & exponential** | ✅ | exp ln log (1- and 2-arg) ln0 logspace | — (see `references/log-exp.mcdx`) |
 | **Piecewise / conditional** | 🟡 | `if` (inline + block) | `sign`/`signum`, `Φ` Heaviside, `δ` Kronecker, `ε` Levi-Civita, `until` |
 | **Truncation & round-off** | 🟡 | ceil floor round | `trunc`, `Ceil/Floor/Round/Trunc(x, y)` (round-to-multiple), `mantissa` |
 | **Vector & matrix** | ✅ | the full list above (see `references/matrices.mcdx`), plus the table searches `match` `lookup` `vlookup` `hlookup` `vhlookup` (see `references/stack_augment_lookup.mcdx`) | — |
@@ -83,14 +83,14 @@ Legend: ✅ done · 🟡 partial · ⬜ not started · ⛔ out of scope (unlikel
 | **Statistics** | 🟡 | `mean` | `median` `mode` `var` `Var` `stdev` `Stdev` `gmean` `hmean` `corr` `cvar` `kurt` `skew` `hist`/`histogram` |
 | **Probability distributions** | ⬜ | — | the `d/p/q/r` families (`norm` `binom` `pois` `unif` `exp` `gamma` `beta` `weibull` `t` `F` `chisq` …) |
 | **Regression & smoothing** | ⬜ | — | `line` `slope` `intercept`, `regress` `loess`, `linfit` `genfit` `expfit` `logfit` `pwrfit` `sinfit`, `medsmooth` `ksmooth` `supsmooth` |
-| **Complex numbers** | 🟡 | `abs` (`|z|`) | `Re` `Im` `arg` `csgn` `signum`, conjugate |
+| **Complex numbers** | 🟡 | `abs` (`|z|`), the imaginary literal `i` (`<ml:imag>`), `ln`/`log` returning complex for a negative real argument | `Re` `Im` `arg` `csgn` `signum`, conjugate |
 | **Number theory & combinatorics** | ⬜ | — | `mod` `gcd` `lcm` (engineering-relevant), `combin` `permut` `!` factorial, `isprime` `fibonacci` |
 | **Special functions** | ⬜ | — | `erf` `erfc`, `Γ` `lgamma`, `Ψ` digamma, `β` beta, `fhyper` |
 | **Bessel functions** | ⬜ | — | `J0/J1/Jn` `Y0/Y1/Yn` `I…` `K…` `Ai` `Bi` (rare here) |
 | **Differential equations** | ⬜ | — | `odesolve`, `rkfixed` `Rkadapt` `Bulstoer` `Radau` `Stiffb/r`, `sbval` `bvalfit`, `relax` `multigrid` `numol` |
 | **Fourier transforms** | ⬜ | — | `fft/ifft` `FFT/IFFT` `cfft/icfft` `dft` |
 | **String functions** | ⬜ | — | `concat` `num2str` `str2num` `strlen` `substr` `search` `strfind` `error` (string *literals* already work) |
-| **Sorting** | ✅ | `sort` `csort` `rsort` `reverse` (also listed under vector/matrix) | — |
+| **Sorting** | ✅ | `sort` `csort` `rsort` `reverse` (also listed under vector/matrix) | — (see also `references/sort.mcdx`) |
 | **Graphing helpers** | 🟡 | `CreateMesh`, plot rendering (xy/contour/3D), QuickPlot (xy plot of an undefined variable → the invented -10..10 domain) | `CreateSpace`, `polyhedron` |
 | **Finance** | ⛔ | — | `fv` `pv` `npv` `irr` `pmt` `rate` … (not engineering) |
 | **Image processing** | ⛔ | — | out of scope |
@@ -111,7 +111,8 @@ Ranked by expected payoff × frequency in the kind of sheets this repo converts,
    `linterp`. Maps onto `scipy.interpolate`. Common for material curves.
 3. **More solving** — `root` (scalar) and `polyroots`, then `minerr`/`maximize`/`minimize` (extend the
    `solve_block` machinery: `minerr` = least-squares residual, the optimizers = `scipy.optimize`).
-4. **Complex-number accessors** — `Re`, `Im`, `arg`, conjugate. Trivial; occasionally needed.
+4. **Complex-number accessors** — `Re`, `Im`, `arg`, conjugate. Trivial; occasionally needed. (The
+   imaginary literal and complex-valued `ln`/`log` already work — see `references/log-exp.mcdx`.)
 5. **`mod`, `gcd`, `lcm`** — trivial, high-completeness-per-line. *(The trig and hyperbolic families
    that used to head this item are done — see `references/trig.mcdx` / `references/hyperbolic.mcdx`.)*
 6. **Special functions** — `erf`/`erfc`, `Γ` — thin `scipy.special` wraps; occasional.
