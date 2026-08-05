@@ -78,8 +78,19 @@ FUNCTIONS = {
     "asech": "asech",
     "acsch": "acsch",
     "exp": "math.exp",
-    "ln": "math.log",
-    "log": "math.log10",
+    # ``ln``/``log`` are runtime helpers (not bare ``math.log``/``math.log10``):
+    # Mathcad returns a *complex* value for a negative argument
+    # (``ln(-3) = ln(3) + iπ``) rather than raising -- only ``ln(0)`` is a
+    # genuine Mathcad domain error, which ``math.log(0)`` also raises on.
+    # ``log`` also takes an optional explicit base (``log(x, b)``).
+    "ln": "ln",
+    "log": "log",
+    # ``ln0``: natural log, but ``ln0(0)`` returns a large negative number
+    # instead of raising (Mathcad's own domain-error avoidance for x=0).
+    "ln0": "ln0",
+    # n logarithmically spaced points between two *values* (not exponents,
+    # unlike ``numpy.logspace``).
+    "logspace": "logspace",
     # ``** 0.5`` via a runtime helper so a unit-bearing radicand keeps its unit
     # (Pint), unlike ``math.sqrt`` which rejects a dimensioned argument.
     "sqrt": "sqrt",
@@ -157,6 +168,7 @@ RUNTIME_IMPORTS = (
     "asinh", "acosh", "atanh", "acoth", "asech", "acsch",
     "linterp", "CreateMesh", "augment",
     "ceil", "floor", "mround", "sqrt", "nth_root", "power", "disp", "elementwise",
+    "ln", "log", "ln0", "logspace",
     "mc_min", "mc_max",
     # Vector & matrix builtins, plus the two bar/cross *operators*
     # (``determinant``/``cross``) the parser routes through a Call.

@@ -584,3 +584,25 @@ need the sheet-wide defined-name set to tell a unit from a variable that shadows
   **unit** of the points that are defined, without which the column stays a mixed `object` array and
   `plot_axis`'s `data / unit` raises. Only `None` is filled — a point that *raises* is left to
   propagate, since swallowing exceptions here would turn a conversion bug into a silently empty plot.
+
+## Log/exponential catalogue and a redefined builtin (`log-exp.mcdx`)
+
+- **The imaginary literal is `<ml:imag symbol="i">1</ml:imag>`**, a sibling of `<ml:real>` (not a child
+  of it, and not wrapped in a `<ml:complex>` — that wrapper only appears in *cached results*, e.g.
+  `result.xml`'s `ln(-3)`). The text is the magnitude; parsing it as `<magnitude>j` is already a valid
+  Python complex literal, so `e^(i·π) + 1` (Euler's identity) needs no dedicated IR node.
+- **`log`'s two-argument form is `<ml:sequence>` of the value and the base**, same shape as any other
+  multi-arg call (`log(1000, 10)` → `<ml:apply><ml:id>log</ml:id><ml:sequence><ml:real>1000</ml:real>
+  <ml:real>10</ml:real></ml:sequence></ml:apply>`) — nothing schema-special, but easy to miss if a
+  builtin's Python mapping is a bare string (`"log": "math.log10"`) rather than a callable that can see
+  `len(args)`.
+- **Redefining a builtin changes the `labels` attribute at its later call sites.** `exp(x) := x + 2`
+  followed by `exp(2)` gives the *call* an `<ml:id labels="VARIABLE" label-is-contextual="true">exp
+  </ml:id>` head — not `labels="FUNCTION"` the way an un-shadowed builtin call ("log", "sort", …) gets.
+  This is the same label an ordinary user-defined function call already carries (confirmed against
+  `solve_as_function.mcdx`'s `f(1, 3)`), so `ir.Call.role` already captured the distinction — the bug
+  was that [emit/codegen.py](../mcad2py/emit/codegen.py) mapped every `Call.func` through the builtin
+  `FUNCTIONS` table unconditionally, ignoring `role`. The fix: skip that lookup whenever
+  `role == "VARIABLE"` and call the (sanitized) name bare, everywhere the check happens — the
+  expression printer itself, and the import-collection passes (`_used_runtime`/`_uses_numpy`) that scan
+  for which runtime helpers a generated module needs.
