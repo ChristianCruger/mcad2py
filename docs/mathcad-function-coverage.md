@@ -61,7 +61,10 @@ scipy/numeric Python.)
 
 ### Constants & language constructs (not "functions", for completeness)
 
-Constants `π`/`pi`, `e`, `∞`. Constructs already handled: `:=`/`=`, units (Pint), ranges, vector/matrix
+Constants: the maths set (`π`/`pi`, `e`, `∞`, Euler-Mascheroni `γ`) and the **physics set** — `c`, `g`,
+`e_c`, `h`, `ℏ`, `k`, `m_u`, `N_A`, `R`, `R_∞`, `α`, `ε_0`, `μ_0`, `σ`, `Φ_0` (`references/Constants.mcdx`).
+The lookup is gated on Prime's `labels="CONSTANT"`, so a worksheet's own `c`/`g`/`k`/`R` is untouched.
+Constructs already handled: `:=`/`=`, units (Pint), ranges, vector/matrix
 literals & 0-based indexing, **imperative programs** (loops / `←` / `return` / `try`), inline & block
 `if`, **difference equations** (seeded iteration — `guess[i+1] := f(guess[i])`, systems, and matrix
 recurrences), numeric **solve blocks** (`find`), symbolic solve, **plots** (xy / contour / 3D),

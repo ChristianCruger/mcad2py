@@ -707,3 +707,34 @@ need the sheet-wide defined-name set to tell a unit from a variable that shadows
 - **The `r*` draws are random, by design.** `rnorm`/`rweibull`/`rt` produce a fresh sample every run,
   so every statistic below them in the sheet is unreproducible against the cache — see
   [test-coverage.md](test-coverage.md) for which regions that covers.
+
+## Built-in constants (`Constants.mcdx`)
+
+- **The `labels` attribute is the whole mechanism.** Prime's *Constants* label writes
+  `<ml:id labels="CONSTANT">c</ml:id>`, and that is the only thing separating the speed of light from
+  a worksheet variable called `c` (which every other fixture here spells `labels="VARIABLE"`). The
+  sheet's own opening line says it out loud — "if symbols have not been defined as something else".
+  So `mapping.CONSTANTS` may safely hold `c`, `g`, `k`, `R`, `e`, `σ`, `α`, `γ`: the lookup in
+  [emit/codegen.py](../mcad2py/emit/codegen.py) is reached only for `role == "CONSTANT"`.
+- **The key is the *display* name, subscript and all.** `read_identifier` joins a XAML
+  `<pw:Subscript>` with an underscore, so the table is keyed `e_c`, `m_u`, `N_A`, `R_∞`, `ε_0`, `μ_0`,
+  `Φ_0` — before `sanitize()` transliterates the Greek. `ℏ` (U+210F) arrives as a plain one-character
+  id.
+- **The cache states a dimensioned constant in base SI**, as a `<ml:unitedValue>` of a `<ml:real>` and
+  a `<u:unitMonomial>` (`R` as `kg·m²·s⁻²·K⁻¹·mol⁻¹`) — the one exception being `Φ_0`, cached in
+  `weber`. The table therefore writes each value in base units too (`h` as `kg·m²/s`, not `J·s`); see
+  the next point for why that matters.
+- **A display override can carry a numeric scale**, and it is *not* the pure-scale form `_display`
+  already knew about. Mathcad shows Planck's constant as `10⁻³⁴ kg·m²/s`, which is a `<ml:scale>` (or
+  `<ml:mult>`) of `10^-34` against a unit monomial — units *and* a factor, so `_has_unit` is true and
+  the override goes to `disp(value, unit)`. Pint evaluates that override to a **Quantity** (magnitude
+  `1e-34`) rather than a **Unit**, and `Quantity.to(<another Quantity>)` silently uses the argument's
+  *units alone*: `h.to(10**-34 · kg·m²/s)` returns the unscaled `6.626e-34`, not Mathcad's `6.626`.
+  `disp` now divides whenever the override's magnitude isn't 1, which is the faithful rendering and
+  is what makes the base-unit table entries line up digit for digit.
+- **`∞` is really 10³⁰⁷** — that is the number `result.xml` caches for it, and Mathcad's documented
+  stand-in for infinity. We deliberately emit `math.inf` instead: it is the faithful reading of the
+  symbol, and the only one that behaves as an integration limit or a comparison bound. The one
+  divergence the fixture records.
+- **`γ` is Euler-Mascheroni here**, not a variable named gamma; `σ` is Stefan-Boltzmann, not a stress;
+  `k` is Boltzmann, not a stiffness. Again: the label, not the spelling.

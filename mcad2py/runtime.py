@@ -235,6 +235,12 @@ def disp(value, unit=None):
     builtins return bare radians (Mathcad's ``deg`` being just the π/180 scale),
     so ``atan(B) = … deg`` has to rescale rather than divide.
 
+    An override can also carry a **numeric scale** -- Mathcad shows Planck's
+    constant as ``10⁻³⁴ kg·m²/s`` -- which arrives here as a Pint *Quantity*
+    rather than a *Unit*. Dividing is the only faithful rendering: ``.to()``
+    accepts a quantity but silently uses its units alone, dropping the ``10⁻³⁴``
+    and reporting the unscaled number.
+
     With **no** override (Mathcad's automatic display) a *dimensionless but
     unreduced* quantity is collapsed to a plain number: Pint leaves ``sin(θ)/θ``
     as ``0.0164 1/degree`` and ``l/s`` as ``m/mm``, where Mathcad -- for which
@@ -242,6 +248,9 @@ def disp(value, unit=None):
     """
     if unit is None:
         return _reduce_dimensionless(value)
+    scale = getattr(unit, "magnitude", 1)
+    if scale != 1:
+        return _reduce_dimensionless(value / unit)
     if not hasattr(value, "to") and str(getattr(unit, "units", unit)) in _ANGLE_UNITS:
         return unit._REGISTRY.Quantity(value, "radian").to(unit)
     try:

@@ -206,12 +206,41 @@ SYMBOLIC_COMMANDS = {
     "expand": "expand",
 }
 
-# Mathcad constants -> Python expression.
+# Mathcad constants -> Python expression. Keyed by the *display* name and only
+# consulted for an id Prime labelled CONSTANT, so a worksheet's own ``c``, ``g``
+# or ``R`` (all labelled VARIABLE) is untouched.
+#
+# The physics set is Prime's built-in "Constants" label (see
+# references/Constants.mcdx). Values are the CODATA/SI numbers Prime itself
+# caches, written in **base SI units** rather than the friendlier compound ones
+# (``h`` as ``kg·m²/s``, not ``J·s``): a display override on such a constant is a
+# pure numeric scale (``10⁻³⁴ kg·m²/s``), and ``disp`` renders that by *dividing*
+# -- which only reduces to a plain number when the two agree unit-for-unit.
 CONSTANTS = {
     "π": "math.pi",
     "pi": "math.pi",
     "e": "math.e",
+    # Mathcad's ∞ is really 10³⁰⁷ (that is what result.xml caches); math.inf is
+    # the faithful reading of what the symbol *means*, and the one that behaves
+    # as an integration limit or a comparison bound.
     "∞": "math.inf",
+    "γ": "0.5772156649015329",  # Euler-Mascheroni
+    # -- physics -----------------------------------------------------------
+    "c": "(299792458 * ureg.m / ureg.s)",  # speed of light
+    "g": "(9.80665 * ureg.m / ureg.s**2)",  # standard gravity
+    "e_c": "(1.602176634e-19 * ureg.coulomb)",  # elementary charge
+    "h": "(6.62607015e-34 * ureg.kg * ureg.m**2 / ureg.s)",  # Planck
+    "ℏ": "(1.054571817e-34 * ureg.kg * ureg.m**2 / ureg.s)",  # reduced Planck
+    "k": "(1.380649e-23 * ureg.kg * ureg.m**2 / (ureg.s**2 * ureg.K))",  # Boltzmann
+    "m_u": "(1.66053906892e-27 * ureg.kg)",  # atomic mass unit
+    "N_A": "(6.02214076e23 / ureg.mol)",  # Avogadro
+    "R": "(8.314462618 * ureg.kg * ureg.m**2 / (ureg.s**2 * ureg.K * ureg.mol))",  # gas
+    "R_∞": "(10973731.56816 / ureg.m)",  # Rydberg
+    "α": "0.0072973525643",  # fine-structure
+    "ε_0": "(8.8541878188e-12 * ureg.A**2 * ureg.s**4 / (ureg.kg * ureg.m**3))",
+    "μ_0": "(1.25663706127e-6 * ureg.kg * ureg.m / (ureg.s**2 * ureg.A**2))",
+    "σ": "(5.670374419e-8 * ureg.kg / (ureg.s**3 * ureg.K**4))",  # Stefan-Boltzmann
+    "Φ_0": "(2.067833848e-15 * ureg.weber)",  # magnetic flux quantum
 }
 
 # Greek letters -> ASCII transliteration for Python identifiers (matches the

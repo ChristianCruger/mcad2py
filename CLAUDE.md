@@ -61,7 +61,15 @@ adding support for a new XML construct.
 - Display units come from `unitOverride`; emit `x.to(ureg.<unit>)` for the echo (or `x / (<scale>)`
   when the override is a pure numeric scale like `10**-6` — see `_display`). With *no* override, an
   echo whose value contains a **division** is wrapped `disp(<expr>)` so a dimensionless-but-unreduced
-  ratio (`mm²/m²`, `1/degree`) collapses the way Mathcad shows it.
+  ratio (`mm²/m²`, `1/degree`) collapses the way Mathcad shows it. An override that is a scale *and*
+  units (`10**-34 * kg·m²/s`, how Mathcad shows Planck's constant) reaches `disp` as a Pint **Quantity**
+  rather than a Unit, and `disp` divides by it — `Quantity.to(<Quantity>)` would quietly use the units
+  alone and drop the factor.
+- Mathcad's built-in constants (`mapping.CONSTANTS`) are keyed by *display* name and looked up only for
+  an id Prime labelled `CONSTANT`. That gating is what lets names as ordinary as `c`, `g`, `k`, `R`, `e`,
+  `σ` sit in the table without capturing a worksheet's own variables. Dimensioned values are written in
+  **base SI** (`h` as `kg·m²/s`, not `J·s`), matching how `result.xml` caches them and how a scaled
+  override divides down.
 - Unknown/unsupported constructs emit a visible `# TODO unsupported: <note>` so output still
   loads — never silently drop a region.
 - A region **Mathcad itself** couldn't compute (`result.xml` holds an `<engineError>` — `mode(v)` with

@@ -302,6 +302,25 @@ Two **documented divergences** there, neither a bug:
   correctness for a matching digit, so the test loosens the tolerance on those four indices only
   (`APPROXIMATE`) and everything else stays at 1e-12.
 
+[tests/test_constants.py](../tests/test_constants.py) covers `references/Constants.mcdx`, which
+evaluates Prime's whole built-in **Constants** label with nothing defined on the sheet: the maths trio
+(`e`/`π`/`∞`), Euler-Mascheroni `γ`, and the physics set (`c`, `g`, `e_c`, `h`, `ℏ`, `k`, `m_u`, `N_A`,
+`R`, `R_∞`, `α`, `ε_0`, `μ_0`, `σ`, `Φ_0`). All 19 echoes are read out of `result.xml` by `resultRef`
+rather than transcribed, and 18 match to 1e-12. What the sheet pinned down: the lookup is **label-gated**
+— Prime writes `<ml:id labels="CONSTANT">`, which is the only thing distinguishing the speed of light
+from a worksheet's own `c`, so names as ordinary as `c`/`g`/`k`/`R`/`σ` can live in `mapping.CONSTANTS`
+safely; the cache states a dimensioned constant in **base SI**, so the table stores it that way and the
+test compares `to_base_units().magnitude`. It also turned up a **real bug in `disp`**: a display override
+that carries a numeric scale (`h` shown as `10⁻³⁴ kg·m²/s`) evaluates to a Pint *Quantity*, and
+`Quantity.to(<Quantity>)` silently uses the argument's units and drops the `10⁻³⁴` — every such echo was
+off by the scale factor. `disp` now divides when the override's magnitude isn't 1.
+
+One **documented divergence**: Mathcad's `∞` is 10³⁰⁷ and that is what the cache holds, while we emit
+`math.inf` — the faithful reading of the symbol, and the only one that works as an integration limit or
+a comparison bound. That echo is asserted to be an infinity instead (`test_infinity_is_a_real_infinity`,
+which also pins the cached 1e307 so the difference stays visible).
+
+
 [tests/test_generated_imports.py](../tests/test_generated_imports.py) is not tied to one fixture: it
 runs over **every** `references/*.mcdx` and asserts that a generated module's imports and its body
 agree, in both directions. That invariant is new. `header_lines` used to *predict* which runtime
