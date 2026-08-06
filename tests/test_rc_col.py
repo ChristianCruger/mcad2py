@@ -240,8 +240,11 @@ def test_parametric_plots_emit_direct_axes():
     # A parametric plot's axes are data vectors plotted point-by-point -- no
     # ``sample(lambda ...)`` domain wrapping (that's only for ``y = f(range)``).
     src = _src()
-    assert "_ax.plot(plot_axis(matcol(Contour, 0), ureg.mm), plot_axis(matcol(Contour, 1), ureg.mm)" in src
-    assert "_ax.plot(plot_axis(X_s, ureg.mm), plot_axis(Y_s, ureg.mm)" in src
+    assert (
+        "plot_trace(plot_axis(matcol(Contour, 0), ureg.mm), "
+        "plot_axis(matcol(Contour, 1), ureg.mm)" in src
+    )
+    assert "plot_trace(plot_axis(X_s, ureg.mm), plot_axis(Y_s, ureg.mm)" in src
     # The rebar/outline vectors are *not* re-sampled over a bogus domain.
     assert "sample(lambda X_s:" not in src
 

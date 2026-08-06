@@ -155,6 +155,46 @@ FUNCTIONS = {
     "vlookup": "vlookup",
     "hlookup": "hlookup",
     "vhlookup": "vhlookup",
+    # --- Statistics (all runtime helpers; see runtime.py) -------------------
+    # Note the capitalisation: Mathcad's ``var``/``stdev`` divide by n (the
+    # population forms) and ``Var``/``Stdev`` by n-1 (the sample forms).
+    "median": "median",
+    "mode": "mode",
+    "gmean": "gmean",
+    "hmean": "hmean",
+    "var": "var",
+    "Var": "Var",
+    "stdev": "stdev",
+    "Stdev": "Stdev",
+    "skew": "skew",
+    "kurt": "kurt",
+    "percentile": "percentile",
+    "Rank": "Rank",
+    "histogram": "histogram",
+    "hist": "histogram",
+    # Regression, correlation and hypothesis tests
+    "cvar": "cvar",
+    "corr": "corr",
+    "slope": "slope",
+    "intercept": "intercept",
+    "Ftest": "Ftest",
+    "Spear": "Spear",
+    "kendltau": "kendltau",
+    "kendltau2": "kendltau2",
+    "contingtbl": "contingtbl",
+    # Distributions: d = density, p = cumulative, q = quantile, r = random draws
+    "dnorm": "dnorm",
+    "pnorm": "pnorm",
+    "qnorm": "qnorm",
+    "rnorm": "rnorm",
+    "dt": "dt",
+    "pt": "pt",
+    "qt": "qt",
+    "rt": "rt",
+    "dweibull": "dweibull",
+    "pweibull": "pweibull",
+    "qweibull": "qweibull",
+    "rweibull": "rweibull",
 }
 
 # Runtime helpers that are *called by name* in generated code (so a Call to one
@@ -180,6 +220,14 @@ RUNTIME_IMPORTS = (
     "sort", "reverse", "csort", "rsort", "mean", "IsArray", "IsScalar",
     "match", "lookup", "vlookup", "hlookup", "vhlookup",
     "matrow", "matelem", "matmul",
+    # Statistics: descriptive, then regression/correlation, then distributions.
+    "median", "mode", "gmean", "hmean", "var", "Var", "stdev", "Stdev",
+    "skew", "kurt", "percentile", "Rank", "histogram",
+    "cvar", "corr", "slope", "intercept", "Ftest",
+    "Spear", "kendltau", "kendltau2", "contingtbl",
+    "dnorm", "pnorm", "qnorm", "rnorm",
+    "dt", "pt", "qt", "rt",
+    "dweibull", "pweibull", "qweibull", "rweibull",
 )
 
 # Mathcad symbolic command keyword (first id of a <ml:command> sequence) ->
@@ -214,6 +262,9 @@ GREEK = {
 # Mathcad unit name -> Pint unit attribute, where they differ. Default is to
 # use the Mathcad name verbatim (Pint knows MPa, kN, deg, mm, ...).
 UNIT_ALIASES: dict[str, str] = {
+    # Mathcad's percent is a *unit* -- dimensionless, worth 0.01 -- so ``50%``
+    # is a scale apply like ``50 mm``. Pint spells it ``percent``.
+    "%": "percent",
     # e.g. "tonne": "metric_ton",  -- add as samples reveal mismatches
 }
 

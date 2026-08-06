@@ -606,3 +606,98 @@ need the sheet-wide defined-name set to tell a unit from a variable that shadows
   `role == "VARIABLE"` and call the (sanitized) name bare, everywhere the check happens — the
   expression printer itself, and the import-collection passes (`_used_runtime`/`_uses_numpy`) that scan
   for which runtime helpers a generated module needs.
+
+## Difference equations — seeded iteration (`difference_eq.mcdx`)
+
+- **The target is an indexer whose index is an *expression*, not a bare id.** That single detail is
+  what separates a difference equation from the parallel `X[i] := …` build:
+
+  ```xml
+  <ml:define>
+    <ml:apply><ml:indexer />
+      <ml:id labels="*">guess</ml:id>
+      <ml:apply><ml:plus /><ml:id labels="*">i</ml:id><ml:real>1</ml:real></ml:apply>
+    </ml:apply>
+    …the right-hand side, which reads guess[i]…
+  </ml:define>
+  ```
+
+  A **constant** index (`guess[0] := 30`) is the *seed*; an index written in terms of a range variable
+  (`guess[i+1]`, `Data[i+N]`, `V[i, k]`) is the *step*, and Mathcad runs it **sequentially** — each
+  step reads the elements the steps before it wrote. `_parse_index_target` keeps requiring a bare
+  `<ml:id>` index and still yields `ir.IndexAssign` (one `index_build` pass, elements independent);
+  everything else now routes through `_parse_recurrence_targets` to `ir.Recurrence`
+  ([parser/regions.py](../mcad2py/parser/regions.py)).
+- **A *system* puts a `<ml:matrix>` of indexers on the left**, one row per equation, against a matching
+  `<ml:matrix>` of right-hand sides — `[inf[τ+1]; sus[τ+1]; dec[τ+1]; rec[τ+1]] := […]`. Careful: a
+  matrix of plain `<ml:id>`s on the left is the *destructuring* `ir.MultiAssign` instead, so the
+  distinction is "is every entry an indexer". Mathcad updates a system **simultaneously**, which the
+  emitted loop reproduces by staging the step in a tuple before writing any of it back — evaluating
+  target by target would feed `sus[τ+1]`'s formula the `inf[τ+1]` the same step just produced.
+- **A matrix recurrence writes two-subscript slots.** `V^<k> := A·V^<k-1>` is stored as three
+  `V[i, k]` targets (an `<ml:indexer>` with a `<ml:sequence>` of two indices) against one vector-valued
+  right-hand side, which is destructured across them. The `·` needs
+  [shapes.py](../mcad2py/shapes.py) to have resolved it to a matrix product, so `annotate_products`
+  visits a `Recurrence` with the driving index bound as a **scalar** and records each target base as a
+  vector (or matrix, for the two-subscript form).
+- **The driving range variable is only identifiable from the sheet.** The index carries the
+  define-target label `labels="*"`, not `VARIABLE`, so the driver is found by intersecting the index's
+  identifiers with the names defined as a `<ml:range>` above it — a whole-sheet pass
+  (`_resolve_recurrences`), which also works out which base names a region is the first to write and
+  so must create from nothing.
+- **The loop variable must not leak.** The sheet keeps using `i` as a *range* below the recurrence
+  (`i_range[i] := i`), so a bare `for i in i:` would leave it bound to the last scalar index. The
+  emitted loop therefore lives inside a `def _recur_<names>(_idx, …)` that takes the vectors in and
+  returns them, letting Python's own scoping keep the two apart.
+- **`i := 0 .. N` writes N+1 elements, so the built vector outruns its index range.** With `N = 8`,
+  `guess[i+1] :=` fills indices 1..9 and `guess` ends up 10 long against a 9-element `i`. Both the
+  echo and the plot show this: `(guess[i])² - X =` caches **9** rows (the expression is evaluated over
+  the range — plain NumPy fancy-indexing reproduces it, since `arange` returns an *integer* array),
+  while the plot's cached trace pads the short axis, `[0,1,…,8,NaN]` against ten values. Hence
+  `plot_trace` ([runtime.py](../mcad2py/runtime.py)), which NaN-pads a trace's two axes to a common
+  length where matplotlib would reject the mismatch.
+- **An inline `=` after a difference equation shows the slots it just wrote.** `Data[i+N] =` caches the
+  5-element sub-vector, not all of `Data` — with the range variable still bound to its integer array,
+  the echo is literally `Data[i + N]`.
+
+## Statistics catalogue (`statistics.mcdx`)
+
+- **Capitalisation is the estimator, not a style choice.** `var`/`stdev` are the *population* forms
+  (divide by n) and `Var`/`Stdev` the *sample* forms (divide by n-1); the sheet computes each pair
+  twice, once through the builtin and once from a hand-written Σ, which is how the mapping was
+  confirmed. `skew`/`kurt` are the bias-corrected sample coefficients and `kurt` is *excess* kurtosis.
+- **`percentile(A, p)` interpolates at position `p·(n+1)`** of the 1-based sorted sample — NumPy's
+  `method="weibull"`. The cache settles it: the 90th percentile of `0 … 10` is **9.8**, not the 9 every
+  "nearest rank" definition (and NumPy's default) gives.
+- **`%` has *two* XML spellings, and this sheet uses the second.** `shrinkage.mcdx` writes it as a
+  dedicated postfix operator, `<ml:apply><ml:percent /><ml:real>100</ml:real></ml:apply>` (parsed as
+  `100 / 100`); here `50%` is instead an ordinary **scale apply**,
+  `<ml:apply><ml:scale /><ml:real>50</ml:real><ml:id labels="FUNCTION">%</ml:id></ml:apply>` — the same
+  shape as `50 mm`, treating `%` as the dimensionless unit worth 0.01 that Mathcad's unit system says
+  it is, but labelled `FUNCTION` rather than `UNIT`. `%` can't be a Mathcad variable name, so
+  `_parse_id` keys on the name itself and yields a `UnitRef`, mapped to Pint's `percent`. Both
+  spellings have to be handled; neither subsumes the other.
+- **Mathcad's own errors are cached, and a *tutorial* sheet may show them deliberately.** `mode(v)`
+  refuses to guess: `no_duplicates` ("No value occurs more frequently than any others.") when nothing
+  repeats and `multimodal` when the top frequency is shared, both stored as
+  `<engineErrors><engineError><resource-string>` in place of the region's `<ml:result>`. Since the
+  translation is faithful it raises too, which would abort the generated module — so `result.xml` is
+  now read at parse time and such a region is emitted inside a `try`/`except` that prints Mathcad's own
+  wording (`ir.Region.cached_error`). This retro-fixed `log-exp.mcdx`'s `ln(0)` and
+  `incomplete_ifs.mcdx`'s uncovered program branch, both of which previously stopped their sheet dead.
+- **The correlation set returns *all* the statistics its Numerical Recipes routine computes**, not just
+  the coefficient: `Spear` → `(D, zd, probd, rs, probrs)` (NR `spear`), `kendltau` → `(τ, z, p)`
+  (`kendl1`), `kendltau2` → the same three for a contingency table (`kendl2`), `contingtbl` →
+  `(χ², df, p, Cramér's V, C)` (`cntab1`), and `Ftest` → `(F, p)`. The cached vector lengths are how
+  each was identified. NR's `kendl2` walks the table's cells in **row-major** order and weights each
+  pair by the product of the two counts — reproduced literally in
+  [runtime.py](../mcad2py/runtime.py), since a vectorised rewrite would be harder to check against the
+  original.
+- **`Rank(v)` is 1-based ascending** — Mathcad's rank-transform, unrelated to `rank(M)` (matrix rank),
+  which it differs from only by capitalisation.
+- **`histogram(n, A)` returns an `n × 2` matrix** of bin midpoints and counts over `n` equal-width bins
+  spanning the data. Column 0 keeps the sample's unit, so with dimensioned data the result is
+  necessarily a mixed-unit (object) matrix; the sheet plots it as `matcol(H, 0)` against `matcol(H, 1)`.
+- **The `r*` draws are random, by design.** `rnorm`/`rweibull`/`rt` produce a fresh sample every run,
+  so every statistic below them in the sheet is unreproducible against the cache — see
+  [test-coverage.md](test-coverage.md) for which regions that covers.

@@ -22,14 +22,13 @@ gaps this file pins down:
   to an ordinary user-defined function), which the codegen now honours
   instead of unconditionally mapping the name through the builtin table.
 
-``ln(0)`` genuinely raises (matching Mathcad's own ``domain_error``), so the
-sheet can't run as a single ``exec()`` the way most reference sheets do --
-this file executes it one top-level statement at a time instead, capturing
-each ``print`` argument as an object and recording the expected exception in
-its place.
+``ln(0)`` genuinely raises, matching Mathcad's own ``domain_error``. Mathcad
+caches that region as an ``<engineError>``, so the converter wraps it in a
+``try``/``except`` (see ``ir.Region.cached_error``) and the sheet still runs as
+a single ``exec()`` like every other reference -- the guarded region echoes the
+caught exception in place of a value.
 """
 
-import ast
 import math
 from pathlib import Path
 
@@ -61,43 +60,37 @@ CACHED = [
 
 @pytest.fixture(scope="module")
 def sheet():
-    """Convert, then execute one top-level statement at a time (see module
-    docstring for why: ``ln(0)`` genuinely raises partway through)."""
+    """Convert and execute; the guarded ``ln(0)`` region echoes its exception."""
     src = convert_file(REFERENCE, fmt="py")
-    tree = ast.parse(src)
     echoed: list = []
     ns: dict = {"print": lambda *a: echoed.append(a[0] if len(a) == 1 else a)}
-    domain_error: ValueError | None = None
-    for stmt in tree.body:
-        code = compile(ast.Module(body=[stmt], type_ignores=[]), "<generated>", "exec")
-        try:
-            exec(code, ns)  # noqa: S102
-        except ValueError as exc:
-            domain_error = exc
-            echoed.append(None)
-    return src, ns, echoed, domain_error
+    exec(compile(src, "<generated>", "exec"), ns)  # noqa: S102
+    return src, ns, echoed
 
 
 def test_sheet_runs_end_to_end(sheet):
-    src, _, echoed, _ = sheet
+    src, _, echoed = sheet
     assert "TODO unsupported" not in src
     assert len(echoed) == len(CACHED)
 
 
 def test_ln_of_zero_raises_like_mathcads_domain_error(sheet):
     """The one cell Mathcad itself couldn't evaluate (cached ``engineError``,
-    ``domain_error``) -- and it's exactly the 6th echo (index 5)."""
-    _, _, echoed, domain_error = sheet
-    assert domain_error is not None
-    assert echoed[5] is None
+    ``domain_error``) -- exactly the 6th echo (index 5). The converter guards it
+    on the strength of that cached error, so it reports the exception instead of
+    aborting the sheet, and the regions either side still evaluate."""
+    src, _, echoed = sheet
+    assert "# Mathcad reports an error here:" in src
+    label, error = echoed[5]
+    assert label == "error:" and isinstance(error, ValueError)
     assert echoed[4] is not None and echoed[6] is not None  # neighbors ran fine
 
 
 def test_sheet_matches_cached_results(sheet):
-    _, _, echoed, _ = sheet
+    _, _, echoed = sheet
     for i, (got, want) in enumerate(zip(echoed, CACHED)):
         if want is None:
-            assert got is None, f"region {i}"
+            assert got[0] == "error:", f"region {i}"  # the guarded domain error
         elif isinstance(want, complex):
             assert math.isclose(got.real, want.real, abs_tol=1e-9), f"region {i}"
             # The Euler's-identity residual (region 9) is float noise around a
@@ -116,7 +109,7 @@ def test_sheet_matches_cached_results(sheet):
 def test_log_takes_an_explicit_base(sheet):
     """``log(x, b)`` (2-arg): the explicit-base form, not just the 1-arg
     base-10 default -- both now share one runtime ``log`` helper."""
-    src, _, _, _ = sheet
+    src, _, _ = sheet
     assert "math.log10(" not in src  # the old (broken) 2-arg mapping
     from mcad2py.runtime import log as log_fn
 
@@ -155,7 +148,7 @@ def test_logspace_is_value_spaced_not_exponent_spaced(sheet):
 
 
 def test_euler_identity_uses_the_parsed_imaginary_literal(sheet):
-    src, _, echoed, _ = sheet
+    src, _, echoed = sheet
     assert "1j" in src  # the parsed <ml:imag> literal
     z = echoed[9]
     assert isinstance(z, complex)
@@ -168,7 +161,7 @@ def test_redefined_builtin_shadows_the_original(sheet):
     builtin calls above -- later calls must dispatch to the user's function,
     not ``math.exp``/the runtime ``log``. Mathcad marks these call sites
     ``labels="VARIABLE"``, same as an ordinary user-defined function."""
-    src, ns, echoed, _ = sheet
+    src, ns, echoed = sheet
     assert ns["exp"](2) == 4  # 2 + 2, the user's definition
     assert ns["log"](2) == 4  # 2**2, the user's definition
     assert echoed[-2] == 4

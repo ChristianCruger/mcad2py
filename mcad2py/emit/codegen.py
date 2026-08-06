@@ -398,6 +398,89 @@ def index_assign_line(region: ir.IndexAssign) -> str:
     return f"{region.target.py} = index_build({idx}, lambda {idx}: {body})"
 
 
+def recurrence_lines(region: ir.Recurrence) -> list[str]:
+    """Emit a Mathcad difference equation (see :class:`ir.Recurrence`).
+
+    A **seed** -- every index constant -- is a straight run of ``vec_set`` calls,
+    the first write to a name passing ``None`` so the growable helper builds the
+    vector from scratch::
+
+        guess = vec_set(None, 0, 30)
+
+    A **recurrence** iterates the driving range variable, and goes inside a
+    ``def`` so that loop variable is function-local: the sheet keeps using the
+    range itself further down (``i_range[i] := i``), which a bare ``for i in i:``
+    would clobber with the last scalar index. The vectors are passed in and
+    returned, so the loop reads exactly the elements written so far::
+
+        def _recur_guess(_idx, guess):
+            for i in _idx:
+                guess = vec_set(guess, i + 1, (guess[i] + X / guess[i]) * (1 / 2))
+            return guess
+
+        guess = _recur_guess(i, guess)
+    """
+    bases: list[str] = []
+    for slot in region.targets:
+        if slot.base.py not in bases:
+            bases.append(slot.base.py)
+
+    if region.index is None:
+        return _recurrence_writes(region, set(region.create), indent=0)
+
+    helper = "_recur_" + "_".join(bases)
+    lines = [f"{n} = None" for n in region.create]
+    lines.append(f"def {helper}(_idx, {', '.join(bases)}):")
+    lines.append(f"    for {region.index.py} in _idx:")
+    lines += _recurrence_writes(region, set(), indent=2)
+    lines.append(f"    return {', '.join(bases)}")
+    lines.append("")
+    names = ", ".join(bases)
+    lines.append(f"{names} = {helper}({region.index.py}, {names})")
+    return lines
+
+
+def _recurrence_writes(
+    region: ir.Recurrence, create: set[str], indent: int
+) -> list[str]:
+    """The ``vec_set`` write per target slot, for one step of the iteration.
+
+    With more than one target Mathcad updates them **simultaneously**, so the
+    step's values are computed into a ``_step`` tuple before any of them is
+    written back -- otherwise ``sus[τ+1]``'s right-hand side would read the
+    ``inf[τ+1]`` this same step just wrote. A lone target needs no such staging,
+    and neither does a seed built from a matrix of constants.
+    """
+    pad = "    " * indent
+    lines: list[str] = []
+    single = len(region.targets) == 1
+
+    if single:
+        values = [expr_to_str((region.values or [region.value])[0])]
+    elif region.values is not None and region.index is None:
+        values = [expr_to_str(v) for v in region.values]
+    else:
+        step = (
+            "(" + ", ".join(expr_to_str(v) for v in region.values) + ")"
+            if region.values is not None
+            else f"tuple({expr_to_str(region.value)})"
+        )
+        lines.append(f"{pad}_step = {step}")
+        values = [f"_step[{i}]" for i in range(len(region.targets))]
+
+    for slot, value in zip(region.targets, values):
+        name = slot.base.py
+        index = (
+            f"({expr_to_str(slot.index)}, {expr_to_str(slot.col)})"
+            if slot.col is not None
+            else expr_to_str(slot.index)
+        )
+        source = "None" if name in create else name
+        create.discard(name)
+        lines.append(f"{pad}{name} = vec_set({source}, {index}, {value})")
+    return lines
+
+
 def _needs_elementwise(define: ir.Define) -> bool:
     """True for a *single-argument* scalar function that Mathcad's vectorize
     arrow applies per element: a branching program (``σ_c``) or a *clamp* built
@@ -493,7 +576,45 @@ def echo_expr(region: ir.Region) -> str | None:
         if region.display_unit is not None:
             return _display(f"({base})", region.display_unit)
         return _auto(base, region)
+    if isinstance(region, ir.Recurrence):
+        if not region.evaluate:
+            return None
+        # Mathcad shows the slots the equation just wrote. With the driving range
+        # variable still bound to its integer array, ``Data[i + N]`` reads them
+        # all at once -- the same sub-vector the sheet displays.
+        slot = region.targets[0]
+        base = (
+            f"matelem({slot.base.py}, {expr_to_str(slot.index)}, "
+            f"{expr_to_str(slot.col)})"
+            if slot.col is not None
+            else f"{slot.base.py}[{expr_to_str(slot.index)}]"
+        )
+        if region.display_unit is not None:
+            return _display(f"({base})", region.display_unit)
+        return _auto(base, region)
     return None
+
+
+def guard_cached_error(lines: list[str], region: ir.Region) -> list[str]:
+    """Wrap a region Mathcad itself couldn't compute so the script still runs.
+
+    ``result.xml`` marks these with an ``<engineError>`` -- ``mode(v)`` on data
+    with no repeated value is the canonical one, and the sheet often *means* to
+    show the error ("Since there are no repeated values, an error is returned").
+    The translation is faithful, so it raises too; catching it here keeps the
+    generated module running to the end the way the worksheet does, and prints
+    Mathcad's own wording alongside.
+    """
+    if not region.cached_error or not lines:
+        return lines
+    body = [f"    {line}" if line else line for line in lines]
+    return [
+        f"# Mathcad reports an error here: {region.cached_error}",
+        "try:",
+        *body,
+        "except Exception as _err:",
+        "    print('error:', _err)",
+    ]
 
 
 def _auto(value: str, region: ir.Region) -> str:
@@ -580,7 +701,9 @@ def plot_lines(region: ir.Plot) -> list[str]:
         y = _plot_axis_call(trace.y, trace.y_unit, domain, _domain_var(region))
         label = expr_to_str(_trace_series(trace, region))
         color = f", color={trace.color!r}" if trace.color else ""
-        lines.append(f"_ax.plot({x}, {y}, label={label!r}{color})")
+        # ``plot_trace`` NaN-pads the pair: Mathcad lets a trace's two axes be
+        # different lengths (a seeded iteration outruns its index range).
+        lines.append(f"_ax.plot(*plot_trace({x}, {y}), label={label!r}{color})")
     lines.append("_ax.axhline(0, color='0.6', linewidth=0.8)")
     lines.append("_ax.axvline(0, color='0.6', linewidth=0.8)")
     lines.append("_ax.grid(True, alpha=0.3)")
@@ -803,7 +926,8 @@ def header_lines(ws: ir.Worksheet) -> list[str]:
             "col", "matrix", "arange", "index_build", "index_build_2d",
             "vectorize", "transpose", "matmul", "matcol", "total", "vec_set",
             "unpack", "integral", "double_integral", "summation", "solve_block",
-            "sample", "static_axis", "plot_domain", "plot_axis", "mesh_grid",
+            "sample", "static_axis", "plot_domain", "plot_axis", "plot_trace",
+            "mesh_grid",
             "resolve_plot_grid",
         ]
         seen: set[str] = set()
@@ -900,10 +1024,14 @@ def _used_runtime(ws: ir.Worksheet) -> set[str]:
             found.add("solve_block")
         if isinstance(region, ir.IndexAssign):
             found.add("index_build_2d" if region.col_index is not None else "index_build")
+        if isinstance(region, ir.Recurrence):
+            found.add("vec_set")
+            if region.evaluate and region.targets[0].col is not None:
+                found.add("matelem")
         if isinstance(region, ir.MultiAssign) and region.matrix_target:
             found.add("unpack")
         if isinstance(region, ir.Plot):
-            found.update(("sample", "plot_axis"))
+            found.update(("sample", "plot_axis", "plot_trace"))
             if region.implicit_domain is not None:
                 found.add("plot_domain")
             if region.domain and any(
@@ -974,6 +1102,11 @@ def _region_exprs(region: ir.Region) -> list[ir.Expr]:
         return [region.value]
     if isinstance(region, (ir.Evaluate, ir.IndexAssign)):
         return [region.value]
+    if isinstance(region, ir.Recurrence):
+        exprs = list(region.values or ([region.value] if region.value else []))
+        for slot in region.targets:
+            exprs += [slot.index] + ([slot.col] if slot.col is not None else [])
+        return exprs
     if isinstance(region, ir.MultiAssign):
         return [region.value]
     if isinstance(region, ir.StatusControl):

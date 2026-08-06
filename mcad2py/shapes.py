@@ -123,6 +123,16 @@ def _visit_region(region: ir.Region, env: dict[str, str]) -> None:
             inner[name] = SCALAR
         region.value = _rewrite(region.value, inner, vectorized=False)
         env[region.target.py] = MATRIX if region.col_index is not None else VECTOR
+    elif isinstance(region, ir.Recurrence):
+        inner = dict(env)
+        if region.index is not None:  # one step at a time -- the index is scalar
+            inner[region.index.py] = SCALAR
+        if region.values is not None:
+            region.values = [_rewrite(v, inner, vectorized=False) for v in region.values]
+        elif region.value is not None:
+            region.value = _rewrite(region.value, inner, vectorized=False)
+        for slot in region.targets:
+            env[slot.base.py] = MATRIX if slot.col is not None else VECTOR
     elif isinstance(region, ir.MultiAssign):
         region.value = _rewrite(region.value, env, vectorized=False)
         for target in region.targets:

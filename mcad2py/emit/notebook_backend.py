@@ -19,10 +19,12 @@ from .codegen import (
     echo_expr,
     expr_to_str,
     grid_plot_lines,
+    guard_cached_error,
     header_lines,
     index_assign_line,
     multi_assign_lines,
     plot_lines,
+    recurrence_lines,
     solve_block_lines,
     source_comment,
     status_control_line,
@@ -43,6 +45,10 @@ def to_notebook(ws: ir.Worksheet, *, trace_source: bool = False) -> nbformat.Not
         cell = _render_region(region)
         if cell is None:
             continue
+        if cell.cell_type == "code" and region.cached_error:
+            cell.source = "\n".join(
+                guard_cached_error(cell.source.split("\n"), region)
+            )
         if trace_source and cell.cell_type == "code":
             comment = source_comment(region)
             if comment is not None:
@@ -83,6 +89,13 @@ def _render_region(region: ir.Region) -> nbformat.NotebookNode | None:
 
     if isinstance(region, ir.IndexAssign):
         lines = [index_assign_line(region)]
+        echo = echo_expr(region)
+        if echo is not None:
+            lines.append(echo)  # bare last line -> inline result, like Mathcad "="
+        return nbformat.v4.new_code_cell("\n".join(lines))
+
+    if isinstance(region, ir.Recurrence):
+        lines = recurrence_lines(region)
         echo = echo_expr(region)
         if echo is not None:
             lines.append(echo)  # bare last line -> inline result, like Mathcad "="

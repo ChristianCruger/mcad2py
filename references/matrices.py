@@ -4,7 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pint
 
-from mcad2py.runtime import sin, augment, nth_root, disp, mc_min, mc_max, rows, cols, last, identity, diag, submatrix, matrix, det, determinant, tr, lsolve, geninv, rank, rref, cross, norm, norm1, norm2, norme, normi, cond1, cond2, conde, condi, eigenvals, eigenvec, eigenvecs, genvals, genvecs, svds, sort, reverse, mean, IsArray, IsScalar, matrow, matelem, matmul, col, arange, index_build, index_build_2d, vectorize, transpose, matcol, total, unpack, sample, plot_axis
+from mcad2py.runtime import sin, augment, nth_root, disp, mc_min, mc_max, rows, cols, last, identity, diag, submatrix, matrix, det, determinant, tr, lsolve, geninv, rank, rref, cross, norm, norm1, norm2, norme, normi, cond1, cond2, conde, condi, eigenvals, eigenvec, eigenvecs, genvals, genvecs, svds, sort, reverse, mean, IsArray, IsScalar, matrow, matelem, matmul, col, arange, index_build, index_build_2d, vectorize, transpose, matcol, total, unpack, sample, plot_axis, plot_trace
 ureg = pint.UnitRegistry()
 
 
@@ -14,7 +14,7 @@ A = col(1, 2, 3, 4)
 
 M = matrix(4, 4, 3, 2, 1, 0, 2, 3, 2, 1, 1, 2, 3, 2, 0, 1, 2, 3)
 
-B = col(1, 1, 2, 2)
+B = matrix(1, 4, 1, 1, 2, 2)
 
 C = matmul(M, A)
 print(C)
@@ -210,8 +210,8 @@ range2 = index_build(j, lambda j: j * n)
 print(range2[j])
 
 _fig, _ax = plt.subplots()
-_ax.plot(plot_axis(range2, None), plot_axis(u, None), label='range2', color='#000000')
-_ax.plot(plot_axis(range1, None), plot_axis(v, None), label='range1', color='#00008B')
+_ax.plot(*plot_trace(plot_axis(range2, None), plot_axis(u, None)), label='range2', color='#000000')
+_ax.plot(*plot_trace(plot_axis(range1, None), plot_axis(v, None)), label='range1', color='#00008B')
 _ax.axhline(0, color='0.6', linewidth=0.8)
 _ax.axvline(0, color='0.6', linewidth=0.8)
 _ax.grid(True, alpha=0.3)

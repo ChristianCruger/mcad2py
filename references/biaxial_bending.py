@@ -3,7 +3,7 @@ import math
 import matplotlib.pyplot as plt
 import pint
 
-from mcad2py.runtime import power, elementwise, arange, double_integral, solve_block, sample, plot_axis, mesh_grid, resolve_plot_grid
+from mcad2py.runtime import power, elementwise, arange, double_integral, solve_block, sample, plot_axis, plot_trace, mesh_grid, resolve_plot_grid
 ureg = pint.UnitRegistry()
 
 
@@ -40,7 +40,7 @@ sigma = elementwise(sigma)
 e0 = arange(1.5 * epsilon_c2, -epsilon_c2, 1.49 * epsilon_c2 - 1.5 * epsilon_c2)
 
 _fig, _ax = plt.subplots()
-_ax.plot(plot_axis(e0, 10**-3), plot_axis(sample(lambda e0: sigma(e0), e0), ureg.MPa), label='sigma(e0)', color='#00008B')
+_ax.plot(*plot_trace(plot_axis(e0, 10**-3), plot_axis(sample(lambda e0: sigma(e0), e0), ureg.MPa)), label='sigma(e0)', color='#00008B')
 _ax.axhline(0, color='0.6', linewidth=0.8)
 _ax.axvline(0, color='0.6', linewidth=0.8)
 _ax.grid(True, alpha=0.3)
