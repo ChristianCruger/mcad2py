@@ -447,9 +447,49 @@ def test_matrix_builtin_fills_from_a_function(sheet):
 # ---------------------------------------------------------------------------
 
 
+def test_a_wide_matrix_literal_wraps_one_row_per_line():
+    """A data matrix all on one line is unreadable. The newlines go *inside*
+    ``matrix(``'s own parentheses, so a wrapped literal is still one expression
+    wherever it is nested -- and inside a program body it keeps the body's
+    indent (``_reindent``), rather than jumping back to the margin."""
+    from mcad2py import ir
+    from mcad2py.emit.codegen import _stmt_lines, expr_to_str
+
+    big = ir.Number("1000000000000")
+    wide = ir.MatrixLiteral(rows=2, cols=3, elements=[big] * 6)
+    narrow = ir.MatrixLiteral(rows=2, cols=2, elements=[ir.Number("1")] * 4)
+
+    assert expr_to_str(narrow) == "matrix([1, 1], [1, 1])"
+    assert expr_to_str(wide).splitlines() == [
+        "matrix(",
+        "    [1000000000000, 1000000000000, 1000000000000],",
+        "    [1000000000000, 1000000000000, 1000000000000],",
+        ")",
+    ]
+
+    target = ir.Name(py="M", original="M", role="VARIABLE")
+    body = _stmt_lines(ir.LocalAssign(target=target, value=wide), 2)
+    assert body[0].startswith("        M = matrix(")
+    assert all(line.startswith("        ") for line in body[1:])
+    assert body[-1].strip() == ")"
+
+
+def test_matrix_takes_one_list_per_row():
+    """The literal spelling: rows as written, shape implied. It has to stay
+    distinguishable from the ``matrix(m, n, f)`` builtin, whose trailing
+    argument is a callable."""
+    m = matrix([1, 2, 3], [4, 5, 6])
+    assert m.tolist() == [[1, 2, 3], [4, 5, 6]]
+    assert matrix(2, 3, lambda i, j: i * 10 + j).tolist() == [[0, 1, 2], [10, 11, 12]]
+    with pytest.raises(ValueError, match="same length"):
+        matrix([1, 2], [3])
+    with pytest.raises(TypeError, match="one list per row"):
+        matrix(2, 2, 1, 2, 3, 4)  # the old flat spelling is gone
+
+
 def test_unpack_flattens_column_major():
     """``[a b; c d] := M`` lists its targets column by column."""
-    m = matrix(2, 2, 1, 2, 3, 4)  # columns [1, 2] and [3, 4]
+    m = matrix([1, 3], [2, 4])  # columns [1, 2] and [3, 4]
     assert list(unpack(m)) == [1, 2, 3, 4]
     assert list(unpack(col(7, 8, 9))) == [7, 8, 9]  # a vector passes through
 
@@ -459,17 +499,17 @@ def test_matelem_handles_a_vector_stored_1d():
     column, row = col(10, 20, 30), col(10, 20, 30)
     assert matelem(column, 1, 0) == 20   # 3×1: the row index selects
     assert matelem(row, 0, 2) == 30      # 1×3: the column index selects
-    assert matelem(matrix(2, 2, 1, 2, 3, 4), 0, 1) == 3
+    assert matelem(matrix([1, 3], [2, 4]), 0, 1) == 3
 
 
 def test_shape_helpers_treat_a_vector_as_a_column():
     assert rows(col(1, 2, 3)) == 3
-    assert rows(matrix(2, 3, 1, 2, 3, 4, 5, 6)) == 2
+    assert rows(matrix([1, 3, 5], [2, 4, 6])) == 2
 
 
 def test_determinant_operator_dispatches_on_shape():
     """Mathcad's bars: determinant of a matrix, magnitude of a vector."""
-    assert math.isclose(determinant(matrix(2, 2, 1, 2, 3, 4)), -2.0)
+    assert math.isclose(determinant(matrix([1, 3], [2, 4])), -2.0)
     assert math.isclose(determinant(col(3, 4)), 5.0)
 
 
@@ -477,7 +517,7 @@ def test_linear_algebra_helpers_keep_units_where_they_are_meaningful():
     ureg = pint.UnitRegistry()
     v = col(3 * ureg.m, 4 * ureg.m)
     assert math.isclose(norm(v).to("m").magnitude, 5.0)
-    m = matrix(2, 2, 1 * ureg.m, 0 * ureg.m, 0 * ureg.m, 2 * ureg.m)
+    m = matrix([1 * ureg.m, 0 * ureg.m], [0 * ureg.m, 2 * ureg.m])
     assert math.isclose(tr(m).to("m").magnitude, 3.0)
     assert sort(col(3 * ureg.m, 1 * ureg.m)).to("m").magnitude.tolist() == [1.0, 3.0]
     assert submatrix(m, 0, 0, 0, 1).to("m").magnitude.tolist() == [[1.0, 0.0]]
@@ -493,9 +533,9 @@ def test_cross_product_multiplies_the_units():
 
 
 def test_stack_and_sorts():
-    stacked = stack(col(1, 2), matrix(2, 2, 3, 4, 5, 6))
+    stacked = stack(col(1, 2), matrix([3, 5], [4, 6]))
     assert np.asarray(stacked, dtype=float).tolist() == [[1, 0], [2, 0], [3, 5], [4, 6]]
-    unsorted = matrix(2, 2, 2.0, 1.0, 30.0, 10.0)  # rows [2, 30] and [1, 10]
+    unsorted = matrix([2.0, 30.0], [1.0, 10.0])
     assert csort(unsorted, 0).tolist() == [[1.0, 10.0], [2.0, 30.0]]
     assert rsort(unsorted, 0).tolist() == [[2.0, 30.0], [1.0, 10.0]]
 

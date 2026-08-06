@@ -10,7 +10,7 @@ i = arange(0, 2, 1)
 
 V = col(1, 2, 3)
 
-R = matrix(1, 3, 5, 6, 7)
+R = matrix([5, 6, 7])
 
 j = arange(0, 2, 1)
 
@@ -20,7 +20,7 @@ print(s)
 b = 50 + s
 print(b)
 
-S = stack(matrix(1, 3, 'A', 'B', 'C'), s)
+S = stack(matrix(['A', 'B', 'C']), s)
 print(S)
 
 W = augment(col('X', 'Y', 'Z'), s)

@@ -97,10 +97,11 @@ class MatrixLiteral(Expr):
 
     ``elements`` is stored in the XML's own order, which is **column-major**
     (confirmed against Prime's ``<ml:matrix>``: the first ``rows`` elements
-    are column 0, the next ``rows`` are column 1, etc.) -- the ``matrix()``
-    runtime helper reshapes accordingly. Column and row vectors (``rows == 1``
-    or ``cols == 1``) emit a 1-D NumPy/Pint array instead, via ``col()``, so
-    they index, broadcast, and ``len()`` like Mathcad vectors.
+    are column 0, the next ``rows`` are column 1, etc.). The emitter regroups
+    them into one list per row -- ``matrix([1, 2], [3, 4])`` -- and the runtime
+    helper flattens back to column-major to reshape. Column and row vectors
+    (``rows == 1`` or ``cols == 1``) emit a 1-D NumPy/Pint array instead, via
+    ``col()``, so they index, broadcast, and ``len()`` like Mathcad vectors.
     """
 
     rows: int

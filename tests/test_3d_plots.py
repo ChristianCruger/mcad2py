@@ -148,8 +148,10 @@ def test_three_column_matrix_resolves_to_scatter():
 
 def test_general_matrix_emits_matrix_helper_not_vector():
     src = _src()
-    assert "M = matrix(10, 3," in src
-    assert "M2 = matrix(10, 3," in src
+    # One bracketed list per row, and wide enough that the literal wraps.
+    assert "M = matrix(\n    [1 * ureg.m, 1 * ureg.m, 3 * ureg.m],\n" in src
+    assert "M2 = matrix(\n    [1, 1, 3 * ureg.m],\n" in src
+    assert "    [10 * ureg.m, 3 * ureg.m, 8 * ureg.m],\n)" in src  # 10 rows of 3
     assert "col(" not in src.split("M = matrix")[0].split("M2")[0] or True
 
 
@@ -194,7 +196,8 @@ def test_nxm_matrix_resolves_to_index_grid():
 
 def test_matrix_outer_unit_multiply_preserved():
     src = _src()
-    assert "A = matrix(5, 5," in src and "* ureg.m**2" in src
+    assert "A = matrix(\n    [1, 1, 1, 1, 1],\n" in src
+    assert "    [3, 3, 3, 4, 5],\n) * ureg.m**2" in src
 
 
 # --- rendering: all 8 figures (2 plots x 4 approaches) ----------------------

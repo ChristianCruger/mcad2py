@@ -48,10 +48,10 @@ def _src() -> str:
 def test_matmul_homogeneous_units():
     u = pint.UnitRegistry()
     # identity @ length-vector -> the vector, unit preserved.
-    res = matmul(matrix(2, 2, 1.0, 0.0, 0.0, 1.0), col(3.0 * u.m, 4.0 * u.m))
+    res = matmul(matrix([1.0, 0.0], [0.0, 1.0]), col(3.0 * u.m, 4.0 * u.m))
     assert [float(x) for x in res.to("m").magnitude] == [3.0, 4.0]
     # dimensionless matrix @ length matrix -> length matrix.
-    prod = matmul(matrix(2, 2, 1.0, 0.0, 0.0, 2.0), matrix(2, 2, 1.0 * u.m, 0.0 * u.m, 0.0 * u.m, 5.0 * u.m))
+    prod = matmul(matrix([1.0, 0.0], [0.0, 2.0]), matrix([1.0 * u.m, 0.0 * u.m], [0.0 * u.m, 5.0 * u.m]))
     assert prod.units == u.m
     assert prod.magnitude.tolist() == [[1.0, 0.0], [0.0, 10.0]]
 
@@ -76,7 +76,7 @@ def test_total_sums_vector_elements():
 
 def test_matcol_extracts_column():
     u = pint.UnitRegistry()
-    m = matrix(2, 2, 1.0 * u.m, 0.0 * u.m, 3.0 * u.m, 4.0 * u.m)  # column-major
+    m = matrix([1.0 * u.m, 3.0 * u.m], [0.0 * u.m, 4.0 * u.m])
     assert matcol(m, 0).to("m").magnitude.tolist() == [1.0, 0.0]
     assert matcol(m, 1).to("m").magnitude.tolist() == [3.0, 4.0]
 
@@ -109,7 +109,7 @@ def test_augment_matmul_matcol_total_emitted():
     src = _src()
     assert "augment(ones(n), X_s, Y_s)" in src
     # A genuine matrix product (both operands matrix literals) -> matmul.
-    assert "matmul(matrix(5, 2," in src
+    assert "matmul(matrix([-1, -1], [-1, 1], [1, 1], [1, -1], [-1, -1])," in src
     assert "matmul(augment(ones(n), X_s, Y_s), col(e, kx, ky))" in src
     # Column extraction A^<i>.
     assert "matcol(Contour, 0)" in src
