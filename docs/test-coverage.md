@@ -300,3 +300,19 @@ Two **documented divergences** there, neither a bug:
   which is the more accurate of the two. Reproducing the approximation to be bit-compatible would trade
   correctness for a matching digit, so the test loosens the tolerance on those four indices only
   (`APPROXIMATE`) and everything else stays at 1e-12.
+
+[tests/test_generated_imports.py](../tests/test_generated_imports.py) is not tied to one fixture: it
+runs over **every** `references/*.mcdx` and asserts that a generated module's imports and its body
+agree, in both directions. That invariant is new. `header_lines` used to *predict* which runtime
+helpers the emitted text would name by walking the IR, with the prediction split between a
+`found.add(...)` scan and a separate ordering list — miss either half and the module raised
+`NameError` on import, invisible until someone converted that particular sheet. The header is now
+read off the rendered body, so the two agree by construction and this file guards it.
+
+The "would it `NameError`" direction is checked by parsing the module with `ast` and looking for names
+it reads but never binds — deliberately a *different* implementation from the emitter's own tokenizer,
+so a bug in that tokenizer can't hide behind a test that calls it. The audit when this landed found
+seven dead imports the old predictor had been emitting: `import numpy as np` in four sheets whose
+`min`/`max` are reductions (they emit `mc_min`/`mc_max`, so no bare `np.` is ever written), and
+`sample` in three whose only plots are parametric (both axes data vectors, so no `sample(lambda …)`).
+Nothing was found *missing*, which is the reassuring half of the result.

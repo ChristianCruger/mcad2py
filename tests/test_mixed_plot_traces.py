@@ -39,9 +39,6 @@ REFERENCE = Path(__file__).parent.parent / "references" / "mixed_plot_traces.mcd
 
 @pytest.fixture(scope="module")
 def rendered() -> dict[str, tuple[np.ndarray, np.ndarray]]:
-    import matplotlib
-
-    matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
     plt.close("all")

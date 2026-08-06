@@ -6,12 +6,17 @@ expression printer so we emit only the parentheses Python actually needs.
 
 from __future__ import annotations
 
+import io
+import keyword
+import re
+import tokenize
+from functools import lru_cache
+
 from .. import ir
 from ..mapping import (
     BINARY_OPS,
     CONSTANTS,
     FUNCTIONS,
-    RUNTIME_IMPORTS,
     UNARY_PREC,
     unit_attr,
 )
@@ -901,13 +906,28 @@ def _solve_block_body(region: ir.SolveBlock, unknowns: list[str]) -> list[str]:
 
 # ---------------------------------------------------------------------------
 # Imports needed by a worksheet
+#
+# These are read off the **generated source**, not predicted from the IR. An
+# earlier version walked the IR guessing which helpers the emitted text would
+# name, which meant every new helper had to be registered in two places and a
+# missed registration produced a module that raised ``NameError`` on import --
+# invisible until somebody converted that particular sheet. The text is the
+# ground truth: import exactly the names it references.
 # ---------------------------------------------------------------------------
 
 
-def header_lines(ws: ir.Worksheet) -> list[str]:
-    """Import/setup lines for the generated module, tailored to what's used."""
+def header_lines(ws: ir.Worksheet, source: str) -> list[str]:
+    """Import/setup lines for the generated module, tailored to what it uses.
+
+    ``source`` is the rendered body the header will sit above; the runtime and
+    NumPy imports are derived from the identifiers in it, so callers have to
+    build the body *first*. It is deliberately required rather than defaulting
+    to empty -- a header built without the body would be silently missing every
+    runtime import.
+    """
+    names = _identifiers(source)
     lines = ["import math"]
-    if _uses_numpy(ws):
+    if "np" in names:
         lines.append("import numpy as np")
     if any(isinstance(r, (ir.Plot, ir.GridPlot)) for r in ws.regions):
         lines.append("import matplotlib.pyplot as plt")
@@ -919,24 +939,54 @@ def header_lines(ws: ir.Worksheet) -> list[str]:
         ordered += sorted(sympy_names - set(order))
         lines.append(f"from sympy import {', '.join(ordered)}")
     lines.append("")
-    runtime = _used_runtime(ws)
+    runtime = [n for n in _runtime_exports() if n in names]
     if runtime:
-        order = [
-            *RUNTIME_IMPORTS,
-            "col", "matrix", "arange", "index_build", "index_build_2d",
-            "vectorize", "transpose", "matmul", "matcol", "total", "vec_set",
-            "unpack", "integral", "double_integral", "summation", "solve_block",
-            "sample", "static_axis", "plot_domain", "plot_axis", "plot_trace",
-            "mesh_grid",
-            "resolve_plot_grid",
-        ]
-        seen: set[str] = set()
-        names = ", ".join(
-            n for n in order if n in runtime and not (n in seen or seen.add(n))
-        )
-        lines.append(f"from mcad2py.runtime import {names}")
+        lines.append(f"from mcad2py.runtime import {', '.join(runtime)}")
     lines.append("ureg = pint.UnitRegistry()")
     return lines
+
+
+@lru_cache(maxsize=1)
+def _runtime_exports() -> tuple[str, ...]:
+    """Every public helper *defined in* ``runtime.py``, in definition order.
+
+    The ``__module__`` test is what separates the helpers from the modules
+    ``runtime`` itself imports (``np``, ``math``, ``cmath``), and ``vars()``
+    preserves definition order, so the emitted import line stays grouped by
+    family -- trig, then vector/matrix, then statistics -- for free. A new
+    runtime helper needs no registration anywhere: writing it is enough.
+    """
+    from .. import runtime  # local: keeps NumPy off the import path until needed
+
+    return tuple(
+        name
+        for name, value in vars(runtime).items()
+        if not name.startswith("_")
+        and getattr(value, "__module__", None) == "mcad2py.runtime"
+    )
+
+
+def _identifiers(source: str) -> set[str]:
+    """Every identifier ``source`` names, ignoring strings and comments.
+
+    Tokenizing rather than pattern-matching is what keeps
+    ``# TODO unsupported: sort`` from pulling in the ``sort`` helper. A sheet
+    that *redefines* a helper's name still counts as using it -- ``log-exp.mcdx``
+    calls the builtin ``log`` and then shadows it with its own -- so binding is
+    deliberately not considered. The cost is that a sheet with a variable called
+    ``total`` or ``rank`` imports a helper it then immediately shadows, which is
+    harmless.
+    """
+    try:
+        return {
+            token.string
+            for token in tokenize.generate_tokens(io.StringIO(source).readline)
+            if token.type == tokenize.NAME and not keyword.iskeyword(token.string)
+        }
+    except (tokenize.TokenError, IndentationError, SyntaxError):
+        # Unparseable output is a bug elsewhere; an over-broad import list beats
+        # failing the conversion outright (comments and strings leak in here).
+        return set(re.findall(r"[A-Za-z_]\w*", source))
 
 
 def source_comment(region: ir.Region) -> str | None:
@@ -971,26 +1021,6 @@ def _renamed_targets(region: ir.Region) -> list[ir.Name]:
     return [n for n in targets if n.original != n.py]
 
 
-def _uses_numpy(ws: ir.Worksheet) -> bool:
-    """True if the generated module needs ``np`` directly (``np.*`` calls).
-
-    Matrices/vectors/ranges go through the ``matrix()``/``col()``/``arange()``
-    runtime helpers, which hide NumPy internally -- the generated script only
-    needs a bare ``np.`` for things like the ``min``/``max`` builtins mapping
-    to ``np.minimum``/``np.maximum``.
-    """
-    for region in ws.regions:
-        for node in _region_exprs(region):
-            for sub in _walk(node):
-                if (
-                    isinstance(sub, ir.Call)
-                    and sub.role != "VARIABLE"
-                    and FUNCTIONS.get(sub.func, "").startswith("np.")
-                ):
-                    return True
-    return False
-
-
 def _sympy_imports(ws: ir.Worksheet) -> set[str]:
     """SymPy names the generated module needs (``Eq``/``Symbol``/commands)."""
     names: set[str] = set()
@@ -1004,132 +1034,6 @@ def _sympy_imports(ws: ir.Worksheet) -> set[str]:
             if any(isinstance(e, ir.Equation) for e in _walk(region.expr)):
                 names.add("Eq")
     return names
-
-
-def _used_runtime(ws: ir.Worksheet) -> set[str]:
-    """Runtime-helper names the generated module imports (trig, col, vectorize)."""
-    found: set[str] = set()
-    integrals: list[ir.Integral] = []
-    for region in ws.regions:
-        du = getattr(region, "display_unit", None)
-        if du is not None and _has_unit(du):
-            found.add("disp")
-        elif du is None and echo_expr(region) is not None and _has_division(
-            getattr(region, "value", None)
-        ):
-            found.add("disp")  # automatic display of a possibly-unreduced ratio
-        if isinstance(region, ir.Define) and _needs_elementwise(region):
-            found.add("elementwise")
-        if isinstance(region, ir.SolveBlock):
-            found.add("solve_block")
-        if isinstance(region, ir.IndexAssign):
-            found.add("index_build_2d" if region.col_index is not None else "index_build")
-        if isinstance(region, ir.Recurrence):
-            found.add("vec_set")
-            if region.evaluate and region.targets[0].col is not None:
-                found.add("matelem")
-        if isinstance(region, ir.MultiAssign) and region.matrix_target:
-            found.add("unpack")
-        if isinstance(region, ir.Plot):
-            found.update(("sample", "plot_axis", "plot_trace"))
-            if region.implicit_domain is not None:
-                found.add("plot_domain")
-            if region.domain and any(
-                not _is_domain(e, region.domain)
-                and not _references(e, region.domain)
-                for t in region.traces
-                for e in (t.x, t.y)
-            ):
-                found.add("static_axis")
-        if isinstance(region, ir.GridPlot):
-            found.update(("resolve_plot_grid", "plot_axis"))
-            if region.mesh_names is not None:
-                found.add("mesh_grid")
-        for node in _region_exprs(region):
-            for sub in _walk(node):
-                if isinstance(sub, ir.Call) and sub.role != "VARIABLE" and sub.func in ("min", "max"):
-                    found.add("mc_min" if sub.func == "min" else "mc_max")
-            for sub in _walk(node):
-                if (
-                    isinstance(sub, ir.Call)
-                    and sub.role != "VARIABLE"
-                    and FUNCTIONS.get(sub.func, sub.func) in RUNTIME_IMPORTS
-                ):
-                    found.add(FUNCTIONS.get(sub.func, sub.func))
-                elif isinstance(sub, ir.MatrixLiteral):
-                    found.add("col" if sub.cols <= 1 else "matrix")
-                elif isinstance(sub, ir.Range):
-                    found.add("arange")
-                elif isinstance(sub, ir.Vectorize):
-                    found.add("vectorize")
-                elif isinstance(sub, ir.Transpose):
-                    found.add("transpose")
-                elif isinstance(sub, ir.Root):
-                    found.add("nth_root")
-                elif (
-                    isinstance(sub, ir.BinOp)
-                    and sub.op == "pow"
-                    and not _is_int_literal(sub.right)
-                ):
-                    found.add("power")
-                elif isinstance(sub, ir.MatCol):
-                    found.add("matcol")
-                elif isinstance(sub, ir.Index2D):
-                    found.add("matelem")
-                elif isinstance(sub, ir.VectorSum):
-                    found.add("total")
-                elif isinstance(sub, ir.ProgramBlock):
-                    if _growable_names(sub):
-                        found.add("vec_set")
-                elif isinstance(sub, ir.Integral):
-                    integrals.append(sub)
-                elif isinstance(sub, ir.Summation):
-                    found.add("summation")
-    # A nested (rectangular double) Integral emits one double_integral() call,
-    # not two integral() calls -- so its inner Integral isn't independently used.
-    nested = {id(n): _nested_double_integral(n) for n in integrals}
-    absorbed = {id(inner) for inner in nested.values() if inner is not None}
-    for n in integrals:
-        if nested[id(n)] is not None:
-            found.add("double_integral")
-        elif id(n) not in absorbed:
-            found.add("integral")
-    return found
-
-
-def _region_exprs(region: ir.Region) -> list[ir.Expr]:
-    if isinstance(region, ir.Define):
-        return [region.value]
-    if isinstance(region, (ir.Evaluate, ir.IndexAssign)):
-        return [region.value]
-    if isinstance(region, ir.Recurrence):
-        exprs = list(region.values or ([region.value] if region.value else []))
-        for slot in region.targets:
-            exprs += [slot.index] + ([slot.col] if slot.col is not None else [])
-        return exprs
-    if isinstance(region, ir.MultiAssign):
-        return [region.value]
-    if isinstance(region, ir.StatusControl):
-        return [region.value]
-    if isinstance(region, ir.ComboBoxAssign):
-        return list(region.values)
-    if isinstance(region, ir.SymbolicEquation):
-        return [region.equation]
-    if isinstance(region, ir.SymbolicEval):
-        return [region.expr, *region.args]
-    if isinstance(region, ir.SolveBlock):
-        exprs: list[ir.Expr] = [g.value for g in region.guesses]
-        for c in region.constraints:
-            exprs += [c.lhs, c.rhs]
-        return exprs
-    if isinstance(region, ir.Plot):
-        plot_exprs: list[ir.Expr] = []
-        for t in region.traces:
-            plot_exprs += [t.x, t.y]
-        return plot_exprs
-    if isinstance(region, ir.GridPlot):
-        return [region.expr]
-    return []
 
 
 def _walk(node: ir.Expr) -> list[ir.Expr]:

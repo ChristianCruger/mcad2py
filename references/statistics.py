@@ -3,7 +3,7 @@ import math
 import matplotlib.pyplot as plt
 import pint
 
-from mcad2py.runtime import nth_root, disp, rows, submatrix, matrix, sort, mean, vlookup, median, mode, gmean, hmean, var, Var, stdev, Stdev, skew, kurt, percentile, Rank, histogram, cvar, corr, slope, intercept, Ftest, Spear, kendltau, kendltau2, contingtbl, dnorm, pnorm, qnorm, rnorm, pt, qt, rt, rweibull, col, arange, index_build, transpose, matcol, total, vec_set, summation, sample, plot_domain, plot_axis, plot_trace
+from mcad2py.runtime import disp, nth_root, col, matrix, transpose, vec_set, matcol, rows, submatrix, mean, sort, median, mode, gmean, hmean, var, Var, stdev, Stdev, skew, kurt, percentile, Rank, histogram, cvar, corr, slope, intercept, Ftest, Spear, kendltau, kendltau2, contingtbl, dnorm, pnorm, qnorm, rnorm, pt, qt, rt, rweibull, vlookup, index_build, summation, total, arange, sample, plot_domain, plot_axis, plot_trace
 ureg = pint.UnitRegistry()
 
 

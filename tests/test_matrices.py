@@ -25,16 +25,12 @@ Three things beyond "the name resolves" are exercised:
 
 import math
 import re
-from pathlib import Path
 
-import matplotlib
-
-matplotlib.use("Agg")  # headless: the sheet ends with an x-y plot
 import numpy as np
 import pint
 import pytest
 
-from mcad2py.convert import convert_file
+from conftest import flat, reference, run_sheet
 from mcad2py.runtime import (
     arange,
     col,
@@ -55,7 +51,7 @@ from mcad2py.runtime import (
     unpack,
 )
 
-REFERENCE = Path(__file__).parent.parent / "references" / "matrices.mcdx"
+REFERENCE = reference("matrices")
 
 # Mathcad's cached results (result.xml), keyed by the index of the echo that
 # produces them (regions are echoed in reading order). Matrices are listed
@@ -264,33 +260,9 @@ CACHED_GENVALS = [
 CACHED_COMPONENTS = [4.6027104710592646, 0.10124936041228062, 0.014886322374608265]
 
 
-def _run():
-    """Convert, execute, and return ``(source, namespace, echoed values)``.
-
-    The echoes are captured as *objects*, not text: a sheet of matrices prints
-    multi-line arrays that no line-based parse could put back together. Binding
-    ``print`` in the module globals shadows the builtin for the generated code.
-    """
-    src = convert_file(REFERENCE, fmt="py")
-    echoed: list = []
-    ns: dict = {"print": lambda *a: echoed.append(a[0] if len(a) == 1 else a)}
-    exec(compile(src, "<generated>", "exec"), ns)  # noqa: S102
-    return src, ns, echoed
-
-
-def _flat(value) -> np.ndarray:
-    """A 1-D column-major view of a value's magnitudes, matching the cache."""
-    from mcad2py.runtime import _consolidate
-
-    if isinstance(value, np.ndarray) and value.dtype == object:
-        value = _consolidate(value)
-    arr = np.asarray(getattr(value, "magnitude", value))
-    return arr.reshape(-1, order="F") if arr.ndim > 1 else np.atleast_1d(arr)
-
-
 @pytest.fixture(scope="module")
 def sheet():
-    return _run()
+    return run_sheet(REFERENCE)
 
 
 # ---------------------------------------------------------------------------
@@ -309,7 +281,7 @@ def test_catalogue_matches_cached_results(sheet):
     """Every deterministic echo reproduces Mathcad's cached value."""
     _, _, echoed = sheet
     for index, (label, expected) in CACHED.items():
-        got = _flat(echoed[index])
+        got = flat(echoed[index])
         want = np.atleast_1d(np.asarray(expected, dtype=float))
         assert got.shape == want.shape, f"echo {index} ({label}): shape {got.shape}"
         assert np.allclose(got, want, rtol=1e-12, atol=1e-14), (
@@ -330,11 +302,11 @@ def test_united_results_keep_their_units(sheet):
 def test_down_sampling_example(sheet):
     """The 201-point sine and the index ranges built over it."""
     _, ns, echoed = sheet
-    v = _flat(echoed[49])
+    v = flat(echoed[49])
     assert len(v) == 201
     assert math.isclose(v[1], 0.19509032201612825, rel_tol=1e-12)
     assert math.isclose(v[-1], 1.0, rel_tol=1e-12)
-    assert list(_flat(echoed[53])) == list(range(201))         # range1[i] := i
+    assert list(flat(echoed[53])) == list(range(201))         # range1[i] := i
     # v[n·j] must be an *integer* index even though j's range stops at 7.14…
     assert np.issubdtype(np.asarray(ns["j"]).dtype, np.integer)
 

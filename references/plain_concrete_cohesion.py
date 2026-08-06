@@ -2,7 +2,7 @@
 import math
 import pint
 
-from mcad2py.runtime import sin, tan, cot, nth_root, disp
+from mcad2py.runtime import sin, tan, cot, disp, nth_root
 ureg = pint.UnitRegistry()
 
 

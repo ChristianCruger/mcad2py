@@ -2,7 +2,7 @@
 import math
 import pint
 
-from mcad2py.runtime import augment, stack, matrix, match, lookup, vlookup, hlookup, vhlookup, col, arange, index_build_2d
+from mcad2py.runtime import col, matrix, augment, stack, match, lookup, vlookup, hlookup, vhlookup, index_build_2d, arange
 ureg = pint.UnitRegistry()
 
 

@@ -35,20 +35,17 @@ Numerical-Recipes correlation set. Points worth knowing:
 """
 
 import math
-from pathlib import Path
-import xml.etree.ElementTree as ET
-import zipfile
 
 import numpy as np
 import pytest
 
+from conftest import cached_results, flat, reference, result_refs, run_sheet
 from mcad2py import ir
-from mcad2py.convert import convert_file, convert_worksheet
+from mcad2py.convert import convert_worksheet
 from mcad2py.emit.codegen import echo_expr
 from mcad2py.loader import load_mcdx
-from mcad2py.runtime import _consolidate
 
-REFERENCE = Path(__file__).parent.parent / "references" / "statistics.mcdx"
+REFERENCE = reference("statistics")
 
 # Echoes fed by a random draw (``rt``/``rnorm``/``rweibull``): a different
 # sample every run, so there is no cached number to match. The comment names
@@ -72,63 +69,11 @@ APPROXIMATE = {
 }
 
 
-def _cached_values() -> dict[str, list[float]]:
-    """``result-id`` -> the region's cached numbers, flattened column-major."""
-    root = ET.fromstring(
-        zipfile.ZipFile(REFERENCE).read("mathcad/result.xml").decode("utf-8")
-    )
-    local = lambda tag: tag.rsplit("}", 1)[-1]  # noqa: E731
-    out: dict[str, list[float]] = {}
-    for data in root:
-        result = data.find("./{*}result")
-        node = next(iter(result), None) if result is not None else None
-        if node is None:
-            continue
-        if local(node.tag) == "matrix":
-            out[data.get("result-id")] = [
-                float(c.text) for c in node if local(c.tag) == "real"
-            ]
-        elif local(node.tag) == "real":
-            out[data.get("result-id")] = [float(node.text)]
-    return out
-
-
-def _result_refs() -> dict[int, str]:
-    """``region-id`` -> the ``resultRef`` its ``<math>`` child points at."""
-    root = ET.fromstring(
-        zipfile.ZipFile(REFERENCE).read("mathcad/worksheet.xml").decode("utf-8")
-    )
-    local = lambda tag: tag.rsplit("}", 1)[-1]  # noqa: E731
-    refs: dict[int, str] = {}
-    for region in root.iter():
-        if local(region.tag) != "region" or region.get("region-id") is None:
-            continue
-        math_elem = next((c for c in region if local(c.tag) == "math"), None)
-        if math_elem is not None and math_elem.get("resultRef"):
-            refs[int(region.get("region-id"))] = math_elem.get("resultRef")
-    return refs
-
-
-def _flat(value) -> np.ndarray:
-    """A 1-D column-major view of a value's magnitudes, matching the cache."""
-    if isinstance(value, np.ndarray) and value.dtype == object:
-        value = _consolidate(value)
-    arr = np.asarray(getattr(value, "magnitude", value)).astype(float)
-    return arr.reshape(-1, order="F") if arr.ndim > 1 else np.atleast_1d(arr)
-
-
 @pytest.fixture(scope="module")
 def sheet():
     """Convert, execute, and return ``(source, namespace, echoed values)``."""
-    import matplotlib
-
-    matplotlib.use("Agg")
     np.random.seed(0)  # the random draws still have to be *reproducible* here
-    src = convert_file(REFERENCE, fmt="py")
-    echoed: list = []
-    ns: dict = {"print": lambda *a: echoed.append(a[0] if len(a) == 1 else a)}
-    exec(compile(src, "<generated>", "exec"), ns)  # noqa: S102
-    return src, ns, echoed
+    return run_sheet(REFERENCE)
 
 
 def test_sheet_runs_end_to_end(sheet):
@@ -141,7 +86,7 @@ def test_sheet_runs_end_to_end(sheet):
 def test_sheet_matches_cached_results(sheet):
     """Every deterministic echo reproduces Mathcad's cached value."""
     _, _, echoed = sheet
-    cached, refs = _cached_values(), _result_refs()
+    cached, refs = cached_results(REFERENCE), result_refs(REFERENCE)
     regions = [r for r in convert_worksheet(load_mcdx(REFERENCE)).regions
                if echo_expr(r) is not None]
     assert len(regions) == len(echoed)
@@ -151,7 +96,7 @@ def test_sheet_matches_cached_results(sheet):
         if index in RANDOM or index in ENGINE_ERRORS:
             continue
         want = np.asarray(cached[refs[region.source.region_id]], dtype=float)
-        got = _flat(echoed[index])
+        got = flat(echoed[index])
         assert got.shape == want.shape, f"echo {index}: {got.shape} vs {want.shape}"
         rtol = APPROXIMATE.get(index, 1e-12)
         assert np.allclose(got, want, rtol=rtol, atol=1e-12), (
@@ -167,7 +112,7 @@ def test_population_and_sample_estimators_are_distinct(sheet):
     ``Variance``) sit next to them and must land on the same pair."""
     _, ns, _ = sheet
     sample = ns["D"]
-    n = len(_flat(sample))
+    n = len(flat(sample))
     assert math.isclose(ns["Var"](sample) / ns["var"](sample), n / (n - 1), rel_tol=1e-14)
     assert math.isclose(ns["Stdev"](sample) ** 2, ns["Var"](sample), rel_tol=1e-14)
     assert math.isclose(ns["stdev"](sample) ** 2, ns["var"](sample), rel_tol=1e-14)
@@ -193,7 +138,7 @@ def test_percent_is_a_dimensionless_unit(sheet):
     in the XML as a scale apply just like ``50 mm``, but labelled FUNCTION."""
     src, _, echoed = sheet
     assert "percentile(X, 50 * ureg.percent)" in src
-    assert math.isclose(float(_flat(echoed[14])[0]), 5.0, rel_tol=1e-14)
+    assert math.isclose(float(flat(echoed[14])[0]), 5.0, rel_tol=1e-14)
 
 
 def test_mode_refuses_to_guess(sheet):
@@ -206,7 +151,7 @@ def test_mode_refuses_to_guess(sheet):
     for index in sorted(ENGINE_ERRORS):
         label, error = echoed[index]
         assert label == "error:" and isinstance(error, ValueError)
-    assert math.isclose(float(_flat(echoed[12])[0]), 4.0)  # [1 2 3 4 4 5 6]
+    assert math.isclose(float(flat(echoed[12])[0]), 4.0)  # [1 2 3 4 4 5 6]
 
     with pytest.raises(ValueError, match="No value occurs more frequently"):
         mode(np.array([1.0, 2.0, 3.0]))
@@ -226,8 +171,8 @@ def test_in_place_element_update_is_a_recurrence(sheet):
         if isinstance(r, ir.Recurrence) and r.targets[0].base.py == "data"
     )
     assert update.index is None and update.create == []  # updates, never creates
-    assert math.isclose(float(_flat(echoed[0])[0]), 75.4)   # mean before
-    assert math.isclose(float(_flat(echoed[2])[0]), 77.24)  # mean after
+    assert math.isclose(float(flat(echoed[0])[0]), 75.4)   # mean before
+    assert math.isclose(float(flat(echoed[2])[0]), 77.24)  # mean after
 
 
 def test_regression_and_correlation_agree_with_the_sheets_own_formulas(sheet):
@@ -238,7 +183,7 @@ def test_regression_and_correlation_agree_with_the_sheets_own_formulas(sheet):
     assert math.isclose(ns["slope"](v1, v2), ns["cvar"](v1, v2) / ns["var"](v1),
                         rel_tol=1e-14)
     assert math.isclose(ns["corr"](v1, v2), -0.98084821135069744, rel_tol=1e-14)
-    assert math.isclose(float(_flat(echoed[73])[0]), ns["corr"](v1, v2) ** 2,
+    assert math.isclose(float(flat(echoed[73])[0]), ns["corr"](v1, v2) ** 2,
                         rel_tol=1e-14)
 
 
@@ -249,7 +194,7 @@ def test_rank_is_one_based_ascending(sheet):
 
     _, ns, _ = sheet
     assert list(Rank(np.array([0.1, -0.86, -3.7]))) == [3.0, 2.0, 1.0]
-    assert list(_flat(ns["Rank2"])) == list(range(1, 11))  # V_2 is monotonic
+    assert list(flat(ns["Rank2"])) == list(range(1, 11))  # V_2 is monotonic
     assert math.isclose(ns["corr"](ns["Rank1"], ns["Rank2"]), -0.98787878787878791,
                         rel_tol=1e-14)
 
@@ -259,8 +204,8 @@ def test_contingency_table_statistics(sheet):
     measures are just χ² rescaled, which is worth pinning independently of the
     cached numbers."""
     _, ns, _ = sheet
-    chisq, df, _prob, cramrv, ccc = _flat(ns["c"])
-    total = float(np.sum(_flat(ns["Table"])))
+    chisq, df, _prob, cramrv, ccc = flat(ns["c"])
+    total = float(np.sum(flat(ns["Table"])))
     assert df == 6.0  # (3 rows - 1) x (4 columns - 1)
     assert math.isclose(cramrv, math.sqrt(chisq / (total * 2)), rel_tol=1e-14)
     assert math.isclose(ccc, math.sqrt(chisq / (chisq + total)), rel_tol=1e-14)
@@ -281,9 +226,9 @@ def test_random_draws_have_the_right_shape_even_though_they_cannot_match(sheet):
     """The random-sample regions can't reproduce a cached value, but they do run
     -- and the distributions they build are the size the sheet asked for."""
     _, ns, echoed = sheet
-    assert len(_flat(echoed[25])) == 7          # rt(7, ν)
-    assert len(_flat(ns["WeibDist"])) == 2000
-    assert len(_flat(ns["NormDist"])) == 2000
+    assert len(flat(echoed[25])) == 7          # rt(7, ν)
+    assert len(flat(ns["WeibDist"])) == 2000
+    assert len(flat(ns["NormDist"])) == 2000
     # ``histogram(15, A)`` is a 15 x 2 matrix of bin midpoints and counts; the
     # midpoints keep the sample's unit, so the two columns stay a mixed-unit
     # (object) matrix -- which is exactly what the plot below reads with

@@ -3,7 +3,7 @@ import math
 import matplotlib.pyplot as plt
 import pint
 
-from mcad2py.runtime import matrix, matmul, col, arange, index_build, transpose, matcol, vec_set, sample, plot_axis, plot_trace
+from mcad2py.runtime import col, matrix, transpose, vec_set, matmul, matcol, index_build, arange, plot_axis, plot_trace
 ureg = pint.UnitRegistry()
 
 

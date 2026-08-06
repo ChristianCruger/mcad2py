@@ -19,7 +19,6 @@ from mcad2py.convert import convert_file, convert_worksheet
 from mcad2py.emit.codegen import (
     declaration_lines,
     expr_to_str,
-    header_lines,
     symbolic_eval_expr,
 )
 from mcad2py.loader import load_mcdx
@@ -112,9 +111,8 @@ def test_compound_unit_override_in_echo():
 
 
 def test_header_imports_sympy_only_when_needed():
-    sym_ws = convert_worksheet(load_mcdx(REFERENCE))
-    plain_ws = convert_worksheet(load_mcdx(PLAIN))
-    sym_header = "\n".join(header_lines(sym_ws))
-    plain_header = "\n".join(header_lines(plain_ws))
-    assert "from sympy import Eq, Symbol, solve" in sym_header
-    assert "sympy" not in plain_header
+    """Asserted on the converted artifact rather than on ``header_lines`` alone:
+    the header is built *from* the rendered body (that's where the runtime
+    imports are read off), so it isn't meaningful in isolation."""
+    assert "from sympy import Eq, Symbol, solve" in convert_file(REFERENCE, fmt="py")
+    assert "sympy" not in convert_file(PLAIN, fmt="py")

@@ -30,18 +30,18 @@ NaN-padded the way Mathcad's own cached trace is.
 """
 
 import math
-from pathlib import Path
 import xml.etree.ElementTree as ET
 import zipfile
 
 import numpy as np
 import pytest
 
+from conftest import flat, reference, run_sheet
 from mcad2py import ir
-from mcad2py.convert import convert_file, convert_worksheet
+from mcad2py.convert import convert_worksheet
 from mcad2py.loader import load_mcdx
 
-REFERENCE = Path(__file__).parent.parent / "references" / "difference_eq.mcdx"
+REFERENCE = reference("difference_eq")
 
 # Mathcad's cached results (result.xml), in echo order.
 SQRT_700 = 26.457513110645905
@@ -87,26 +87,9 @@ def _cached_traces() -> dict[str, list[float]]:
     return traces
 
 
-def _run():
-    import matplotlib
-
-    matplotlib.use("Agg")
-    src = convert_file(REFERENCE, fmt="py")
-    echoed: list = []
-    ns: dict = {"print": lambda *a: echoed.append(a[0] if len(a) == 1 else a)}
-    exec(compile(src, "<generated>", "exec"), ns)  # noqa: S102
-    return src, ns, echoed
-
-
-def _flat(value) -> np.ndarray:
-    """A 1-D column-major view of a value's magnitudes, matching the cache."""
-    arr = np.asarray(getattr(value, "magnitude", value), dtype=float)
-    return arr.reshape(-1, order="F") if arr.ndim > 1 else np.atleast_1d(arr)
-
-
 @pytest.fixture(scope="module")
 def sheet():
-    return _run()
+    return run_sheet(REFERENCE)
 
 
 def test_sheet_runs_end_to_end(sheet):
@@ -119,7 +102,7 @@ def test_sheet_matches_cached_results(sheet):
     """Every echo reproduces Mathcad's cached value."""
     _, _, echoed = sheet
     for index, (label, expected) in enumerate(CACHED):
-        got = _flat(echoed[index])
+        got = flat(echoed[index])
         want = np.asarray(expected, dtype=float)
         assert got.shape == want.shape, f"{label}: shape {got.shape} vs {want.shape}"
         assert np.allclose(got, want, rtol=1e-12, atol=1e-9), f"{label}: {got} != {want}"
@@ -131,7 +114,7 @@ def test_seeded_iteration_converges_to_the_square_root(sheet):
     the step before wrote. Ten elements for nine steps -- the seed plus one per
     value of ``i := 0..8``, which is why ``guess`` outruns its index range."""
     _, ns, _ = sheet
-    guess = _flat(ns["guess"])
+    guess = flat(ns["guess"])
     assert len(guess) == 10
     assert math.isclose(guess[0], 30)  # the seed, untouched
     assert math.isclose(guess[-1], math.sqrt(700), rel_tol=1e-15)
@@ -143,8 +126,8 @@ def test_the_loop_variable_does_not_leak_out_of_the_recurrence(sheet):
     := i``), which a bare loop would have left bound to the last scalar index."""
     src, ns, _ = sheet
     assert "def _recur_guess(_idx, guess):" in src
-    assert list(_flat(ns["i"])) == list(range(9))  # still the whole range
-    assert list(_flat(ns["i_range"])) == list(range(9))
+    assert list(flat(ns["i"])) == list(range(9))  # still the whole range
+    assert list(flat(ns["i_range"])) == list(range(9))
 
 
 def test_system_of_difference_equations_updates_simultaneously(sheet):
@@ -157,12 +140,12 @@ def test_system_of_difference_equations_updates_simultaneously(sheet):
     assert "_step = (" in src
     traces = _cached_traces()
     for name, want in traces.items():
-        got = _flat(ns[name])
+        got = flat(ns[name])
         assert got.shape == (len(want),), f"{name}: {got.shape} vs {len(want)}"
         assert np.allclose(got, want, rtol=1e-12, atol=1e-9), name
     # The population is conserved: everyone is susceptible, infected, deceased
     # or recovered at every step.
-    total = sum(_flat(ns[n]) for n in ("inf", "sus", "dec", "rec"))
+    total = sum(flat(ns[n]) for n in ("inf", "sus", "dec", "rec"))
     assert np.allclose(total, 22050.0, rtol=1e-12)
 
 

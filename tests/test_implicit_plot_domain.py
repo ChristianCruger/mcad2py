@@ -52,9 +52,6 @@ def _cached_traces() -> list[tuple[list[float], list[float]]]:
 
 
 def _rendered_traces() -> dict[str, "tuple[np.ndarray, np.ndarray]"]:
-    import matplotlib
-
-    matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
     plt.close("all")
@@ -91,9 +88,6 @@ def test_invented_variable_does_not_leak_into_the_sheet():
     """Mathcad invents the variable for the plot alone -- it must not become a
     worksheet name the regions below could pick up."""
     namespace: dict = {}
-    import matplotlib
-
-    matplotlib.use("Agg")
     exec(compile(_src(), "<plotting-wo-var>", "exec"), namespace)  # noqa: S102
     assert "x" not in namespace
     assert "_domain_x" in namespace

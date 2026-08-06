@@ -1,10 +1,9 @@
 """Auto-generated from a Mathcad worksheet by mcad2py."""
 import math
-import numpy as np
 import matplotlib.pyplot as plt
 import pint
 
-from mcad2py.runtime import augment, mround, nth_root, power, disp, elementwise, mc_min, mc_max, matrix, matelem, matmul, col, arange, vectorize, transpose, matcol, total, vec_set, solve_block, sample, plot_axis, plot_trace
+from mcad2py.runtime import elementwise, mc_max, mc_min, disp, nth_root, power, mround, col, matrix, transpose, vec_set, augment, matmul, matcol, matelem, total, solve_block, arange, plot_axis, plot_trace, vectorize
 ureg = pint.UnitRegistry()
 
 

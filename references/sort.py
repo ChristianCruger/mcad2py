@@ -2,7 +2,7 @@
 import math
 import pint
 
-from mcad2py.runtime import sort, reverse, csort, rsort, col, arange, index_build_2d
+from mcad2py.runtime import col, sort, reverse, csort, rsort, index_build_2d, arange
 ureg = pint.UnitRegistry()
 
 

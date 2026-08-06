@@ -24,10 +24,9 @@ from .codegen import (
 
 
 def to_python(ws: ir.Worksheet, *, trace_source: bool = False) -> str:
-    lines: list[str] = ['"""Auto-generated from a Mathcad worksheet by mcad2py."""']
-    lines += header_lines(ws)
-    lines.append("")
-
+    # The body is rendered first: the header's imports are read off the text it
+    # will sit above, rather than predicted from the IR (see `header_lines`).
+    body: list[str] = []
     for region in ws.regions:
         out = _guarded(_render_region(region), region)
         if trace_source and out:
@@ -39,8 +38,12 @@ def to_python(ws: ir.Worksheet, *, trace_source: bool = False) -> str:
                     if out[0] == ""
                     else [comment, *out]
                 )
-        lines += out
-    return "\n".join(lines) + "\n"
+        body += out
+
+    lines: list[str] = ['"""Auto-generated from a Mathcad worksheet by mcad2py."""']
+    lines += header_lines(ws, "\n".join(body))
+    lines.append("")
+    return "\n".join(lines + body) + "\n"
 
 
 def _guarded(lines: list[str], region: ir.Region) -> list[str]:

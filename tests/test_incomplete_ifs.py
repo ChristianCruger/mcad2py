@@ -42,9 +42,6 @@ REFERENCE = Path(__file__).parent.parent / "references" / "incomplete_ifs.mcdx"
 @pytest.fixture(scope="module")
 def sheet() -> tuple[str, dict, list[str]]:
     """The generated source, the namespace after running it, and its output."""
-    import matplotlib
-
-    matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
     plt.close("all")

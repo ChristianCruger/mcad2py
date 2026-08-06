@@ -250,9 +250,6 @@ def test_parametric_plots_emit_direct_axes():
 
 
 def test_parametric_plots_render_with_section_geometry():
-    import matplotlib
-
-    matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
     plt.close("all")

@@ -3,7 +3,7 @@ import math
 import matplotlib.pyplot as plt
 import pint
 
-from mcad2py.runtime import power, elementwise, sample, plot_domain, plot_axis, plot_trace
+from mcad2py.runtime import elementwise, power, sample, plot_domain, plot_axis, plot_trace
 ureg = pint.UnitRegistry()
 
 

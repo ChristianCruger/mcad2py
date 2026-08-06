@@ -15,9 +15,6 @@ import math
 import warnings
 from pathlib import Path
 
-import matplotlib
-
-matplotlib.use("Agg")  # headless: no display needed for plot tests
 import numpy as np
 
 from mcad2py import ir
@@ -102,7 +99,12 @@ def test_vectorize_wrapper_emitted():
     for helper in ("col", "vectorize"):
         assert helper in import_line
     assert "A_s = vectorize(" in src
-    assert "import numpy as np" in src  # np.minimum from the min/max clamps
+    # This sheet's min/max are *reductions*, so they emit `mc_min`/`mc_max`, not
+    # `np.minimum`/`np.maximum` -- and so it needs no bare `np` at all. It used
+    # to import NumPy anyway, because the old import scan asked what `min` maps
+    # to in the builtin table rather than what codegen actually wrote.
+    assert "mc_max(mc_min(" in src
+    assert "import numpy as np" not in src
 
 
 def test_range_emits_arange():

@@ -197,39 +197,6 @@ FUNCTIONS = {
     "rweibull": "rweibull",
 }
 
-# Runtime helpers that are *called by name* in generated code (so a Call to one
-# triggers its import): the angle-aware trig wrappers, ``linterp`` (Mathcad's
-# linear interpolation, which reorders args and is unit-aware), and
-# ``CreateMesh`` (a 3D-plot grid builder) -- see runtime.py.
-RUNTIME_IMPORTS = (
-    "sin", "cos", "tan", "cot", "sec", "csc", "sinc",
-    "asin", "acos", "atan", "acot", "asec", "acsc", "atan2", "angle",
-    "sinh", "cosh", "tanh", "coth", "sech", "csch",
-    "asinh", "acosh", "atanh", "acoth", "asech", "acsch",
-    "linterp", "CreateMesh", "augment",
-    "ceil", "floor", "mround", "sqrt", "nth_root", "power", "disp", "elementwise",
-    "ln", "log", "ln0", "logspace",
-    "mc_min", "mc_max",
-    # Vector & matrix builtins, plus the two bar/cross *operators*
-    # (``determinant``/``cross``) the parser routes through a Call.
-    "stack", "rows", "cols", "last", "identity", "diag", "submatrix", "matrix",
-    "det", "determinant", "tr", "lsolve", "geninv", "rank", "rref", "cross",
-    "norm", "norm1", "norm2", "norme", "normi",
-    "cond1", "cond2", "conde", "condi",
-    "eigenvals", "eigenvec", "eigenvecs", "genvals", "genvecs", "svds",
-    "sort", "reverse", "csort", "rsort", "mean", "IsArray", "IsScalar",
-    "match", "lookup", "vlookup", "hlookup", "vhlookup",
-    "matrow", "matelem", "matmul",
-    # Statistics: descriptive, then regression/correlation, then distributions.
-    "median", "mode", "gmean", "hmean", "var", "Var", "stdev", "Stdev",
-    "skew", "kurt", "percentile", "Rank", "histogram",
-    "cvar", "corr", "slope", "intercept", "Ftest",
-    "Spear", "kendltau", "kendltau2", "contingtbl",
-    "dnorm", "pnorm", "qnorm", "rnorm",
-    "dt", "pt", "qt", "rt",
-    "dweibull", "pweibull", "qweibull", "rweibull",
-)
-
 # Mathcad symbolic command keyword (first id of a <ml:command> sequence) ->
 # SymPy callable. Symbolic regions emit ``<callable>(expr, *args)``.
 SYMBOLIC_COMMANDS = {
