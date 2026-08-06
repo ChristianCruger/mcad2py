@@ -19,10 +19,12 @@ from .codegen import (
     echo_expr,
     expr_to_str,
     grid_plot_lines,
+    guard_cached_error,
     header_lines,
     index_assign_line,
     multi_assign_lines,
     plot_lines,
+    recurrence_lines,
     solve_block_lines,
     source_comment,
     status_control_line,
@@ -32,24 +34,32 @@ from .codegen import (
 
 def to_notebook(ws: ir.Worksheet, *, trace_source: bool = False) -> nbformat.NotebookNode:
     nb = nbformat.v4.new_notebook()
-    cells: list[nbformat.NotebookNode] = [
-        nbformat.v4.new_markdown_cell(
-            "*Auto-generated from a Mathcad worksheet by mcad2py.*"
-        ),
-        nbformat.v4.new_code_cell("\n".join(header_lines(ws))),
-    ]
 
+    # The region cells come first: the header cell's imports are read off the
+    # code they will sit above, not predicted from the IR (see `header_lines`).
+    body: list[nbformat.NotebookNode] = []
     for region in ws.regions:
         cell = _render_region(region)
         if cell is None:
             continue
+        if cell.cell_type == "code" and region.cached_error:
+            cell.source = "\n".join(
+                guard_cached_error(cell.source.split("\n"), region)
+            )
         if trace_source and cell.cell_type == "code":
             comment = source_comment(region)
             if comment is not None:
                 cell.source = f"{comment}\n{cell.source}"
-        cells.append(cell)
+        body.append(cell)
 
-    nb["cells"] = cells
+    source = "\n".join(c.source for c in body if c.cell_type == "code")
+    nb["cells"] = [
+        nbformat.v4.new_markdown_cell(
+            "*Auto-generated from a Mathcad worksheet by mcad2py.*"
+        ),
+        nbformat.v4.new_code_cell("\n".join(header_lines(ws, source))),
+        *body,
+    ]
     return nb
 
 
@@ -83,6 +93,13 @@ def _render_region(region: ir.Region) -> nbformat.NotebookNode | None:
 
     if isinstance(region, ir.IndexAssign):
         lines = [index_assign_line(region)]
+        echo = echo_expr(region)
+        if echo is not None:
+            lines.append(echo)  # bare last line -> inline result, like Mathcad "="
+        return nbformat.v4.new_code_cell("\n".join(lines))
+
+    if isinstance(region, ir.Recurrence):
+        lines = recurrence_lines(region)
         echo = echo_expr(region)
         if echo is not None:
             lines.append(echo)  # bare last line -> inline result, like Mathcad "="

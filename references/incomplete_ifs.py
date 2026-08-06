@@ -3,7 +3,7 @@ import math
 import matplotlib.pyplot as plt
 import pint
 
-from mcad2py.runtime import power, elementwise, sample, plot_domain, plot_axis
+from mcad2py.runtime import elementwise, power, sample, plot_domain, plot_axis, plot_trace
 ureg = pint.UnitRegistry()
 
 
@@ -34,7 +34,11 @@ sigma_c = elementwise(sigma_c)
 
 print(sigma_c(P3))
 
-print(sigma_c(-P3))
+# Mathcad reports an error here: This program has no return value. You must account for all cases when using conditional statements in a Mathcad program.
+try:
+    print(sigma_c(-P3))
+except Exception as _err:
+    print('error:', _err)
 
 # blank lines in programs ignored:
 
@@ -59,7 +63,7 @@ print(sigma_cI(-0.003))
 
 _domain_epsilon_con = plot_domain(-7.0, 1.0, 499)
 _fig, _ax = plt.subplots()
-_ax.plot(plot_axis(_domain_epsilon_con, None), plot_axis(sample(lambda epsilon_con: sigma_cI(epsilon_con / 1000), _domain_epsilon_con), ureg.MPa), label='sigma_cI(epsilon_con / 1000)', color='#FF0000')
+_ax.plot(*plot_trace(plot_axis(_domain_epsilon_con, None), plot_axis(sample(lambda epsilon_con: sigma_cI(epsilon_con / 1000), _domain_epsilon_con), ureg.MPa)), label='sigma_cI(epsilon_con / 1000)', color='#FF0000')
 _ax.axhline(0, color='0.6', linewidth=0.8)
 _ax.axvline(0, color='0.6', linewidth=0.8)
 _ax.grid(True, alpha=0.3)

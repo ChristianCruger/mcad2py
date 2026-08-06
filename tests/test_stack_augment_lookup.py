@@ -32,15 +32,14 @@ with nothing to echo, so Mathcad never refreshed it. Everything downstream
 
 import zipfile
 import xml.etree.ElementTree as ET
-from pathlib import Path
 
 import numpy as np
 import pytest
 
-from mcad2py.convert import convert_file
+from conftest import reference, run_sheet
 from mcad2py.runtime import augment, col, lookup, match, matrix, stack, transpose
 
-REFERENCE = Path(__file__).parent.parent / "references" / "stack_augment_lookup.mcdx"
+REFERENCE = reference("stack_augment_lookup")
 
 
 def _cached() -> dict[int, object]:
@@ -75,17 +74,9 @@ def _cached() -> dict[int, object]:
     return out
 
 
-def _run():
-    src = convert_file(REFERENCE, fmt="py")
-    echoed: list = []
-    ns: dict = {"print": lambda *a: echoed.append(a[0] if len(a) == 1 else a)}
-    exec(compile(src, "<generated>", "exec"), ns)  # noqa: S102
-    return src, ns, echoed
-
-
 @pytest.fixture(scope="module")
 def sheet():
-    return _run()
+    return run_sheet(REFERENCE)
 
 
 def _rows(value) -> list:

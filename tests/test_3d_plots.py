@@ -27,10 +27,6 @@ import math
 import warnings
 from pathlib import Path
 
-import matplotlib
-
-matplotlib.use("Agg")  # headless: no display needed for plot tests
-
 from mcad2py import ir
 from mcad2py.convert import convert_file
 from mcad2py.runtime import Mesh

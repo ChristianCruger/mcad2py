@@ -1,10 +1,9 @@
 """Auto-generated from a Mathcad worksheet by mcad2py."""
 import math
-import numpy as np
 import matplotlib.pyplot as plt
 import pint
 
-from mcad2py.runtime import augment, mround, nth_root, power, disp, elementwise, mc_min, mc_max, matrix, matelem, matmul, col, arange, vectorize, transpose, matcol, total, vec_set, solve_block, sample, plot_axis
+from mcad2py.runtime import elementwise, mc_max, mc_min, disp, nth_root, power, mround, col, matrix, transpose, vec_set, augment, matmul, matcol, matelem, total, solve_block, arange, plot_axis, plot_trace, vectorize
 ureg = pint.UnitRegistry()
 
 
@@ -189,10 +188,10 @@ def _X_c_Y_c():
 X_c, Y_c = tuple(_X_c_Y_c())
 
 _fig, _ax = plt.subplots()
-_ax.plot(plot_axis(matcol(Contour, 0), ureg.mm), plot_axis(matcol(Contour, 1), ureg.mm), label='matcol(Contour, 0)', color='#00008B')
-_ax.plot(plot_axis(matcol(stirrup, 0), ureg.mm), plot_axis(matcol(stirrup, 1), ureg.mm), label='matcol(stirrup, 0)', color='#932329')
-_ax.plot(plot_axis(X_s, ureg.mm), plot_axis(Y_s, ureg.mm), label='X_s', color='#932329')
-_ax.plot(plot_axis(X_c, ureg.mm), plot_axis(Y_c, ureg.mm), label='X_c', color='#A1A3A6')
+_ax.plot(*plot_trace(plot_axis(matcol(Contour, 0), ureg.mm), plot_axis(matcol(Contour, 1), ureg.mm)), label='matcol(Contour, 0)', color='#00008B')
+_ax.plot(*plot_trace(plot_axis(matcol(stirrup, 0), ureg.mm), plot_axis(matcol(stirrup, 1), ureg.mm)), label='matcol(stirrup, 0)', color='#932329')
+_ax.plot(*plot_trace(plot_axis(X_s, ureg.mm), plot_axis(Y_s, ureg.mm)), label='X_s', color='#932329')
+_ax.plot(*plot_trace(plot_axis(X_c, ureg.mm), plot_axis(Y_c, ureg.mm)), label='X_c', color='#A1A3A6')
 _ax.axhline(0, color='0.6', linewidth=0.8)
 _ax.axvline(0, color='0.6', linewidth=0.8)
 _ax.grid(True, alpha=0.3)
@@ -375,8 +374,8 @@ def _UR_c_max_i_c_UR_s_max_i_s_ERR_E():
                 UR_s_max = UR_si
                 i_s = j
         except Exception:
-            return transpose(col(9.99, j, 9.99, j, 1, E))
-    return transpose(col(UR_c_max, i_c, UR_s_max, i_s, 0, E))
+            return transpose(matrix(1, 6, 9.99, j, 9.99, j, 1, E))
+    return transpose(matrix(1, 6, UR_c_max, i_c, UR_s_max, i_s, 0, E))
 UR_c_max, i_c, UR_s_max, i_s, ERR, E = tuple(_UR_c_max_i_c_UR_s_max_i_s_ERR_E())
 print([UR_c_max, i_c, UR_s_max, i_s, ERR, E])
 
@@ -500,10 +499,10 @@ A_stx = lambda e, kx, ky: t_only(F_si(e, kx, ky)) / t_only(vectorize(sigma_s(eps
 print(disp((z(e, kx, ky)), ureg.mm))
 
 _fig, _ax = plt.subplots()
-_ax.plot(plot_axis(matcol(Contour, 0), ureg.mm), plot_axis(matcol(Contour, 1), ureg.mm), label='matcol(Contour, 0)', color='#00008B')
-_ax.plot(plot_axis(X_s, ureg.mm), plot_axis(Y_s, ureg.mm), label='X_s', color='#932329')
-_ax.plot(plot_axis(matcol(NA, 0), ureg.mm), plot_axis(matcol(NA, 1), ureg.mm), label='matcol(NA, 0)', color='#068149')
-_ax.plot(plot_axis(matcol(CGi, 0), ureg.mm), plot_axis(matcol(CGi, 1), ureg.mm), label='matcol(CGi, 0)', color='#662D91')
+_ax.plot(*plot_trace(plot_axis(matcol(Contour, 0), ureg.mm), plot_axis(matcol(Contour, 1), ureg.mm)), label='matcol(Contour, 0)', color='#00008B')
+_ax.plot(*plot_trace(plot_axis(X_s, ureg.mm), plot_axis(Y_s, ureg.mm)), label='X_s', color='#932329')
+_ax.plot(*plot_trace(plot_axis(matcol(NA, 0), ureg.mm), plot_axis(matcol(NA, 1), ureg.mm)), label='matcol(NA, 0)', color='#068149')
+_ax.plot(*plot_trace(plot_axis(matcol(CGi, 0), ureg.mm), plot_axis(matcol(CGi, 1), ureg.mm)), label='matcol(CGi, 0)', color='#662D91')
 _ax.axhline(0, color='0.6', linewidth=0.8)
 _ax.axvline(0, color='0.6', linewidth=0.8)
 _ax.grid(True, alpha=0.3)
@@ -585,10 +584,10 @@ print(UR_s(e_s))
 print(disp((z(e, kx, ky)), ureg.mm))
 
 _fig, _ax = plt.subplots()
-_ax.plot(plot_axis(matcol(Contour, 0), ureg.mm), plot_axis(matcol(Contour, 1), ureg.mm), label='matcol(Contour, 0)', color='#00008B')
-_ax.plot(plot_axis(X_s, ureg.mm), plot_axis(Y_s, ureg.mm), label='X_s', color='#932329')
-_ax.plot(plot_axis(matcol(NA, 0), ureg.mm), plot_axis(matcol(NA, 1), ureg.mm), label='matcol(NA, 0)', color='#068149')
-_ax.plot(plot_axis(matcol(CGi, 0), ureg.mm), plot_axis(matcol(CGi, 1), ureg.mm), label='matcol(CGi, 0)', color='#662D91')
+_ax.plot(*plot_trace(plot_axis(matcol(Contour, 0), ureg.mm), plot_axis(matcol(Contour, 1), ureg.mm)), label='matcol(Contour, 0)', color='#00008B')
+_ax.plot(*plot_trace(plot_axis(X_s, ureg.mm), plot_axis(Y_s, ureg.mm)), label='X_s', color='#932329')
+_ax.plot(*plot_trace(plot_axis(matcol(NA, 0), ureg.mm), plot_axis(matcol(NA, 1), ureg.mm)), label='matcol(NA, 0)', color='#068149')
+_ax.plot(*plot_trace(plot_axis(matcol(CGi, 0), ureg.mm), plot_axis(matcol(CGi, 1), ureg.mm)), label='matcol(CGi, 0)', color='#662D91')
 _ax.axhline(0, color='0.6', linewidth=0.8)
 _ax.axvline(0, color='0.6', linewidth=0.8)
 _ax.grid(True, alpha=0.3)

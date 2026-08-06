@@ -10,10 +10,12 @@ from .codegen import (
     echo_expr,
     expr_to_str,
     grid_plot_lines,
+    guard_cached_error,
     header_lines,
     index_assign_line,
     multi_assign_lines,
     plot_lines,
+    recurrence_lines,
     solve_block_lines,
     source_comment,
     status_control_line,
@@ -22,12 +24,11 @@ from .codegen import (
 
 
 def to_python(ws: ir.Worksheet, *, trace_source: bool = False) -> str:
-    lines: list[str] = ['"""Auto-generated from a Mathcad worksheet by mcad2py."""']
-    lines += header_lines(ws)
-    lines.append("")
-
+    # The body is rendered first: the header's imports are read off the text it
+    # will sit above, rather than predicted from the IR (see `header_lines`).
+    body: list[str] = []
     for region in ws.regions:
-        out = _render_region(region)
+        out = _guarded(_render_region(region), region)
         if trace_source and out:
             comment = source_comment(region)
             if comment is not None:
@@ -37,8 +38,18 @@ def to_python(ws: ir.Worksheet, *, trace_source: bool = False) -> str:
                     if out[0] == ""
                     else [comment, *out]
                 )
-        lines += out
-    return "\n".join(lines) + "\n"
+        body += out
+
+    lines: list[str] = ['"""Auto-generated from a Mathcad worksheet by mcad2py."""']
+    lines += header_lines(ws, "\n".join(body))
+    lines.append("")
+    return "\n".join(lines + body) + "\n"
+
+
+def _guarded(lines: list[str], region: ir.Region) -> list[str]:
+    """Guard a region Mathcad's cache flags as an error, keeping the separator."""
+    lead = 1 if lines and lines[0] == "" else 0
+    return lines[:lead] + guard_cached_error(lines[lead:], region)
 
 
 def _render_region(region: ir.Region) -> list[str]:
@@ -67,6 +78,13 @@ def _render_region(region: ir.Region) -> list[str]:
 
     if isinstance(region, ir.IndexAssign):
         out = ["", index_assign_line(region)]
+        echo = echo_expr(region)
+        if echo is not None:
+            out.append(f"print({echo})")
+        return out
+
+    if isinstance(region, ir.Recurrence):
+        out = ["", *recurrence_lines(region)]
         echo = echo_expr(region)
         if echo is not None:
             out.append(f"print({echo})")

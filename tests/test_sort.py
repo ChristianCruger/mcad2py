@@ -15,19 +15,17 @@ cached value below, they just happen to be equal).
 """
 
 import math
-from pathlib import Path
 
 import numpy as np
 import pytest
 
-from mcad2py.convert import convert_file
-from mcad2py.runtime import _consolidate
+from conftest import flat, reference, run_sheet
 
-REFERENCE = Path(__file__).parent.parent / "references" / "sort.mcdx"
+REFERENCE = reference("sort")
 
 # Mathcad's cached results (result.xml), in region/echo order. Matrices are
 # listed **column-major**, matching both the cache's own ``<ml:matrix>`` order
-# and ``_flat``'s column-major reshape of the computed array below.
+# and ``flat``'s column-major reshape of the computed array below.
 CACHED = {
     0: (
         "M := index_build_2d(...)",
@@ -73,31 +71,9 @@ CACHED = {
 }
 
 
-def _run():
-    """Convert, execute, and return ``(source, namespace, echoed values)``.
-
-    Echoes are captured as objects (not text) since a 5x5 matrix prints
-    multi-line -- binding ``print`` in the module globals shadows the builtin
-    for the generated code, matching ``test_matrices.py``'s approach.
-    """
-    src = convert_file(REFERENCE, fmt="py")
-    echoed: list = []
-    ns: dict = {"print": lambda *a: echoed.append(a[0] if len(a) == 1 else a)}
-    exec(compile(src, "<generated>", "exec"), ns)  # noqa: S102
-    return src, ns, echoed
-
-
-def _flat(value) -> np.ndarray:
-    """A 1-D column-major view of a value's magnitudes, matching the cache."""
-    if isinstance(value, np.ndarray) and value.dtype == object:
-        value = _consolidate(value)
-    arr = np.asarray(getattr(value, "magnitude", value))
-    return arr.reshape(-1, order="F") if arr.ndim > 1 else np.atleast_1d(arr)
-
-
 @pytest.fixture(scope="module")
 def sheet():
-    return _run()
+    return run_sheet(REFERENCE)
 
 
 def test_sheet_runs_end_to_end(sheet):
@@ -111,7 +87,7 @@ def test_sheet_matches_cached_results(sheet):
     """Every echo reproduces Mathcad's cached value."""
     _, _, echoed = sheet
     for index, (label, expected) in CACHED.items():
-        got = _flat(echoed[index])
+        got = flat(echoed[index])
         want = np.atleast_1d(np.asarray(expected, dtype=float))
         assert got.shape == want.shape, f"echo {index} ({label}): shape {got.shape}"
         assert np.allclose(got, want, rtol=1e-12, atol=1e-9), (
@@ -129,6 +105,6 @@ def test_sort_returns_ascending_vector(sheet):
     """``sort(A)`` on the unsorted ``A := (4 3 7 1 9 6 3 5)`` -- a plain
     element-wise ascending sort, independent of the matrix machinery above."""
     _, ns, _ = sheet
-    got = _flat(ns["sort"](ns["A"]))
+    got = flat(ns["sort"](ns["A"]))
     assert math.isclose(got[0], 1) and math.isclose(got[-1], 9)
     assert list(got) == sorted(got)

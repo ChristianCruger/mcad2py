@@ -120,7 +120,11 @@ def parse_expr(elem: ET.Element) -> ir.Expr:
 def _parse_id(elem: ET.Element) -> ir.Expr:
     display = read_identifier(elem)
     role = elem.get("labels", "VARIABLE")
-    if role == "UNIT":
+    # ``%`` is Mathcad's built-in percent *unit* (dimensionless, worth 0.01) and
+    # appears in a scale apply just like ``mm`` -- but Prime labels it FUNCTION,
+    # not UNIT. It can never be a variable (it isn't a legal Mathcad name), so
+    # the name alone settles it.
+    if role == "UNIT" or display == "%":
         return ir.UnitRef(name=display)
     return ir.Name(py=sanitize(display), original=display, role=role)
 

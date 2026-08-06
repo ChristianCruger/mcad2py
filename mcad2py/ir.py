@@ -359,6 +359,15 @@ class SourceRef:
 class Region:
     """Base class for top-level worksheet regions (ordered by position)."""
 
+    # Mathcad's *own* cached error for this region (``result.xml``'s
+    # ``<engineError>`` resource string), when the engine could not compute it --
+    # e.g. ``mode(v)`` on data with no repeated value. Set on the instance by the
+    # parser; a plain class attribute (not a dataclass field) so every Region
+    # subclass inherits it without restating it. The backends guard such a
+    # region's statement so the generated script still runs to the end, the same
+    # way Mathcad keeps evaluating the regions below an errored one.
+    cached_error = None
+
 
 @dataclass
 class Define(Region):
@@ -432,6 +441,63 @@ class IndexAssign(Region):
     evaluate: bool = False
     display_unit: Expr | None = None
     col_index: Name | None = None
+    source: SourceRef | None = None
+
+
+@dataclass
+class ElementTarget:
+    """One ``X[i]`` / ``X[i, j]`` slot on the left of a :class:`Recurrence`.
+
+    Unlike :class:`IndexAssign`'s index -- which must be a bare range variable --
+    ``index`` here is an arbitrary expression (``0``, ``i + 1``, ``i + N``), and
+    ``col`` is set for the two-subscript form ``V[i, k] := …``.
+    """
+
+    base: Name
+    index: Expr
+    col: Expr | None = None
+
+
+@dataclass
+class Recurrence(Region):
+    """A Mathcad **difference equation** -- an assignment into element *slots*.
+
+    Mathcad writes an iteration as a seed plus a recurrence::
+
+        guess[0]   := 30                       # seed      (index is None)
+        i          := 0 .. N                   # a range
+        guess[i+1] := (guess[i] + X/guess[i])/2 # recurrence (index is ``i``)
+
+    which it evaluates **sequentially**: for each value of the driving range
+    variable in turn, the right-hand side is computed from the elements already
+    written. That is what separates this from :class:`IndexAssign`, whose
+    elements are independent and so build in one ``index_build`` pass; here the
+    offset index (``i+1``) makes each step depend on the last.
+
+    ``targets`` holds one or more slots. A *system* of difference equations
+    assigns several at once from a matrix left-hand side, and Mathcad updates
+    them **simultaneously** (every right-hand side reads the previous step)::
+
+        [inf[τ+1]; sus[τ+1]] := [f(inf[τ], sus[τ]); g(inf[τ], sus[τ])]
+
+    ``values`` is set when the right-hand side is a matching ``<ml:matrix>``
+    (element *i* feeds target *i*); otherwise ``value`` is a single expression
+    returning a vector that is destructured across the targets (``V^<k> :=
+    A·V^<k-1>``).
+
+    ``index`` is the driving range variable, or None for a seed (all indices are
+    constant, so there is nothing to iterate). ``create`` lists the base names
+    this region is the *first* to write, which are pre-declared ``= None`` so the
+    growable ``vec_set`` helper builds them from scratch.
+    """
+
+    targets: list[ElementTarget]
+    value: Expr | None = None
+    values: list[Expr] | None = None
+    index: Name | None = None
+    create: list[str] = field(default_factory=list)
+    evaluate: bool = False
+    display_unit: Expr | None = None
     source: SourceRef | None = None
 
 

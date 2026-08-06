@@ -2,7 +2,7 @@
 import math
 import pint
 
-from mcad2py.runtime import disp, stack, arange, vec_set
+from mcad2py.runtime import disp, vec_set, stack, arange
 ureg = pint.UnitRegistry()
 
 

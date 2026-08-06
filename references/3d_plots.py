@@ -3,7 +3,7 @@ import math
 import matplotlib.pyplot as plt
 import pint
 
-from mcad2py.runtime import CreateMesh, matrix, arange, plot_axis, mesh_grid, resolve_plot_grid
+from mcad2py.runtime import matrix, arange, plot_axis, mesh_grid, CreateMesh, resolve_plot_grid
 ureg = pint.UnitRegistry()
 
 

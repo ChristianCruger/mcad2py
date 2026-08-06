@@ -2,7 +2,7 @@
 import math
 import pint
 
-from mcad2py.runtime import cos, power, disp
+from mcad2py.runtime import cos, disp, power
 ureg = pint.UnitRegistry()
 
 

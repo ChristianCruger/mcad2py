@@ -40,6 +40,7 @@ def parse_worksheet(
     text_resolver: TextResolver | None = None,
     image_resolver: ImageResolver | None = None,
     integration_xml: str | None = None,
+    result_xml: str | None = None,
 ) -> ir.Worksheet:
     root = ET.fromstring(worksheet_xml)
     regions_elem = next(
@@ -50,6 +51,7 @@ def parse_worksheet(
         return ws
 
     io_tags = _parse_integration(integration_xml)
+    engine_errors = _parse_engine_errors(result_xml)
 
     # Names defined as a Mathcad *range* (``x0 := -50, -49 .. 50``), tracked as
     # we go so a later contour/3D plot equation can tell "``f(x0, y0)`` over two
@@ -66,15 +68,27 @@ def parse_worksheet(
         source = (
             ir.SourceRef(region_id, io_kind, io_alias) if region_id is not None else None
         )
+        math_elem = next((c for c in region if localname(c.tag) == "math"), None)
+        error = (
+            engine_errors.get(math_elem.get("resultRef", ""))
+            if math_elem is not None
+            else None
+        )
         # A data table (<spec-table>) expands to one region per column.
         for item in parsed if isinstance(parsed, list) else [parsed]:
             if item is None:
                 continue
             item.source = source
+            if error is not None:
+                item.cached_error = error
             if isinstance(item, ir.Define) and isinstance(item.value, ir.Range):
                 range_names.add(item.target.py)
             ws.regions.append(item)
     _inject_symbol_declarations(ws)
+    # A difference equation's driving range variable, and which of its target
+    # vectors it is the first region to write, are only knowable from the sheet
+    # above it.
+    _resolve_recurrences(ws, range_names)
     # Needs the whole (ordered) sheet to know which names are ever defined.
     _infer_implicit_plot_domains(ws)
     # Mathcad spells scalar, matrix and dot products all as ``·``; deciding
@@ -110,6 +124,31 @@ def _parse_integration(integration_xml: str | None) -> dict[int | None, tuple[st
         except ValueError:
             continue
     return tags
+
+
+def _parse_engine_errors(result_xml: str | None) -> dict[str, str]:
+    """Map ``resultRef`` -> error message for regions **Mathcad itself** failed on.
+
+    ``result.xml`` records a region the engine could not compute as an
+    ``<engineError>`` carrying a human-readable ``<resource-string>`` (e.g.
+    ``mode(v)`` on data with no repeated value). Those regions still convert --
+    the Python is a faithful translation -- but running them raises, so the
+    backends guard them (see :attr:`ir.Region.cached_error`) and the sheet keeps
+    going, as Mathcad does below its own error markers.
+    """
+    if not result_xml:
+        return {}
+    root = ET.fromstring(result_xml)
+    errors: dict[str, str] = {}
+    for data in root:
+        result_id = data.get("result-id")
+        message = next(
+            (e for e in data.iter() if localname(e.tag) == "resource-string"), None
+        )
+        if result_id is None or message is None or not (message.text or "").strip():
+            continue
+        errors[result_id] = message.text.strip()
+    return errors
 
 
 def _ordered_regions(regions_elem: ET.Element) -> list[ET.Element]:
@@ -261,6 +300,33 @@ def _parse_define(define_elem: ET.Element) -> ir.Region:
             index=index,
             value=parse_expr(value_elem),
             col_index=col_index,
+        )
+
+    # A *difference equation*: the left-hand side names element slots whose
+    # indices aren't bare range variables (``guess[0]``, ``guess[i+1]``), or a
+    # whole system of them. Mathcad iterates these sequentially -- see
+    # :class:`ir.Recurrence`. The driving range variable and which bases this
+    # region creates need the whole sheet, so ``_resolve_recurrences`` fills
+    # ``index``/``create`` in afterwards.
+    slots = _parse_recurrence_targets(target_elem)
+    if slots is not None:
+        evaluate = localname(value_elem.tag) == "eval"
+        if evaluate:
+            value, unit = parse_eval(value_elem)
+            value_elem = next(iter(value_elem))
+        else:
+            value, unit = parse_expr(value_elem), None
+        # A right-hand side matrix that lines up with the targets feeds them one
+        # for one; anything else is a single vector to destructure across them.
+        values = None
+        if localname(value_elem.tag) == "matrix" and len(list(value_elem)) == len(slots):
+            values = [parse_expr(child) for child in value_elem]
+        return ir.Recurrence(
+            targets=slots,
+            value=None if values is not None else value,
+            values=values,
+            evaluate=evaluate,
+            display_unit=unit,
         )
 
     # ``[a; b; c] := <expr>``: a matrix of ids on the left destructures a returned
@@ -839,6 +905,50 @@ def _parse_index_target(
     return base, _parse_target(index_elem), None
 
 
+def _parse_element_target(elem: ET.Element) -> "ir.ElementTarget | None":
+    """If ``elem`` is ``<apply><indexer/> <id base> <index>``, the slot it names.
+
+    The looser sibling of :func:`_parse_index_target`: the index may be *any*
+    expression (``0``, ``i + 1``, ``i + N``), which is what a difference equation
+    writes into. A ``<sequence>`` index gives the two-subscript form.
+    """
+    if localname(elem.tag) != "apply":
+        return None
+    kids = list(elem)
+    if len(kids) < 3 or localname(kids[0].tag) != "indexer":
+        return None
+    if localname(kids[1].tag) != "id":
+        return None
+    base, index_elem = _parse_target(kids[1]), kids[2]
+    if localname(index_elem.tag) == "sequence":
+        parts = list(index_elem)
+        if len(parts) != 2:
+            return None
+        return ir.ElementTarget(
+            base=base, index=parse_expr(parts[0]), col=parse_expr(parts[1])
+        )
+    return ir.ElementTarget(base=base, index=parse_expr(index_elem))
+
+
+def _parse_recurrence_targets(elem: ET.Element) -> "list[ir.ElementTarget] | None":
+    """The element slots a difference equation's left-hand side writes.
+
+    Either a single ``X[…]`` or a ``<ml:matrix>`` **every** one of whose entries
+    is an indexer -- the system form ``[inf[τ+1]; sus[τ+1]; …] := …``. A matrix
+    of plain ids is a destructuring :class:`ir.MultiAssign` instead, and a mix of
+    the two isn't something Mathcad can write, so both yield None here.
+    """
+    single = _parse_element_target(elem)
+    if single is not None:
+        return [single]
+    if localname(elem.tag) != "matrix":
+        return None
+    slots = [_parse_element_target(child) for child in elem]
+    if not slots or any(slot is None for slot in slots):
+        return None
+    return slots  # type: ignore[return-value]
+
+
 def _parse_function_header(func_elem: ET.Element) -> tuple[ir.Name, list[str]]:
     """Read ``<ml:function>``: the function name and its bound-variable names."""
     name_elem = next((c for c in func_elem if localname(c.tag) == "id"), None)
@@ -928,6 +1038,43 @@ def _inject_symbol_declarations(ws: ir.Worksheet) -> None:
         ws.regions.insert(first, ir.SymbolDeclarations(names=decl))
 
 
+def _resolve_recurrences(ws: ir.Worksheet, range_names: set[str]) -> None:
+    """Fill in each :class:`ir.Recurrence`'s driving range variable and ``create``.
+
+    The *driver* is the range variable the target indices are written in terms of
+    (``i`` in ``guess[i+1]``); with none -- every index is a constant -- the
+    region is a **seed** that writes fixed slots once, so ``index`` stays None.
+
+    ``create`` lists the base names this region is the first in the sheet to
+    write. Those are pre-declared ``= None`` at emission so ``vec_set`` grows
+    them from nothing; a base written earlier (or defined outright, as ``data``
+    is before ``data[2] := 1.2·data[2]``) is updated in place instead.
+    """
+    written: set[str] = set()
+    for region in ws.regions:
+        if not isinstance(region, ir.Recurrence):
+            written |= _bound_names(region)
+            continue
+        # The index carries the sheet's define-target label (``*``), not
+        # ``VARIABLE``, so match on every identifier rather than on the role.
+        drivers: list[str] = []
+        for slot in region.targets:
+            for part in (slot.index, slot.col):
+                for sub in _walk_exprs(part) if part is not None else []:
+                    if isinstance(sub, ir.Name) and sub.py not in drivers:
+                        drivers.append(sub.py)
+        driving = [n for n in drivers if n in range_names]
+        if driving:
+            region.index = ir.Name(py=driving[0], original=driving[0])
+        region.create = [
+            slot.base.py
+            for i, slot in enumerate(region.targets)
+            if slot.base.py not in written
+            and slot.base.py not in {s.base.py for s in region.targets[:i]}
+        ]
+        written |= {slot.base.py for slot in region.targets}
+
+
 def _collect_var_names(node: ir.Expr, acc: list[str]) -> None:
     """Append distinct VARIABLE identifier names in first-seen order."""
     if isinstance(node, ir.Name) and node.role == "VARIABLE" and node.py not in acc:
@@ -1007,6 +1154,8 @@ def _bound_names(region: ir.Region) -> set[str]:
     """The names a region binds, i.e. what is in scope below it."""
     if isinstance(region, (ir.Define, ir.IndexAssign)):
         return {region.target.py}
+    if isinstance(region, ir.Recurrence):
+        return {slot.base.py for slot in region.targets}
     if isinstance(region, (ir.MultiAssign, ir.ComboBoxAssign)):
         return {t.py for t in region.targets}
     if isinstance(region, ir.SolveBlock):

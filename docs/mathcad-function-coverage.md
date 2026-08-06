@@ -45,9 +45,12 @@ sample worksheet will hit an unsupported builtin.
 [`shapes.py`](../mcad2py/shapes.py)), `matcol` / `matrow` (`A^<i>` column and row extract), `matelem`
 (two-subscript element read, coping with a 1-D row/column vector), `vec_set` (growable program
 vectors), `index_build` / `index_build_2d` (range-indexed `X[i] :=` and `X[i, j] :=`), `unpack`
-(column-major flatten for `[a b; c d] := M`), `total` (sum a vector), `summation` (indexed Σ),
+(column-major flatten for `[a b; c d] := M`), `vec_set` again for difference equations (`ir.Recurrence`
+emits a sequential loop where `index_build` would evaluate elements independently), `total` (sum a
+vector), `summation` (indexed Σ),
 `integral` / `double_integral` (scipy `quad`/`dblquad`), `arange` (inclusive unit-aware range),
-`sample` / `plot_domain` / `mesh_grid` / `CreateMesh` / `resolve_plot_grid` (plot sampling),
+`sample` / `plot_domain` / `plot_trace` / `mesh_grid` / `CreateMesh` / `resolve_plot_grid` (plot
+sampling and axis padding),
 `vectorize` /
 `elementwise` (the arrow), `solve_block` (Given/Find via `fsolve`).
 
@@ -60,8 +63,10 @@ scipy/numeric Python.)
 
 Constants `π`/`pi`, `e`, `∞`. Constructs already handled: `:=`/`=`, units (Pint), ranges, vector/matrix
 literals & 0-based indexing, **imperative programs** (loops / `←` / `return` / `try`), inline & block
-`if`, numeric **solve blocks** (`find`), symbolic solve, **plots** (xy / contour / 3D), **controls**
-(ComboBox, scriptable, TextBox status), data tables, `%`, transpose. (See
+`if`, **difference equations** (seeded iteration — `guess[i+1] := f(guess[i])`, systems, and matrix
+recurrences), numeric **solve blocks** (`find`), symbolic solve, **plots** (xy / contour / 3D),
+**controls** (ComboBox, scriptable, TextBox status), data tables, `%` (both XML spellings), transpose.
+(See
 [mcdx-schema-notes.md](mcdx-schema-notes.md) for the XML→IR detail.)
 
 ---
@@ -80,9 +85,9 @@ Legend: ✅ done · 🟡 partial · ⬜ not started · ⛔ out of scope (unlikel
 | **Vector & matrix** | ✅ | the full list above (see `references/matrices.mcdx`), plus the table searches `match` `lookup` `vlookup` `hlookup` `vhlookup` (see `references/stack_augment_lookup.mcdx`) | — |
 | **Solving & optimization** | 🟡 | `find` (numeric), `solve` (symbolic), `lsolve` (linear systems) | `root`, `polyroots`, `minerr`, `maximize` `minimize`, `Isolve` |
 | **Interpolation & prediction** | 🟡 | `linterp` | `cspline`/`pspline`/`lspline` + `interp`, `bicubic`/`bilinear`, `predict`, `sinterp` |
-| **Statistics** | 🟡 | `mean` | `median` `mode` `var` `Var` `stdev` `Stdev` `gmean` `hmean` `corr` `cvar` `kurt` `skew` `hist`/`histogram` |
-| **Probability distributions** | ⬜ | — | the `d/p/q/r` families (`norm` `binom` `pois` `unif` `exp` `gamma` `beta` `weibull` `t` `F` `chisq` …) |
-| **Regression & smoothing** | ⬜ | — | `line` `slope` `intercept`, `regress` `loess`, `linfit` `genfit` `expfit` `logfit` `pwrfit` `sinfit`, `medsmooth` `ksmooth` `supsmooth` |
+| **Statistics** | ✅ | mean median mode gmean hmean, var Var stdev Stdev, skew kurt, percentile Rank histogram, corr cvar, Ftest Spear kendltau kendltau2 contingtbl | — (see `references/statistics.mcdx`). Lower-case `var`/`stdev` are the *population* forms, capitalised `Var`/`Stdev` the *sample* forms |
+| **Probability distributions** | 🟡 | the `d/p/q/r` families for `norm`, `t` and `weibull` | the remaining families (`binom` `pois` `unif` `exp` `gamma` `beta` `F` `chisq` `lnorm` `logis` `geom` `hypergeom` …) — each is a four-line `scipy.stats` wrap following the same pattern |
+| **Regression & smoothing** | 🟡 | `slope` `intercept` (least-squares line) | `line`, `regress` `loess`, `linfit` `genfit` `expfit` `logfit` `pwrfit` `sinfit`, `medsmooth` `ksmooth` `supsmooth` |
 | **Complex numbers** | 🟡 | `abs` (`|z|`), the imaginary literal `i` (`<ml:imag>`), `ln`/`log` returning complex for a negative real argument | `Re` `Im` `arg` `csgn` `signum`, conjugate |
 | **Number theory & combinatorics** | ⬜ | — | `mod` `gcd` `lcm` (engineering-relevant), `combin` `permut` `!` factorial, `isprime` `fibonacci` |
 | **Special functions** | ⬜ | — | `erf` `erfc`, `Γ` `lgamma`, `Ψ` digamma, `β` beta, `fhyper` |
@@ -104,9 +109,10 @@ Legend: ✅ done · 🟡 partial · ⬜ not started · ⛔ out of scope (unlikel
 
 Ranked by expected payoff × frequency in the kind of sheets this repo converts, and roughly by effort.
 
-1. **Statistics basics** — `median`, `var`/`Var`, `stdev`/`Stdev`, `hist` (`mean` is done with the
-   matrix batch). Simple NumPy wraps; watch the population-vs-sample `var` vs `Var` distinction
-   (lowercase = population, capital = sample).
+1. **The remaining distribution families** — the `d/p/q/r` set for `binom`, `pois`, `exp`, `gamma`,
+   `beta`, `F`, `chisq`, … now that `norm`/`t`/`weibull` have established the pattern (a four-line
+   `scipy.stats` wrap each, plus one `mapping.py` row). *(The statistics batch that used to head this
+   item is done — see `references/statistics.mcdx`.)*
 2. **Cubic-spline interpolation** — `cspline`/`lspline`/`pspline` + `interp`, extending the existing
    `linterp`. Maps onto `scipy.interpolate`. Common for material curves.
 3. **More solving** — `root` (scalar) and `polyroots`, then `minerr`/`maximize`/`minimize` (extend the
@@ -134,3 +140,7 @@ structural worksheet converter.
 - A *branching* program applied to an array still relies on `elementwise`/`sample`; a raw
   `np.vectorize(fn)` path for the general case isn't wired.
 - Scriptable-control JScript is intentionally **not** transpiled (we surface the cached `RL` value).
+- The four Numerical Recipes p-values (`Spear`'s `probd`, `kendltau`/`kendltau2`'s `prob`, `Ftest`'s
+  `p`) match Mathcad only to ~1e-7: it uses NR's Chebyshev `erfcc`/continued-fraction `betai`, we use
+  SciPy's exact `erfc`/`betainc`. Deliberate — see [test-coverage.md](test-coverage.md).
+- `rnorm`/`rweibull`/`rt` are **random**, so no sheet built on them can reproduce its cached numbers.

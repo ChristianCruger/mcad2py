@@ -42,8 +42,8 @@ When adding features, respect this boundary — parsers produce IR, backends con
 | [ir.py](mcad2py/ir.py) | Backend-agnostic node dataclasses |
 | [shapes.py](mcad2py/shapes.py) | Post-parse IR pass: infers each name's shape across the sheet so Mathcad's one `·` splits into scalar `*` vs. `matmul` |
 | [mapping.py](mcad2py/mapping.py) | Data tables: operators, builtins, constants, Greek, unit aliases |
-| [runtime.py](mcad2py/runtime.py) | Helpers imported by generated code: the full angle-aware trig + hyperbolic families, the full vector/matrix family (`rows`/`identity`/`det`/`lsolve`/the norm & condition sets/the eigen set/`sort`…), `col`/`arange`/`index_build`/`vectorize`/`transpose`, `linterp` (unit-aware linear interp), `integral` (scipy `quad`), `summation`, `solve_block` (scipy `fsolve`), `sample`/`plot_domain`/`plot_axis` (matplotlib plots) |
-| [emit/codegen.py](mcad2py/emit/codegen.py) | Precedence-aware expression printer; shared by both backends |
+| [runtime.py](mcad2py/runtime.py) | Helpers imported by generated code: the full angle-aware trig + hyperbolic families, the full vector/matrix family (`rows`/`identity`/`det`/`lsolve`/the norm & condition sets/the eigen set/`sort`…), the full statistics family (`median`/`mode`/`var`/`Var`/`percentile`/`histogram`/`corr`/`slope`/`Spear`… plus the `d`/`p`/`q`/`r` sets for `norm`/`t`/`weibull`), `col`/`arange`/`index_build`/`vec_set`/`vectorize`/`transpose`, `linterp` (unit-aware linear interp), `integral` (scipy `quad`), `summation`, `solve_block` (scipy `fsolve`), `sample`/`plot_domain`/`plot_axis`/`plot_trace` (matplotlib plots) |
+| [emit/codegen.py](mcad2py/emit/codegen.py) | Precedence-aware expression printer; shared by both backends. `header_lines(ws, source)` reads the generated module's imports **off the rendered body** — hence both backends build the body first |
 | [emit/notebook_backend.py](mcad2py/emit/notebook_backend.py) | IR→`.ipynb`; region→cell; bare last line echoes result |
 | [emit/py_backend.py](mcad2py/emit/py_backend.py) | IR→`.py`; evaluations become `print(...)` |
 | [convert.py](mcad2py/convert.py) | Orchestration: `convert_file` / `convert_worksheet` |
@@ -64,6 +64,15 @@ adding support for a new XML construct.
   ratio (`mm²/m²`, `1/degree`) collapses the way Mathcad shows it.
 - Unknown/unsupported constructs emit a visible `# TODO unsupported: <note>` so output still
   loads — never silently drop a region.
+- A region **Mathcad itself** couldn't compute (`result.xml` holds an `<engineError>` — `mode(v)` with
+  no repeated value, `ln(0)`, a program branch that returns nothing) is translated faithfully and then
+  wrapped in a `try`/`except` that prints Mathcad's own wording, so one such region can't abort the
+  generated module. `ir.Region.cached_error` carries the message; see the `statistics.mcdx` schema note.
+- Mathcad's `X[i] := …` splits two ways. A **bare range variable** as the index is a parallel build
+  (`ir.IndexAssign` → one `index_build` pass, elements independent). Anything else — a constant
+  (`data[2] :=`), an offset (`guess[i+1] :=`), or a matrix of such slots — is a **difference equation**
+  (`ir.Recurrence`), which Mathcad evaluates *sequentially* and which emits a loop inside a `def` so its
+  index stays local to the recurrence.
 - `--trace-source` (opt-in, default off) annotates each generated statement with
   `# mcdx region <id>` — the originating `<region>`'s `region-id` in `worksheet.xml` — plus any
   renamed target's original Mathcad name (`# mcdx region 12, "σ_c" -> sigma_c`) and, if the region
@@ -76,7 +85,12 @@ adding support for a new XML construct.
   regardless of the flag; only emission is gated. A `<spec-table>` column group shares one
   `region-id` (its per-column `resultRef` isn't captured). `integration.xml` is a sibling zip part
   to `worksheet.xml`, present (usually as a bare `<regions/>`) in every `.mcdx`.
-- Add new builtins/units/constants to [mapping.py](mcad2py/mapping.py) (data, not code).
+- Add new builtins/units/constants to [mapping.py](mcad2py/mapping.py) (data, not code). A new
+  **runtime helper** needs no registration at all: the generated module's imports are read off the
+  emitted text (every public name defined in [runtime.py](mcad2py/runtime.py) is a candidate), so
+  writing the helper and mapping the Mathcad name to it is the whole job. Anything the text doesn't
+  reference isn't imported — [tests/test_generated_imports.py](tests/test_generated_imports.py) pins
+  both directions across every fixture.
 - Run [tools/strip_mcdx_metadata.py](tools/strip_mcdx_metadata.py) on any new fixture before
   committing: it removes the authoring metadata a `.mcdx` carries in parts you never see in Prime
   (`docProps/core.xml`'s `creator`/`lastModifiedBy`, `docProps/app.xml`'s `Company`, and the printed
@@ -92,6 +106,10 @@ adding support for a new XML construct.
 
 Tests convert a `references/*.mcdx`, **execute** the generated Python, and assert that values match
 Mathcad's cached `result.xml` (~14 sig figs). Prefer that execute-and-compare style when adding a sample.
+[tests/conftest.py](tests/conftest.py) holds the shared pieces — `run_sheet` (convert + exec, capturing
+each `print` argument as an *object*), `flat` (column-major magnitudes, matching the cache's order), and
+`cached_results`/`result_refs` (read `result.xml` instead of transcribing it, which is what makes an
+82-region catalogue sheet testable). It also sets the headless `Agg` backend once.
 
 Per-test detail — which fixture pins which feature, and the documented divergences (stale caches, LAPACK
 eigenvalue ordering, Pint's Julian year) — lives in [docs/test-coverage.md](docs/test-coverage.md); read
@@ -113,6 +131,16 @@ residual (a locally-flat/degenerate Jacobian, seen on `references/biaxial_bendin
 integral) — capped at one retry so a bad case costs a few minutes, not tens; it prints a warning and
 returns its best candidate if that still doesn't confirm convergence, rather than silently returning a
 wrong answer.
+The **statistics family is complete** (descriptive, regression, and the Numerical Recipes correlation
+set — see `references/statistics.mcdx`); of the **probability distributions**, only `norm`/`t`/`weibull`
+have their `d`/`p`/`q`/`r` sets, and the rest are a four-line `scipy.stats` wrap each. Two things there
+are not byte-reproducible: anything downstream of the **random** `rnorm`/`rweibull`/`rt` draws, and the
+four NR p-values, which use a Chebyshev `erfcc` we deliberately don't reproduce (SciPy's exact `erfc` is
+the better number; they agree to ~1e-7).
+**Difference equations** (seeded iteration) are supported in all three shapes — scalar, a simultaneous
+system, and a matrix recurrence writing two-subscript slots (`references/difference_eq.mcdx`). Not
+covered: a *self-referential* bare-index form (`X[i] := f(X[i-1])` with no offset on the target), which
+still takes the parallel `index_build` path and would read a stale element.
 Multi-line **imperative programs** (loops, local `←` assigns, `return`, `tryCatch`, program-built
 vectors) are now supported (`ir.ProgramBlock` → a Python `def`; `X[i] :=` → `vec_set`); a single-arg
 branching/clamp function is wrapped `elementwise` so the vectorize arrow applies it per element (see the

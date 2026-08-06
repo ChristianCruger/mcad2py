@@ -22,7 +22,11 @@ print(log(256, 2))
 
 print(math.e**3)
 
-print(ln(0))
+# Mathcad reports an error here: This function is undefined at one or more points. You may be dividing by zero.
+try:
+    print(ln(0))
+except Exception as _err:
+    print('error:', _err)
 
 print(math.exp(3))
 

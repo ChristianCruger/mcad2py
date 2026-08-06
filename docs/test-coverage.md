@@ -237,9 +237,10 @@ real gaps in the log/exp family: `log(x, b)`'s explicit-base 2-arg form was sile
 argument to `math.log10` (which doesn't take one) — `log`/`ln` are now a runtime helper pair instead of
 bare `math.log10`/`math.log`, and also return a **complex** value for a negative real argument
 (`ln(-3) = ln(3) + iπ`, matching Mathcad) rather than raising, since only `ln(0)` is a genuine Mathcad
-domain error (cached as an `engineError`) — which the runtime `ln` still raises on, so the test executes
-the sheet one top-level statement at a time (not a single `exec()`) and records the expected exception in
-place of that one echo. Also new: `ln0` (Mathcad's domain-error-avoiding natural log, returning `-1e307`
+domain error (cached as an `engineError`) — which the runtime `ln` still raises on. That cached error is
+now what tells the converter to wrap the region in a `try`/`except` (see `test_statistics.py` below), so
+the sheet runs as a single `exec()` like every other reference and the guarded region echoes the caught
+exception in place of a value. Also new: `ln0` (Mathcad's domain-error-avoiding natural log, returning `-1e307`
 at `x = 0` instead of raising); the `<ml:imag symbol="i">` literal (previously unparsed), needed for
 `e^(i·π) + 1` (Euler's identity, checked as "close to zero" rather than pinned to Mathcad's own
 float-noise residual); `logspace(x1, x2, n)` (points log-spaced between two *values*, unlike
@@ -248,3 +249,70 @@ functions (`exp(x) := x + 2`) and then call them — a call site whose name was 
 to skip the builtin table entirely and call the name bare, since Mathcad marks such a call
 `labels="VARIABLE"` (the same label an ordinary user-defined function call gets), not `FUNCTION`; this
 was previously ignored, so a call to a redefined builtin silently kept calling the original.
+
+[tests/test_difference_eq.py](../tests/test_difference_eq.py) covers `references/difference_eq.mcdx`, a
+sheet of **seeded iterations** — Mathcad's way of writing a recurrence, where a seed pins one element and
+the equation assigns into a slot whose index is *offset* from the driving range variable
+(`guess[i+1] := (guess[i] + X/guess[i])/2`, Newton's `sqrt(700)`). Until now the parser only understood
+`X[i] :=` with a bare range variable as the index (`ir.IndexAssign`, one parallel `index_build` pass);
+the offset makes each step depend on the last, so the whole family routes to the new `ir.Recurrence` and
+emits a sequential loop. The three shapes are each pinned: the scalar recurrence above, a **system** (an
+SIR epidemic model whose four vectors read the previous step, so the step is staged in a tuple before
+anything is written back — computing them one at a time would feed `sus[τ+1]`'s formula the `inf[τ+1]`
+the same step just produced), and a **matrix** recurrence `V^<k> := A·V^<k-1>` writing two-subscript
+slots to build a Markov chain's history column by column (which also needs the shape pass to have
+resolved that `·` to `matmul`). Two supporting behaviours share the sheet: the loop variable stays
+**function-local** (the recurrence is emitted as a `def`, because the sheet keeps using `i` as a range
+just below it — a bare `for i in i:` would leave it bound to the last scalar index), and a plot whose two
+axes end up different lengths is NaN-padded (`guess` is 10 long against a 9-element index range;
+Mathcad's own cached trace reads `[0,1,…,8,NaN]` against ten values). All four echoes and all four cached
+plot traces match to ~1e-12, plus two invariants that don't depend on the cache at all — the SIR
+population is conserved and the Markov columns keep their initial total.
+
+[tests/test_statistics.py](../tests/test_statistics.py) covers `references/statistics.mcdx`, PTC's own
+statistics tutorial and the widest single catalogue sheet in the suite: **82 evaluated regions** over
+descriptive statistics, regression, hypothesis tests, the normal/Student-t/Weibull distributions, and the
+Numerical-Recipes correlation set. Rather than transcribe 82 expectations, the test reads the fixture's
+`result.xml` and pairs each echoing region with its `resultRef`, so the comparison stays exhaustive; 64
+echoes match to 1e-12. What the sheet pinned down: capitalisation is the *estimator* (`var`/`stdev`
+divide by n, `Var`/`Stdev` by n-1 — the sheet computes each pair twice, once through the builtin and once
+from a hand-written Σ, which is how the mapping was confirmed); `percentile(A, p)` interpolates at
+position `p·(n+1)` of the 1-based sorted sample, so the 90th percentile of `0 … 10` is 9.8 and not the 9
+NumPy's default gives; `%` is a dimensionless unit here rather than `shrinkage.mcdx`'s `<ml:percent/>`
+operator; `Rank` is a 1-based ascending rank transform (unrelated to `rank(M)`, the matrix rank it
+differs from only by capitalisation); `histogram(n, A)` is an `n × 2` matrix of bin midpoints and counts;
+and `data[2] := 1.2·data[2]` is a constant-index `ir.Recurrence` updating one element in place, which is
+why every mean below it moves from 75.4 to 77.24. The sheet also **demonstrates Mathcad's own errors**:
+`mode` refuses to guess, once for data with no repeat and once for multimodal data, both cached as
+`<engineError>`. Reading those at parse time and emitting the region guarded (`ir.Region.cached_error`)
+is what lets the sheet run to the end — and retro-fixed `log-exp.mcdx` and `incomplete_ifs.mcdx`, which
+had the same problem.
+
+Two **documented divergences** there, neither a bug:
+
+* **Random draws can't match a cache.** `rnorm`/`rweibull`/`rt` produce a fresh sample every run, so the
+  16 echoes fed by them (listed in the test's `RANDOM` set: `rt(7, ν)`, and the mean/`Var`/`Stdev`/`var`/
+  `stdev`/`kurt`/`skew` of the two 2000-point distributions) are executed for coverage but compared only
+  on shape. The estimator *relationships* they exist to demonstrate are checked directly instead.
+* **The Numerical Recipes p-values agree to ~1e-7, not ~1e-14.** `Spear`'s `probd`, `kendltau`'s and
+  `kendltau2`'s `prob`, and `Ftest`'s `p` are the four values Mathcad computes with NR's Chebyshev
+  `erfcc` (accurate to ~1.2e-7) and continued-fraction `betai`; we use SciPy's exact `erfc`/`betainc`,
+  which is the more accurate of the two. Reproducing the approximation to be bit-compatible would trade
+  correctness for a matching digit, so the test loosens the tolerance on those four indices only
+  (`APPROXIMATE`) and everything else stays at 1e-12.
+
+[tests/test_generated_imports.py](../tests/test_generated_imports.py) is not tied to one fixture: it
+runs over **every** `references/*.mcdx` and asserts that a generated module's imports and its body
+agree, in both directions. That invariant is new. `header_lines` used to *predict* which runtime
+helpers the emitted text would name by walking the IR, with the prediction split between a
+`found.add(...)` scan and a separate ordering list — miss either half and the module raised
+`NameError` on import, invisible until someone converted that particular sheet. The header is now
+read off the rendered body, so the two agree by construction and this file guards it.
+
+The "would it `NameError`" direction is checked by parsing the module with `ast` and looking for names
+it reads but never binds — deliberately a *different* implementation from the emitter's own tokenizer,
+so a bug in that tokenizer can't hide behind a test that calls it. The audit when this landed found
+seven dead imports the old predictor had been emitting: `import numpy as np` in four sheets whose
+`min`/`max` are reductions (they emit `mc_min`/`mc_max`, so no bare `np.` is ever written), and
+`sample` in three whose only plots are parametric (both axes data vectors, so no `sample(lambda …)`).
+Nothing was found *missing*, which is the reassuring half of the result.

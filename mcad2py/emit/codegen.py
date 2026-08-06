@@ -6,12 +6,17 @@ expression printer so we emit only the parentheses Python actually needs.
 
 from __future__ import annotations
 
+import io
+import keyword
+import re
+import tokenize
+from functools import lru_cache
+
 from .. import ir
 from ..mapping import (
     BINARY_OPS,
     CONSTANTS,
     FUNCTIONS,
-    RUNTIME_IMPORTS,
     UNARY_PREC,
     unit_attr,
 )
@@ -398,6 +403,89 @@ def index_assign_line(region: ir.IndexAssign) -> str:
     return f"{region.target.py} = index_build({idx}, lambda {idx}: {body})"
 
 
+def recurrence_lines(region: ir.Recurrence) -> list[str]:
+    """Emit a Mathcad difference equation (see :class:`ir.Recurrence`).
+
+    A **seed** -- every index constant -- is a straight run of ``vec_set`` calls,
+    the first write to a name passing ``None`` so the growable helper builds the
+    vector from scratch::
+
+        guess = vec_set(None, 0, 30)
+
+    A **recurrence** iterates the driving range variable, and goes inside a
+    ``def`` so that loop variable is function-local: the sheet keeps using the
+    range itself further down (``i_range[i] := i``), which a bare ``for i in i:``
+    would clobber with the last scalar index. The vectors are passed in and
+    returned, so the loop reads exactly the elements written so far::
+
+        def _recur_guess(_idx, guess):
+            for i in _idx:
+                guess = vec_set(guess, i + 1, (guess[i] + X / guess[i]) * (1 / 2))
+            return guess
+
+        guess = _recur_guess(i, guess)
+    """
+    bases: list[str] = []
+    for slot in region.targets:
+        if slot.base.py not in bases:
+            bases.append(slot.base.py)
+
+    if region.index is None:
+        return _recurrence_writes(region, set(region.create), indent=0)
+
+    helper = "_recur_" + "_".join(bases)
+    lines = [f"{n} = None" for n in region.create]
+    lines.append(f"def {helper}(_idx, {', '.join(bases)}):")
+    lines.append(f"    for {region.index.py} in _idx:")
+    lines += _recurrence_writes(region, set(), indent=2)
+    lines.append(f"    return {', '.join(bases)}")
+    lines.append("")
+    names = ", ".join(bases)
+    lines.append(f"{names} = {helper}({region.index.py}, {names})")
+    return lines
+
+
+def _recurrence_writes(
+    region: ir.Recurrence, create: set[str], indent: int
+) -> list[str]:
+    """The ``vec_set`` write per target slot, for one step of the iteration.
+
+    With more than one target Mathcad updates them **simultaneously**, so the
+    step's values are computed into a ``_step`` tuple before any of them is
+    written back -- otherwise ``sus[τ+1]``'s right-hand side would read the
+    ``inf[τ+1]`` this same step just wrote. A lone target needs no such staging,
+    and neither does a seed built from a matrix of constants.
+    """
+    pad = "    " * indent
+    lines: list[str] = []
+    single = len(region.targets) == 1
+
+    if single:
+        values = [expr_to_str((region.values or [region.value])[0])]
+    elif region.values is not None and region.index is None:
+        values = [expr_to_str(v) for v in region.values]
+    else:
+        step = (
+            "(" + ", ".join(expr_to_str(v) for v in region.values) + ")"
+            if region.values is not None
+            else f"tuple({expr_to_str(region.value)})"
+        )
+        lines.append(f"{pad}_step = {step}")
+        values = [f"_step[{i}]" for i in range(len(region.targets))]
+
+    for slot, value in zip(region.targets, values):
+        name = slot.base.py
+        index = (
+            f"({expr_to_str(slot.index)}, {expr_to_str(slot.col)})"
+            if slot.col is not None
+            else expr_to_str(slot.index)
+        )
+        source = "None" if name in create else name
+        create.discard(name)
+        lines.append(f"{pad}{name} = vec_set({source}, {index}, {value})")
+    return lines
+
+
 def _needs_elementwise(define: ir.Define) -> bool:
     """True for a *single-argument* scalar function that Mathcad's vectorize
     arrow applies per element: a branching program (``σ_c``) or a *clamp* built
@@ -493,7 +581,45 @@ def echo_expr(region: ir.Region) -> str | None:
         if region.display_unit is not None:
             return _display(f"({base})", region.display_unit)
         return _auto(base, region)
+    if isinstance(region, ir.Recurrence):
+        if not region.evaluate:
+            return None
+        # Mathcad shows the slots the equation just wrote. With the driving range
+        # variable still bound to its integer array, ``Data[i + N]`` reads them
+        # all at once -- the same sub-vector the sheet displays.
+        slot = region.targets[0]
+        base = (
+            f"matelem({slot.base.py}, {expr_to_str(slot.index)}, "
+            f"{expr_to_str(slot.col)})"
+            if slot.col is not None
+            else f"{slot.base.py}[{expr_to_str(slot.index)}]"
+        )
+        if region.display_unit is not None:
+            return _display(f"({base})", region.display_unit)
+        return _auto(base, region)
     return None
+
+
+def guard_cached_error(lines: list[str], region: ir.Region) -> list[str]:
+    """Wrap a region Mathcad itself couldn't compute so the script still runs.
+
+    ``result.xml`` marks these with an ``<engineError>`` -- ``mode(v)`` on data
+    with no repeated value is the canonical one, and the sheet often *means* to
+    show the error ("Since there are no repeated values, an error is returned").
+    The translation is faithful, so it raises too; catching it here keeps the
+    generated module running to the end the way the worksheet does, and prints
+    Mathcad's own wording alongside.
+    """
+    if not region.cached_error or not lines:
+        return lines
+    body = [f"    {line}" if line else line for line in lines]
+    return [
+        f"# Mathcad reports an error here: {region.cached_error}",
+        "try:",
+        *body,
+        "except Exception as _err:",
+        "    print('error:', _err)",
+    ]
 
 
 def _auto(value: str, region: ir.Region) -> str:
@@ -580,7 +706,9 @@ def plot_lines(region: ir.Plot) -> list[str]:
         y = _plot_axis_call(trace.y, trace.y_unit, domain, _domain_var(region))
         label = expr_to_str(_trace_series(trace, region))
         color = f", color={trace.color!r}" if trace.color else ""
-        lines.append(f"_ax.plot({x}, {y}, label={label!r}{color})")
+        # ``plot_trace`` NaN-pads the pair: Mathcad lets a trace's two axes be
+        # different lengths (a seeded iteration outruns its index range).
+        lines.append(f"_ax.plot(*plot_trace({x}, {y}), label={label!r}{color})")
     lines.append("_ax.axhline(0, color='0.6', linewidth=0.8)")
     lines.append("_ax.axvline(0, color='0.6', linewidth=0.8)")
     lines.append("_ax.grid(True, alpha=0.3)")
@@ -778,13 +906,28 @@ def _solve_block_body(region: ir.SolveBlock, unknowns: list[str]) -> list[str]:
 
 # ---------------------------------------------------------------------------
 # Imports needed by a worksheet
+#
+# These are read off the **generated source**, not predicted from the IR. An
+# earlier version walked the IR guessing which helpers the emitted text would
+# name, which meant every new helper had to be registered in two places and a
+# missed registration produced a module that raised ``NameError`` on import --
+# invisible until somebody converted that particular sheet. The text is the
+# ground truth: import exactly the names it references.
 # ---------------------------------------------------------------------------
 
 
-def header_lines(ws: ir.Worksheet) -> list[str]:
-    """Import/setup lines for the generated module, tailored to what's used."""
+def header_lines(ws: ir.Worksheet, source: str) -> list[str]:
+    """Import/setup lines for the generated module, tailored to what it uses.
+
+    ``source`` is the rendered body the header will sit above; the runtime and
+    NumPy imports are derived from the identifiers in it, so callers have to
+    build the body *first*. It is deliberately required rather than defaulting
+    to empty -- a header built without the body would be silently missing every
+    runtime import.
+    """
+    names = _identifiers(source)
     lines = ["import math"]
-    if _uses_numpy(ws):
+    if "np" in names:
         lines.append("import numpy as np")
     if any(isinstance(r, (ir.Plot, ir.GridPlot)) for r in ws.regions):
         lines.append("import matplotlib.pyplot as plt")
@@ -796,23 +939,54 @@ def header_lines(ws: ir.Worksheet) -> list[str]:
         ordered += sorted(sympy_names - set(order))
         lines.append(f"from sympy import {', '.join(ordered)}")
     lines.append("")
-    runtime = _used_runtime(ws)
+    runtime = [n for n in _runtime_exports() if n in names]
     if runtime:
-        order = [
-            *RUNTIME_IMPORTS,
-            "col", "matrix", "arange", "index_build", "index_build_2d",
-            "vectorize", "transpose", "matmul", "matcol", "total", "vec_set",
-            "unpack", "integral", "double_integral", "summation", "solve_block",
-            "sample", "static_axis", "plot_domain", "plot_axis", "mesh_grid",
-            "resolve_plot_grid",
-        ]
-        seen: set[str] = set()
-        names = ", ".join(
-            n for n in order if n in runtime and not (n in seen or seen.add(n))
-        )
-        lines.append(f"from mcad2py.runtime import {names}")
+        lines.append(f"from mcad2py.runtime import {', '.join(runtime)}")
     lines.append("ureg = pint.UnitRegistry()")
     return lines
+
+
+@lru_cache(maxsize=1)
+def _runtime_exports() -> tuple[str, ...]:
+    """Every public helper *defined in* ``runtime.py``, in definition order.
+
+    The ``__module__`` test is what separates the helpers from the modules
+    ``runtime`` itself imports (``np``, ``math``, ``cmath``), and ``vars()``
+    preserves definition order, so the emitted import line stays grouped by
+    family -- trig, then vector/matrix, then statistics -- for free. A new
+    runtime helper needs no registration anywhere: writing it is enough.
+    """
+    from .. import runtime  # local: keeps NumPy off the import path until needed
+
+    return tuple(
+        name
+        for name, value in vars(runtime).items()
+        if not name.startswith("_")
+        and getattr(value, "__module__", None) == "mcad2py.runtime"
+    )
+
+
+def _identifiers(source: str) -> set[str]:
+    """Every identifier ``source`` names, ignoring strings and comments.
+
+    Tokenizing rather than pattern-matching is what keeps
+    ``# TODO unsupported: sort`` from pulling in the ``sort`` helper. A sheet
+    that *redefines* a helper's name still counts as using it -- ``log-exp.mcdx``
+    calls the builtin ``log`` and then shadows it with its own -- so binding is
+    deliberately not considered. The cost is that a sheet with a variable called
+    ``total`` or ``rank`` imports a helper it then immediately shadows, which is
+    harmless.
+    """
+    try:
+        return {
+            token.string
+            for token in tokenize.generate_tokens(io.StringIO(source).readline)
+            if token.type == tokenize.NAME and not keyword.iskeyword(token.string)
+        }
+    except (tokenize.TokenError, IndentationError, SyntaxError):
+        # Unparseable output is a bug elsewhere; an over-broad import list beats
+        # failing the conversion outright (comments and strings leak in here).
+        return set(re.findall(r"[A-Za-z_]\w*", source))
 
 
 def source_comment(region: ir.Region) -> str | None:
@@ -847,26 +1021,6 @@ def _renamed_targets(region: ir.Region) -> list[ir.Name]:
     return [n for n in targets if n.original != n.py]
 
 
-def _uses_numpy(ws: ir.Worksheet) -> bool:
-    """True if the generated module needs ``np`` directly (``np.*`` calls).
-
-    Matrices/vectors/ranges go through the ``matrix()``/``col()``/``arange()``
-    runtime helpers, which hide NumPy internally -- the generated script only
-    needs a bare ``np.`` for things like the ``min``/``max`` builtins mapping
-    to ``np.minimum``/``np.maximum``.
-    """
-    for region in ws.regions:
-        for node in _region_exprs(region):
-            for sub in _walk(node):
-                if (
-                    isinstance(sub, ir.Call)
-                    and sub.role != "VARIABLE"
-                    and FUNCTIONS.get(sub.func, "").startswith("np.")
-                ):
-                    return True
-    return False
-
-
 def _sympy_imports(ws: ir.Worksheet) -> set[str]:
     """SymPy names the generated module needs (``Eq``/``Symbol``/commands)."""
     names: set[str] = set()
@@ -880,123 +1034,6 @@ def _sympy_imports(ws: ir.Worksheet) -> set[str]:
             if any(isinstance(e, ir.Equation) for e in _walk(region.expr)):
                 names.add("Eq")
     return names
-
-
-def _used_runtime(ws: ir.Worksheet) -> set[str]:
-    """Runtime-helper names the generated module imports (trig, col, vectorize)."""
-    found: set[str] = set()
-    integrals: list[ir.Integral] = []
-    for region in ws.regions:
-        du = getattr(region, "display_unit", None)
-        if du is not None and _has_unit(du):
-            found.add("disp")
-        elif du is None and echo_expr(region) is not None and _has_division(
-            getattr(region, "value", None)
-        ):
-            found.add("disp")  # automatic display of a possibly-unreduced ratio
-        if isinstance(region, ir.Define) and _needs_elementwise(region):
-            found.add("elementwise")
-        if isinstance(region, ir.SolveBlock):
-            found.add("solve_block")
-        if isinstance(region, ir.IndexAssign):
-            found.add("index_build_2d" if region.col_index is not None else "index_build")
-        if isinstance(region, ir.MultiAssign) and region.matrix_target:
-            found.add("unpack")
-        if isinstance(region, ir.Plot):
-            found.update(("sample", "plot_axis"))
-            if region.implicit_domain is not None:
-                found.add("plot_domain")
-            if region.domain and any(
-                not _is_domain(e, region.domain)
-                and not _references(e, region.domain)
-                for t in region.traces
-                for e in (t.x, t.y)
-            ):
-                found.add("static_axis")
-        if isinstance(region, ir.GridPlot):
-            found.update(("resolve_plot_grid", "plot_axis"))
-            if region.mesh_names is not None:
-                found.add("mesh_grid")
-        for node in _region_exprs(region):
-            for sub in _walk(node):
-                if isinstance(sub, ir.Call) and sub.role != "VARIABLE" and sub.func in ("min", "max"):
-                    found.add("mc_min" if sub.func == "min" else "mc_max")
-            for sub in _walk(node):
-                if (
-                    isinstance(sub, ir.Call)
-                    and sub.role != "VARIABLE"
-                    and FUNCTIONS.get(sub.func, sub.func) in RUNTIME_IMPORTS
-                ):
-                    found.add(FUNCTIONS.get(sub.func, sub.func))
-                elif isinstance(sub, ir.MatrixLiteral):
-                    found.add("col" if sub.cols <= 1 else "matrix")
-                elif isinstance(sub, ir.Range):
-                    found.add("arange")
-                elif isinstance(sub, ir.Vectorize):
-                    found.add("vectorize")
-                elif isinstance(sub, ir.Transpose):
-                    found.add("transpose")
-                elif isinstance(sub, ir.Root):
-                    found.add("nth_root")
-                elif (
-                    isinstance(sub, ir.BinOp)
-                    and sub.op == "pow"
-                    and not _is_int_literal(sub.right)
-                ):
-                    found.add("power")
-                elif isinstance(sub, ir.MatCol):
-                    found.add("matcol")
-                elif isinstance(sub, ir.Index2D):
-                    found.add("matelem")
-                elif isinstance(sub, ir.VectorSum):
-                    found.add("total")
-                elif isinstance(sub, ir.ProgramBlock):
-                    if _growable_names(sub):
-                        found.add("vec_set")
-                elif isinstance(sub, ir.Integral):
-                    integrals.append(sub)
-                elif isinstance(sub, ir.Summation):
-                    found.add("summation")
-    # A nested (rectangular double) Integral emits one double_integral() call,
-    # not two integral() calls -- so its inner Integral isn't independently used.
-    nested = {id(n): _nested_double_integral(n) for n in integrals}
-    absorbed = {id(inner) for inner in nested.values() if inner is not None}
-    for n in integrals:
-        if nested[id(n)] is not None:
-            found.add("double_integral")
-        elif id(n) not in absorbed:
-            found.add("integral")
-    return found
-
-
-def _region_exprs(region: ir.Region) -> list[ir.Expr]:
-    if isinstance(region, ir.Define):
-        return [region.value]
-    if isinstance(region, (ir.Evaluate, ir.IndexAssign)):
-        return [region.value]
-    if isinstance(region, ir.MultiAssign):
-        return [region.value]
-    if isinstance(region, ir.StatusControl):
-        return [region.value]
-    if isinstance(region, ir.ComboBoxAssign):
-        return list(region.values)
-    if isinstance(region, ir.SymbolicEquation):
-        return [region.equation]
-    if isinstance(region, ir.SymbolicEval):
-        return [region.expr, *region.args]
-    if isinstance(region, ir.SolveBlock):
-        exprs: list[ir.Expr] = [g.value for g in region.guesses]
-        for c in region.constraints:
-            exprs += [c.lhs, c.rhs]
-        return exprs
-    if isinstance(region, ir.Plot):
-        plot_exprs: list[ir.Expr] = []
-        for t in region.traces:
-            plot_exprs += [t.x, t.y]
-        return plot_exprs
-    if isinstance(region, ir.GridPlot):
-        return [region.expr]
-    return []
 
 
 def _walk(node: ir.Expr) -> list[ir.Expr]:

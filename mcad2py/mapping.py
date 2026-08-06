@@ -155,32 +155,47 @@ FUNCTIONS = {
     "vlookup": "vlookup",
     "hlookup": "hlookup",
     "vhlookup": "vhlookup",
+    # --- Statistics (all runtime helpers; see runtime.py) -------------------
+    # Note the capitalisation: Mathcad's ``var``/``stdev`` divide by n (the
+    # population forms) and ``Var``/``Stdev`` by n-1 (the sample forms).
+    "median": "median",
+    "mode": "mode",
+    "gmean": "gmean",
+    "hmean": "hmean",
+    "var": "var",
+    "Var": "Var",
+    "stdev": "stdev",
+    "Stdev": "Stdev",
+    "skew": "skew",
+    "kurt": "kurt",
+    "percentile": "percentile",
+    "Rank": "Rank",
+    "histogram": "histogram",
+    "hist": "histogram",
+    # Regression, correlation and hypothesis tests
+    "cvar": "cvar",
+    "corr": "corr",
+    "slope": "slope",
+    "intercept": "intercept",
+    "Ftest": "Ftest",
+    "Spear": "Spear",
+    "kendltau": "kendltau",
+    "kendltau2": "kendltau2",
+    "contingtbl": "contingtbl",
+    # Distributions: d = density, p = cumulative, q = quantile, r = random draws
+    "dnorm": "dnorm",
+    "pnorm": "pnorm",
+    "qnorm": "qnorm",
+    "rnorm": "rnorm",
+    "dt": "dt",
+    "pt": "pt",
+    "qt": "qt",
+    "rt": "rt",
+    "dweibull": "dweibull",
+    "pweibull": "pweibull",
+    "qweibull": "qweibull",
+    "rweibull": "rweibull",
 }
-
-# Runtime helpers that are *called by name* in generated code (so a Call to one
-# triggers its import): the angle-aware trig wrappers, ``linterp`` (Mathcad's
-# linear interpolation, which reorders args and is unit-aware), and
-# ``CreateMesh`` (a 3D-plot grid builder) -- see runtime.py.
-RUNTIME_IMPORTS = (
-    "sin", "cos", "tan", "cot", "sec", "csc", "sinc",
-    "asin", "acos", "atan", "acot", "asec", "acsc", "atan2", "angle",
-    "sinh", "cosh", "tanh", "coth", "sech", "csch",
-    "asinh", "acosh", "atanh", "acoth", "asech", "acsch",
-    "linterp", "CreateMesh", "augment",
-    "ceil", "floor", "mround", "sqrt", "nth_root", "power", "disp", "elementwise",
-    "ln", "log", "ln0", "logspace",
-    "mc_min", "mc_max",
-    # Vector & matrix builtins, plus the two bar/cross *operators*
-    # (``determinant``/``cross``) the parser routes through a Call.
-    "stack", "rows", "cols", "last", "identity", "diag", "submatrix", "matrix",
-    "det", "determinant", "tr", "lsolve", "geninv", "rank", "rref", "cross",
-    "norm", "norm1", "norm2", "norme", "normi",
-    "cond1", "cond2", "conde", "condi",
-    "eigenvals", "eigenvec", "eigenvecs", "genvals", "genvecs", "svds",
-    "sort", "reverse", "csort", "rsort", "mean", "IsArray", "IsScalar",
-    "match", "lookup", "vlookup", "hlookup", "vhlookup",
-    "matrow", "matelem", "matmul",
-)
 
 # Mathcad symbolic command keyword (first id of a <ml:command> sequence) ->
 # SymPy callable. Symbolic regions emit ``<callable>(expr, *args)``.
@@ -214,6 +229,9 @@ GREEK = {
 # Mathcad unit name -> Pint unit attribute, where they differ. Default is to
 # use the Mathcad name verbatim (Pint knows MPa, kN, deg, mm, ...).
 UNIT_ALIASES: dict[str, str] = {
+    # Mathcad's percent is a *unit* -- dimensionless, worth 0.01 -- so ``50%``
+    # is a scale apply like ``50 mm``. Pint spells it ``percent``.
+    "%": "percent",
     # e.g. "tonne": "metric_ton",  -- add as samples reveal mismatches
 }
 

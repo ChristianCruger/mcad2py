@@ -1,9 +1,8 @@
 """Auto-generated from a Mathcad worksheet by mcad2py."""
 import math
-import numpy as np
 import pint
 
-from mcad2py.runtime import ceil, disp, mc_min, mc_max, arange, index_build
+from mcad2py.runtime import mc_max, mc_min, disp, ceil, index_build, arange
 ureg = pint.UnitRegistry()
 
 

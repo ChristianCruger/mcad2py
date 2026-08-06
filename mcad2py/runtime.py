@@ -1097,6 +1097,466 @@ def rsort(a, n):
     return _join(m[:, np.argsort(m[int(n), :], kind="stable")], unit)
 
 
+# ---------------------------------------------------------------------------
+# Statistics
+#
+# Mathcad's "Statistics" function category. Three conventions run through it:
+#
+# * **Capitalisation marks the estimator.** ``var``/``stdev`` are the
+#   *population* forms (divide by n); ``Var``/``Stdev`` are the *sample* forms
+#   (divide by n-1). ``skew``/``kurt`` are the sample-corrected coefficients, and
+#   ``kurt`` is *excess* kurtosis (0 for a normal distribution).
+# * **Units follow the statistic.** A mean/median/percentile keeps the data's
+#   unit, a variance squares it, a correlation or moment coefficient is a pure
+#   number. Everything reads the data through :func:`_split`, as the vector and
+#   matrix family does.
+# * **The correlation set is Numerical Recipes.** ``Spear``/``kendltau``/
+#   ``kendltau2``/``contingtbl``/``Ftest`` return the whole vector of statistics
+#   those routines compute (coefficient, test statistic, p-value, …) rather than
+#   just the coefficient -- that is what Mathcad's cache holds.
+# ---------------------------------------------------------------------------
+
+
+def _data(a):
+    """``(1-D float array of every element, unit or None)`` for a data sample.
+
+    Mathcad's statistics take a vector *or* a matrix and treat it as a flat bag
+    of values, so this flattens whatever shape comes in.
+    """
+    mag, unit = _split(a)
+    return np.atleast_1d(mag).reshape(-1), unit
+
+
+def median(a):
+    """Mathcad ``median``: the middle value (the mean of the middle two if even)."""
+    mag, unit = _data(a)
+    return _join(float(np.median(mag)), unit)
+
+
+def mode(a):
+    """Mathcad ``mode``: the single most frequent value.
+
+    Mathcad refuses to guess: it is an error when nothing repeats, and an error
+    when the highest frequency is shared. Both raise here with Mathcad's own
+    wording, so a sheet that *demonstrates* the error (``result.xml`` caches it,
+    and the backends guard the region) still reads the same way.
+    """
+    mag, unit = _data(a)
+    values, counts = np.unique(mag, return_counts=True)
+    top = counts.max()
+    if top == 1:
+        raise ValueError("No value occurs more frequently than any others.")
+    if int((counts == top).sum()) > 1:
+        raise ValueError(
+            "Can not return the mode of the data, because the data is multimodal. "
+            "More than one value occurs at the highest frequency."
+        )
+    return _join(float(values[counts.argmax()]), unit)
+
+
+def gmean(a):
+    """Mathcad ``gmean``: the geometric mean, ``(∏ x)**(1/n)``."""
+    mag, unit = _data(a)
+    return _join(float(np.exp(np.mean(np.log(mag)))), unit)
+
+
+def hmean(a):
+    """Mathcad ``hmean``: the harmonic mean, ``n / Σ(1/x)``."""
+    mag, unit = _data(a)
+    return _join(float(mag.size / np.sum(1.0 / mag)), unit)
+
+
+def var(a):
+    """Mathcad ``var``: the **population** variance (divides by n)."""
+    mag, unit = _data(a)
+    return _join(float(np.var(mag)), None if unit is None else unit**2)
+
+
+def Var(a):  # noqa: N802 -- Mathcad's own spelling
+    """Mathcad ``Var``: the **sample** variance (divides by n-1)."""
+    mag, unit = _data(a)
+    return _join(float(np.var(mag, ddof=1)), None if unit is None else unit**2)
+
+
+def stdev(a):
+    """Mathcad ``stdev``: the **population** standard deviation (divides by n)."""
+    mag, unit = _data(a)
+    return _join(float(np.std(mag)), unit)
+
+
+def Stdev(a):  # noqa: N802 -- Mathcad's own spelling
+    """Mathcad ``Stdev``: the **sample** standard deviation (divides by n-1)."""
+    mag, unit = _data(a)
+    return _join(float(np.std(mag, ddof=1)), unit)
+
+
+def skew(a):
+    """Mathcad ``skew``: the sample skewness coefficient (dimensionless).
+
+    ``n/((n-1)(n-2)) · Σ((x - x̄)/s)³`` with ``s`` the *sample* deviation -- the
+    bias-corrected form, matching the sheet-level formula Mathcad's own
+    documentation gives alongside it.
+    """
+    mag, _ = _data(a)
+    n = mag.size
+    z = (mag - mag.mean()) / np.std(mag, ddof=1)
+    return float(n / ((n - 1) * (n - 2)) * np.sum(z**3))
+
+
+def kurt(a):
+    """Mathcad ``kurt``: the sample **excess** kurtosis coefficient.
+
+    ``n(n+1)/((n-1)(n-2)(n-3)) · Σ((x - x̄)/s)⁴ - 3(n-1)²/((n-2)(n-3))``, so a
+    normal sample sits near 0. ``statistics.mcdx`` spells this formula out by
+    hand next to the ``kurt`` call and gets the same number.
+    """
+    mag, _ = _data(a)
+    n = mag.size
+    z = (mag - mag.mean()) / np.std(mag, ddof=1)
+    return float(
+        n * (n + 1) / ((n - 1) * (n - 2) * (n - 3)) * np.sum(z**4)
+        - 3 * (n - 1) ** 2 / ((n - 2) * (n - 3))
+    )
+
+
+def percentile(a, p):
+    """Mathcad ``percentile(A, p)``: the value below which a fraction ``p`` falls.
+
+    ``p`` is a *fraction* (``0.9``), or equivalently ``90%`` -- Mathcad's ``%``
+    is a dimensionless unit worth 0.01, so a Pint quantity is reduced first.
+    Interpolates at position ``p·(n+1)`` of the 1-based sorted sample (NumPy's
+    ``"weibull"`` method), which is what reproduces the cache: the 90th
+    percentile of ``0 … 10`` is 9.8, not 9.
+    """
+    mag, unit = _data(a)
+    fraction = float(_reduce_dimensionless(p))
+    return _join(
+        float(np.percentile(mag, fraction * 100.0, method="weibull")), unit
+    )
+
+
+def Rank(a):  # noqa: N802 -- Mathcad's own spelling
+    """Mathcad ``Rank``: each element's **1-based** position in ascending order."""
+    mag, _ = _data(a)
+    order = np.argsort(mag, kind="stable")
+    ranks = np.empty(mag.size, dtype=float)
+    ranks[order] = np.arange(1, mag.size + 1, dtype=float)
+    return ranks
+
+
+def histogram(n, a):
+    """Mathcad ``histogram(n, A)``: an ``n x 2`` matrix of bin midpoints and counts.
+
+    The bins are ``n`` equal-width intervals spanning the data; column 0 holds
+    each bin's midpoint (in the data's unit) and column 1 its count.
+    """
+    mag, unit = _data(a)
+    counts, edges = np.histogram(mag, bins=int(n))
+    midpoints = (edges[:-1] + edges[1:]) / 2.0
+    out = np.empty((int(n), 2), dtype=object)
+    out[:, 0] = [_join(float(m), unit) for m in midpoints]
+    out[:, 1] = counts.astype(float)
+    return out
+
+
+# --- Regression, correlation and hypothesis tests ---------------------------
+
+
+def _pair(vx, vy):
+    """Two same-length samples as flat float arrays, with their units."""
+    x, x_unit = _data(vx)
+    y, y_unit = _data(vy)
+    return x, y, x_unit, y_unit
+
+
+def cvar(vx, vy):
+    """Mathcad ``cvar``: the **population** covariance of two samples."""
+    x, y, x_unit, y_unit = _pair(vx, vy)
+    value = float(np.mean((x - x.mean()) * (y - y.mean())))
+    unit = None if x_unit is None or y_unit is None else x_unit * y_unit
+    return _join(value, unit)
+
+
+def corr(vx, vy):
+    """Mathcad ``corr``: Pearson's correlation coefficient (dimensionless)."""
+    x, y, _, _ = _pair(vx, vy)
+    return float(np.corrcoef(x, y)[0, 1])
+
+
+def slope(vx, vy):
+    """Mathcad ``slope(vx, vy)``: the least-squares regression slope."""
+    x, y, x_unit, y_unit = _pair(vx, vy)
+    value = float(np.mean((x - x.mean()) * (y - y.mean())) / np.var(x))
+    unit = None if x_unit is None or y_unit is None else y_unit / x_unit
+    return _join(value, unit)
+
+
+def intercept(vx, vy):
+    """Mathcad ``intercept(vx, vy)``: the least-squares regression intercept."""
+    x, y, _, y_unit = _pair(vx, vy)
+    m = float(np.mean((x - x.mean()) * (y - y.mean())) / np.var(x))
+    return _join(float(y.mean() - m * x.mean()), y_unit)
+
+
+def Ftest(v1, v2):  # noqa: N802 -- Mathcad's own spelling
+    """Mathcad ``Ftest``: ``(F, p)`` for "do these samples have equal variance?".
+
+    ``F`` is the ratio of the two *sample* variances and ``p`` the two-tailed
+    significance of it differing from 1 (Numerical Recipes' ``ftest``: the
+    degrees of freedom follow whichever variance ended up on top, and the
+    one-tailed tail probability is doubled).
+
+    NR's own ``ftest`` reports the *larger over smaller* ratio, so its ``F`` is
+    always >= 1; this returns ``var1/var2`` as asked, which is what the sheet's
+    own ``Var(batch1)/Var(batch2)`` next to the call computes. The fixture can't
+    tell the two apart -- its ratio happens to exceed 1 -- but the plain ratio is
+    the more useful answer and ``p`` is unaffected either way.
+    """
+    from scipy.special import betainc
+
+    x, y, _, _ = _pair(v1, v2)
+    var1, var2 = np.var(x, ddof=1), np.var(y, ddof=1)
+    df1, df2 = x.size - 1, y.size - 1
+    f = var1 / var2
+    if f < 1.0:  # NR keeps F >= 1 by swapping, so the tail below is the upper one
+        f, df1, df2 = 1.0 / f, df2, df1
+    prob = 2.0 * betainc(0.5 * df2, 0.5 * df1, df2 / (df2 + df1 * f))
+    if prob > 1.0:
+        prob = 2.0 - prob
+    return col(float(var1 / var2), float(prob))
+
+
+def _crank(sorted_values):
+    """Replace sorted values by their ranks, ties sharing the average rank.
+
+    Returns ``(ranks, s)`` where ``s`` is Numerical Recipes' ``Σ(m³ - m)`` over
+    the tie groups of length ``m`` -- the correction :func:`Spear` needs.
+    """
+    ranks = np.arange(1.0, sorted_values.size + 1.0)
+    s = 0.0
+    j = 0
+    while j < sorted_values.size:
+        k = j
+        while k + 1 < sorted_values.size and sorted_values[k + 1] == sorted_values[j]:
+            k += 1
+        if k > j:
+            m = k - j + 1
+            ranks[j : k + 1] = 0.5 * (j + k) + 1.0
+            s += m**3 - m
+        j = k + 1
+    return ranks, s
+
+
+def Spear(vx, vy):  # noqa: N802 -- Mathcad's own spelling
+    """Mathcad ``Spear``: Spearman's rank correlation, as five statistics.
+
+    ``(D, zd, probd, rs, probrs)`` -- Numerical Recipes' ``spear``: the sum of
+    squared rank differences, how many standard deviations that sits from its
+    null expectation, its two-sided p-value, the rank correlation itself, and
+    *its* two-sided p-value.
+    """
+    from scipy.special import betainc, erfc
+
+    x, y, _, _ = _pair(vx, vy)
+    n = x.size
+    order = np.argsort(x, kind="stable")
+    rank_x, sf = _crank(x[order])
+    rank_x = rank_x[np.argsort(order, kind="stable")]
+    order = np.argsort(y, kind="stable")
+    rank_y, sg = _crank(y[order])
+    rank_y = rank_y[np.argsort(order, kind="stable")]
+
+    d = float(np.sum((rank_x - rank_y) ** 2))
+    en3n = n**3 - n
+    aved = en3n / 6.0 - (sf + sg) / 12.0
+    fac = (1.0 - sf / en3n) * (1.0 - sg / en3n)
+    vard = ((n - 1) * n**2 * (n + 1) ** 2 / 36.0) * fac
+    zd = (d - aved) / math.sqrt(vard)
+    probd = float(erfc(abs(zd) / math.sqrt(2.0)))
+    rs = (1.0 - (6.0 / en3n) * (d + (sf + sg) / 12.0)) / math.sqrt(fac)
+    tail = (rs + 1.0) * (1.0 - rs)
+    if tail > 0.0:
+        t = rs * math.sqrt((n - 2) / tail)
+        df = n - 2
+        probrs = float(betainc(0.5 * df, 0.5, df / (df + t * t)))
+    else:
+        probrs = 0.0
+    return col(d, float(zd), probd, float(rs), probrs)
+
+
+def kendltau(vx, vy):
+    """Mathcad ``kendltau``: Kendall's tau for two samples, as ``(tau, z, p)``.
+
+    Numerical Recipes' ``kendl1``: every pair of points is concordant,
+    discordant, or tied on one axis; ``z`` is the null-hypothesis standard score
+    and ``p`` its two-sided significance.
+    """
+    from scipy.special import erfc
+
+    x, y, _, _ = _pair(vx, vy)
+    n = x.size
+    a1 = x[:, None] - x[None, :]
+    a2 = y[:, None] - y[None, :]
+    upper = np.triu(np.ones((n, n), dtype=bool), 1)
+    aa = (a1 * a2)[upper]
+    n1 = int(np.count_nonzero(a1[upper]))
+    n2 = int(np.count_nonzero(a2[upper]))
+    score = float(np.sum(np.sign(aa)))
+    tau = score / (math.sqrt(n1) * math.sqrt(n2))
+    svar = (4.0 * n + 10.0) / (9.0 * n * (n - 1.0))
+    z = tau / math.sqrt(svar)
+    return col(tau, z, float(erfc(abs(z) / math.sqrt(2.0))))
+
+
+def kendltau2(tab):
+    """Mathcad ``kendltau2``: Kendall's tau for a **contingency table**.
+
+    Numerical Recipes' ``kendl2``: the table's row and column indices are the
+    two ordinal variables and each cell's count weights the pairs it forms.
+    Returns ``(tau, z, p)`` like :func:`kendltau`.
+    """
+    from scipy.special import erfc
+
+    mag, _ = _split(tab)
+    m = _as_2d(mag)
+    rows_n, cols_n = m.shape
+    points = float(m.sum())
+    en1 = en2 = s = 0.0
+    for k in range(rows_n * cols_n - 1):
+        ki, kj = divmod(k, cols_n)
+        for l in range(k + 1, rows_n * cols_n):  # noqa: E741 -- NR's own name
+            li, lj = divmod(l, cols_n)
+            m1, m2 = li - ki, lj - kj
+            pairs = float(m[ki, kj] * m[li, lj])
+            if m1 * m2:
+                en1 += pairs
+                en2 += pairs
+                s += pairs if m1 * m2 > 0 else -pairs
+            else:
+                if m1:
+                    en1 += pairs
+                if m2:
+                    en2 += pairs
+    tau = s / math.sqrt(en1 * en2)
+    svar = (4.0 * points + 10.0) / (9.0 * points * (points - 1.0))
+    z = tau / math.sqrt(svar)
+    return col(tau, z, float(erfc(abs(z) / math.sqrt(2.0))))
+
+
+def contingtbl(tab):
+    """Mathcad ``contingtbl``: chi-square association statistics for a table.
+
+    Numerical Recipes' ``cntab1``, returning ``(χ², df, p, Cramér's V, C)`` --
+    the last two being the two standard ways of scaling χ² into a 0..1 measure
+    of association. Rows and columns that are entirely empty drop out of the
+    degrees of freedom, as they carry no information.
+    """
+    from scipy.stats import chi2
+
+    mag, _ = _split(tab)
+    m = _as_2d(mag)
+    total_n = float(m.sum())
+    row_sums, col_sums = m.sum(axis=1), m.sum(axis=0)
+    nn_i = int(np.count_nonzero(row_sums))
+    nn_j = int(np.count_nonzero(col_sums))
+    df = nn_i * nn_j - nn_i - nn_j + 1
+    expected = np.outer(row_sums, col_sums) / total_n
+    with np.errstate(divide="ignore", invalid="ignore"):
+        terms = np.where(expected > 0, (m - expected) ** 2 / expected, 0.0)
+    chisq = float(terms.sum())
+    prob = float(chi2.sf(chisq, df))
+    minij = min(nn_i, nn_j) - 1
+    cramrv = math.sqrt(chisq / (total_n * minij))
+    ccc = math.sqrt(chisq / (chisq + total_n))
+    return col(chisq, float(df), prob, cramrv, ccc)
+
+
+# --- Probability distributions ----------------------------------------------
+#
+# Mathcad names these ``<letter><distribution>``: ``d`` the density, ``p`` the
+# cumulative probability, ``q`` the quantile (inverse cumulative), and ``r`` a
+# vector of ``m`` random draws. A random one obviously can't reproduce a cached
+# worksheet value -- the numbers below it differ every run, by design.
+
+
+def dnorm(x, mu=0.0, sigma=1.0):
+    """Mathcad ``dnorm``: the normal probability *density* at ``x``."""
+    from scipy.stats import norm
+
+    return float(norm.pdf(_reduce_dimensionless(x), float(mu), float(sigma)))
+
+
+def pnorm(x, mu=0.0, sigma=1.0):
+    """Mathcad ``pnorm``: the normal *cumulative* probability up to ``x``."""
+    from scipy.stats import norm
+
+    return float(norm.cdf(_reduce_dimensionless(x), float(mu), float(sigma)))
+
+
+def qnorm(p, mu=0.0, sigma=1.0):
+    """Mathcad ``qnorm``: the normal quantile -- the inverse of :func:`pnorm`."""
+    from scipy.stats import norm
+
+    return float(norm.ppf(float(_reduce_dimensionless(p)), float(mu), float(sigma)))
+
+
+def rnorm(m, mu=0.0, sigma=1.0):
+    """Mathcad ``rnorm``: ``m`` random draws from a normal distribution."""
+    return np.random.normal(float(mu), float(sigma), int(m))
+
+
+def dt(x, d):
+    """Mathcad ``dt``: the Student's *t* density at ``x`` with ``d`` d.o.f."""
+    from scipy.stats import t
+
+    return float(t.pdf(_reduce_dimensionless(x), float(d)))
+
+
+def pt(x, d):
+    """Mathcad ``pt``: the Student's *t* cumulative probability up to ``x``."""
+    from scipy.stats import t
+
+    return float(t.cdf(_reduce_dimensionless(x), float(d)))
+
+
+def qt(p, d):
+    """Mathcad ``qt``: the Student's *t* quantile -- the inverse of :func:`pt`."""
+    from scipy.stats import t
+
+    return float(t.ppf(float(_reduce_dimensionless(p)), float(d)))
+
+
+def rt(m, d):
+    """Mathcad ``rt``: ``m`` random draws from a Student's *t* distribution."""
+    return np.random.standard_t(float(d), int(m))
+
+
+def dweibull(x, s):
+    """Mathcad ``dweibull``: the Weibull density (shape ``s``, unit scale)."""
+    from scipy.stats import weibull_min
+
+    return float(weibull_min.pdf(_reduce_dimensionless(x), float(s)))
+
+
+def pweibull(x, s):
+    """Mathcad ``pweibull``: the Weibull cumulative probability up to ``x``."""
+    from scipy.stats import weibull_min
+
+    return float(weibull_min.cdf(_reduce_dimensionless(x), float(s)))
+
+
+def qweibull(p, s):
+    """Mathcad ``qweibull``: the Weibull quantile (inverse of :func:`pweibull`)."""
+    from scipy.stats import weibull_min
+
+    return float(weibull_min.ppf(float(_reduce_dimensionless(p)), float(s)))
+
+
+def rweibull(m, s):
+    """Mathcad ``rweibull``: ``m`` random draws from a Weibull distribution."""
+    return np.random.weibull(float(s), int(m))
+
+
 # --- Table search (match / lookup / vlookup / hlookup / vhlookup) -----------
 #
 # Mathcad scans a matrix **column-major** and every one of these returns a
@@ -1660,6 +2120,29 @@ def plot_axis(data, unit=None):
     if hasattr(ratio, "dimensionless") and ratio.dimensionless:
         ratio = ratio.to("dimensionless")
     return np.asarray(getattr(ratio, "magnitude", ratio), dtype=float)
+
+
+def plot_trace(x, y):
+    """A trace's ``(x, y)`` arrays, NaN-padded to a common length.
+
+    Mathcad plots a trace whose two axes are *different* lengths by extending
+    the shorter one with blanks -- a seeded iteration is the usual way to get
+    there, since ``guess[i+1] :=`` over ``i := 0..N`` leaves ``guess`` one
+    element longer than the index range plotted against it. Its cached trace
+    shows this literally: ``[0,1,…,8,NaN]`` against ten values. matplotlib
+    instead rejects mismatched axes, so pad here and let the NaN drop out of the
+    line the same way Mathcad's blank does.
+    """
+    x, y = np.asarray(x, dtype=float), np.asarray(y, dtype=float)
+    if not (x.ndim and y.ndim) or x.shape[0] == y.shape[0]:
+        return x, y
+    n = max(x.shape[0], y.shape[0])
+
+    def pad(axis):
+        missing = n - axis.shape[0]
+        return axis if missing == 0 else np.concatenate([axis, np.full(missing, np.nan)])
+
+    return pad(x), pad(y)
 
 
 class Mesh(NamedTuple):
