@@ -32,9 +32,14 @@ read this file when parsing a new schema construct or debugging a parser edge ca
   hint, not a data element — skip it (`_parse_matrix` filters by tag). A row/column vector (`rows == 1`
   or `cols == 1`) emits the `col(...)` runtime helper, a **1-D NumPy array** (plain numbers) or **Pint
   `Quantity` array** (elements with units, built *in the elements' own registry* — never a globally
-  imported `Quantity`, or you get cross-registry errors); a real `rows×cols` matrix emits `matrix(rows,
-  cols, *elements)`, which reshapes the column-major elements with `order="F"` and handles units the
-  same way as `col()` (Mathcad requires one consistent unit across the *whole* matrix, no per-column
+  imported `Quantity`, or you get cross-registry errors); a real `rows×cols` matrix emits
+  `matrix([row0…], [row1…], …)` — **one bracketed list per row**, so the literal reads as it looks in
+  Prime and the shape is implied rather than passed. The emitter regroups the column-major `elements`
+  into rows; the helper flattens them back column-major and reshapes with `order="F"`, and handles
+  units the same way as `col()`. A literal wider than 88 characters is emitted **one row per line**
+  (a lone row never wraps — nothing to line it up against); the newlines sit inside `matrix(`'s own
+  parentheses, so the literal stays a single expression however it is nested, and `_reindent` gives
+  the continuation lines the enclosing statement's indent (Mathcad requires one consistent unit across the *whole* matrix, no per-column
   units). `<apply><indexer/> base idx>` → `base[idx]` (Mathcad indices are 0-based here).
 - **Range-indexed vector assignment** — a `<ml:define>` whose *target* is an `<apply><indexer/> X i>`
   (not an `<ml:id>`) where `i` is a range variable (`i := 1 .. n`): `X[i] := expr` → `ir.IndexAssign`,
@@ -250,7 +255,7 @@ read this file when parsing a new schema construct or debugging a parser edge ca
 - **A column vector is 1-D; a row vector is a matrix.** `<ml:matrix rows="N" cols="1">` → `col(…)`, a
   1-D array — a single subscript `z[0]` must read the *element*, where an `n × 1` shape would hand back
   a one-row slice (`[0.0]`). But `<ml:matrix rows="1" cols="N">` is a genuine `1 × N` and emits
-  `matrix(1, N, …)`. Mathcad says so itself: `match` on a `3 × 1` column returns a bare index, on a
+  `matrix([…])` (a single row list). Mathcad says so itself: `match` on a `3 × 1` column returns a bare index, on a
   `1 × 3` row an index **pair** — and only a matrix has `(row, col)` positions. Collapsing both to 1-D
   loses the orientation `stack`/`augment` need, so a header literal `("A" "B" "C")` landed down
   column 0 instead of across row 0 (`references/stack_augment_lookup.mcdx`).
@@ -400,8 +405,9 @@ rewrites every `BinOp("mul", …)` whose **both** operands are array-shaped into
 ### `matrix(m, n, f)` — a builtin sharing its name with the literal builder
 
 Prime's `matrix` builtin fills an `m×n` matrix from a function of the (0-based) row and column index.
-The runtime `matrix()` already existed as the emitter for `<ml:matrix>` literals, so it now
-distinguishes the two by the single **callable** argument. Cached: `matrix(3, 3, f)` with
+The runtime `matrix()` already existed as the emitter for `<ml:matrix>` literals, so it
+distinguishes the two by the **trailing callable** argument — the literal form takes one list per row
+(`matrix([1, 2], [3, 4])`), the builtin the `(m, n, f)` triple. Cached: `matrix(3, 3, f)` with
 `f(x, y) = x² − y` gives columns `[0,1,4] [-1,0,3] [-2,-1,2]`.
 
 ### Eigen results: what LAPACK reproduces

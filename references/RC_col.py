@@ -19,7 +19,7 @@ l_c = 1.3 * ureg.m
 
 t = 1.0 * ureg.m
 
-Contour = 1 / 2 * matmul(matrix(5, 2, -1, -1, 1, 1, -1, -1, 1, 1, -1, -1), matrix(2, 2, w_c, 0, 0, l_c))
+Contour = 1 / 2 * matmul(matrix([-1, -1], [-1, 1], [1, 1], [1, -1], [-1, -1]), matrix([w_c, 0], [0, l_c]))
 
 # Foundation level:
 
@@ -103,7 +103,13 @@ s_y = 300 * ureg.mm
 n_s = col(mround(l_c / s_x), mround(w_c / s_y), mround(l_c / s_x), mround(w_c / s_y)) - 2
 print(disp(n_s))
 
-stirrup = Contour + matrix(5, 2, cov + ø_w / 2, cov + ø_w / 2, -cov - ø_w / 2, -cov - ø_w / 2, cov + ø_w / 2, cov + ø_w / 2, -cov - ø_w / 2, -cov - ø_w / 2, cov + ø_w / 2, cov + ø_w / 2)
+stirrup = Contour + matrix(
+    [cov + ø_w / 2, cov + ø_w / 2],
+    [cov + ø_w / 2, -cov - ø_w / 2],
+    [-cov - ø_w / 2, -cov - ø_w / 2],
+    [-cov - ø_w / 2, cov + ø_w / 2],
+    [cov + ø_w / 2, cov + ø_w / 2],
+)
 print(disp(stirrup))
 
 s = vectorize(col(l_c - 2 * cov - 2 * ø_w, w_c - 2 * cov - 2 * ø_w, l_c - 2 * cov - 2 * ø_w, w_c - 2 * cov - 2 * ø_w) * (1 / (n_s + 1)))
@@ -337,7 +343,12 @@ ones = elementwise(ones)
 
 # Concrete corner strains:
 
-epsilon_c = lambda e, kx, ky: matmul(matrix(4, 3, 1, 1, 1, 1, -l_c / 2, -l_c / 2, l_c / 2, l_c / 2, -w_c / 2, w_c / 2, -w_c / 2, w_c / 2), col(e, kx, ky))
+epsilon_c = lambda e, kx, ky: matmul(matrix(
+    [1, -l_c / 2, -w_c / 2],
+    [1, -l_c / 2, w_c / 2],
+    [1, l_c / 2, -w_c / 2],
+    [1, l_c / 2, w_c / 2],
+), col(e, kx, ky))
 
 # Rebar strain:
 
@@ -374,8 +385,8 @@ def _UR_c_max_i_c_UR_s_max_i_s_ERR_E():
                 UR_s_max = UR_si
                 i_s = j
         except Exception:
-            return transpose(matrix(1, 6, 9.99, j, 9.99, j, 1, E))
-    return transpose(matrix(1, 6, UR_c_max, i_c, UR_s_max, i_s, 0, E))
+            return transpose(matrix([9.99, j, 9.99, j, 1, E]))
+    return transpose(matrix([UR_c_max, i_c, UR_s_max, i_s, 0, E]))
 UR_c_max, i_c, UR_s_max, i_s, ERR, E = tuple(_UR_c_max_i_c_UR_s_max_i_s_ERR_E())
 print([UR_c_max, i_c, UR_s_max, i_s, ERR, E])
 
@@ -468,7 +479,10 @@ C = lambda e, kx, ky: total(vectorize(c_only(F_ci(e, kx, ky)))) + total(vectoriz
 
 print(disp((mc_min(vectorize(sigma_c(e_c)))), ureg.MPa))
 
-CG = lambda e, kx, ky: matrix(2, 2, total(vectorize(t_only(F_si(e, kx, ky)) * X_s)) / T(e, kx, ky), (total(vectorize(c_only(F_ci(e, kx, ky)) * X_c)) + total(vectorize(c_only(F_si(e, kx, ky)) * X_s))) / C(e, kx, ky), total(vectorize(t_only(F_si(e, kx, ky)) * Y_s)) / T(e, kx, ky), (total(vectorize(c_only(F_ci(e, kx, ky)) * Y_c)) + total(vectorize(c_only(F_si(e, kx, ky)) * Y_s))) / C(e, kx, ky))
+CG = lambda e, kx, ky: matrix(
+    [total(vectorize(t_only(F_si(e, kx, ky)) * X_s)) / T(e, kx, ky), total(vectorize(t_only(F_si(e, kx, ky)) * Y_s)) / T(e, kx, ky)],
+    [(total(vectorize(c_only(F_ci(e, kx, ky)) * X_c)) + total(vectorize(c_only(F_si(e, kx, ky)) * X_s))) / C(e, kx, ky), (total(vectorize(c_only(F_ci(e, kx, ky)) * Y_c)) + total(vectorize(c_only(F_si(e, kx, ky)) * Y_s))) / C(e, kx, ky)],
+)
 
 # Strain/stress in rebar:
 

@@ -106,7 +106,7 @@ def test_linterp_and_transpose_emitted():
     ``1 x N`` matrix (not a 1-D array), so ``transpose`` is what brings it back
     to the 1-D column form ``linterp`` reads."""
     src = convert_file(REFERENCE, fmt="py")
-    assert "transpose(matrix(1, 6, " in src
+    assert "transpose(matrix([1.0, 1.0, 0.85, 0.75, 0.70, 0.70]))" in src
     assert "linterp(transpose(" in src
 
 

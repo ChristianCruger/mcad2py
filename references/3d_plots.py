@@ -43,7 +43,18 @@ plt.show()
 
 # approach #2 plot from 3xN matrix - x,y,z in seperate columns:
 
-M = matrix(10, 3, 1 * ureg.m, 2 * ureg.m, 3 * ureg.m, 4 * ureg.m, 5 * ureg.m, 6 * ureg.m, 7 * ureg.m, 8 * ureg.m, 9 * ureg.m, 10 * ureg.m, 1 * ureg.m, 1 * ureg.m, 1 * ureg.m, 1 * ureg.m, 2 * ureg.m, 2 * ureg.m, 2 * ureg.m, 2 * ureg.m, 3 * ureg.m, 3 * ureg.m, 3 * ureg.m, 4 * ureg.m, 5 * ureg.m, 6 * ureg.m, 1 * ureg.m, 2 * ureg.m, 4 * ureg.m, 6 * ureg.m, 7 * ureg.m, 8 * ureg.m)
+M = matrix(
+    [1 * ureg.m, 1 * ureg.m, 3 * ureg.m],
+    [2 * ureg.m, 1 * ureg.m, 4 * ureg.m],
+    [3 * ureg.m, 1 * ureg.m, 5 * ureg.m],
+    [4 * ureg.m, 1 * ureg.m, 6 * ureg.m],
+    [5 * ureg.m, 2 * ureg.m, 1 * ureg.m],
+    [6 * ureg.m, 2 * ureg.m, 2 * ureg.m],
+    [7 * ureg.m, 2 * ureg.m, 4 * ureg.m],
+    [8 * ureg.m, 2 * ureg.m, 6 * ureg.m],
+    [9 * ureg.m, 3 * ureg.m, 7 * ureg.m],
+    [10 * ureg.m, 3 * ureg.m, 8 * ureg.m],
+)
 
 # contour: (3xN matrix can have units, but must be the same for columns)
 
@@ -59,7 +70,18 @@ else:
 plt.colorbar(_cs, ax=_ax)
 plt.show()
 
-M2 = matrix(10, 3, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3 * ureg.m, 4 * ureg.m, 5 * ureg.m, 6 * ureg.m, 1 * ureg.m, 2 * ureg.m, 4 * ureg.m, 6 * ureg.m, 7 * ureg.m, 8 * ureg.m)
+M2 = matrix(
+    [1, 1, 3 * ureg.m],
+    [2, 1, 4 * ureg.m],
+    [3, 1, 5 * ureg.m],
+    [4, 1, 6 * ureg.m],
+    [5, 2, 1 * ureg.m],
+    [6, 2, 2 * ureg.m],
+    [7, 2, 4 * ureg.m],
+    [8, 2, 6 * ureg.m],
+    [9, 3, 7 * ureg.m],
+    [10, 3, 8 * ureg.m],
+)
 
 # 3d (only z column can have units)
 
@@ -116,7 +138,13 @@ plt.show()
 
 # units supported if all the same (only applied to the z value)
 
-A = matrix(5, 5, 1, 1, 1, 2, 3, 1, 1, 2, 2, 3, 1, 2, 2, 3, 3, 1, 2, 2, 3, 4, 1, 2, 3, 3, 5) * ureg.m**2
+A = matrix(
+    [1, 1, 1, 1, 1],
+    [1, 1, 2, 2, 2],
+    [1, 2, 2, 2, 3],
+    [2, 2, 3, 3, 3],
+    [3, 3, 3, 4, 5],
+) * ureg.m**2
 
 # contour
 

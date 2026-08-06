@@ -120,7 +120,7 @@ def test_every_echo_matches_the_cache(sheet):
 
 def test_a_row_literal_is_a_matrix_and_a_column_literal_is_not(sheet):
     src, ns, _ = sheet
-    assert "R = matrix(1, 3, 5, 6, 7)" in src
+    assert "R = matrix([5, 6, 7])" in src
     assert "V = col(1, 2, 3)" in src
     assert np.asarray(ns["R"]).shape == (1, 3)
     assert np.asarray(ns["V"]).shape == (3,)
@@ -165,7 +165,7 @@ def test_a_table_labelled_on_both_axes(sheet):
 
 
 def test_transpose_turns_a_row_into_a_column_and_back():
-    row = matrix(1, 3, 1.0, 2.0, 3.0)
+    row = matrix([1.0, 2.0, 3.0])
     assert np.asarray(row).shape == (1, 3)
 
     column = transpose(row)
@@ -181,13 +181,13 @@ def test_transpose_of_a_row_literal_is_a_column_vector():
     import pint
 
     ureg = pint.UnitRegistry()
-    v = transpose(matrix(1, 3, 1.0, 2.0, 3.0) * ureg.mm)
+    v = transpose(matrix([1.0, 2.0, 3.0]) * ureg.mm)
     assert v.magnitude.ndim == 1
     assert v[2].to("mm").magnitude == 3.0
 
 
 def test_a_genuine_matrix_transposes_normally():
-    m = matrix(2, 3, 1, 2, 3, 4, 5, 6)  # column-major
+    m = matrix([1, 3, 5], [2, 4, 6])
     assert np.asarray(transpose(m)).tolist() == np.asarray(m).T.tolist()
 
 
@@ -226,7 +226,7 @@ def test_a_search_returns_a_vector_even_for_one_hit(sheet):
 def test_a_value_that_is_not_there_raises():
     """An error in Mathcad too -- returning an empty vector would let a typo'd
     label propagate silently."""
-    table = matrix(2, 2, 1, 2, 3, 4)
+    table = matrix([1, 3], [2, 4])
     with pytest.raises(ValueError, match="not found"):
         match(99, table)
     with pytest.raises(ValueError, match="not found"):
@@ -247,13 +247,13 @@ def test_a_search_mixing_strings_and_numbers_does_not_raise():
 def test_augment_keeps_a_matrix_blocks_columns():
     """The supporting bug: ``augment`` flattened every argument to 1-D, so a
     matrix block collapsed into a single column of all its elements."""
-    joined = augment(col("a", "b"), matrix(2, 2, 1, 2, 3, 4))
+    joined = augment(col("a", "b"), matrix([1, 3], [2, 4]))
     assert np.asarray(joined).shape == (2, 3)
     assert _rows(joined) == [["a", 1.0, 3.0], ["b", 2.0, 4.0]]
 
 
 def test_stack_keeps_a_matrix_blocks_rows():
-    joined = stack(matrix(1, 2, "a", "b"), matrix(2, 2, 1, 2, 3, 4))
+    joined = stack(matrix(["a", "b"]), matrix([1, 3], [2, 4]))
     assert np.asarray(joined).shape == (3, 2)
     assert _rows(joined) == [["a", "b"], [1.0, 3.0], [2.0, 4.0]]
 

@@ -56,7 +56,8 @@ matches the cache for `f_yd`/`τ_Rd`/`τ_Sd`/`Accept`; `ν_v` is asserted at the
 including the *composed* form from `biaxial_bending.mcdx`'s `sigma(epsilon(x0*mm, y0*mm))`, both
 wrapped into `mesh_grid(lambda x, y: …, x, y)`), an `N×3` matrix as an `(x,y,z)` point list (scatter),
 `CreateMesh(...)`, and an `N×M` matrix as an index-coordinate z-grid — executes the whole sheet, checks
-`resolve_plot_grid`'s dispatch (`"grid"` vs `"scatter"`) and `matrix()`'s column-major reshape (and that
+`resolve_plot_grid`'s dispatch (`"grid"` vs `"scatter"`) and `matrix()`'s row-per-list literal form and
+column-major reshape (and that
 a leading `<ml:display>` metadata child isn't mistaken for a data element) against the sheet's own
 values, and renders all 8 figures (matplotlib `Agg`, 2D + `mplot3d`). Plus a regression test that an
 expression over only *one* range (not two) correctly stays an `UnsupportedRegion` rather than being

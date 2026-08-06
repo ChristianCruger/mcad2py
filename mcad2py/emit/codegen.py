@@ -23,6 +23,9 @@ from ..mapping import (
 
 _ATOM = 100
 
+# A matrix literal wider than this is emitted one row per line.
+_WRAP_WIDTH = 88
+
 
 def expr_to_str(node: ir.Expr) -> str:
     """Render an expression with no unnecessary outer parentheses."""
@@ -99,10 +102,23 @@ def _emit(node: ir.Expr) -> tuple[str, int]:
         return f"Eq({expr_to_str(node.lhs)}, {expr_to_str(node.rhs)})", _ATOM
 
     if isinstance(node, ir.MatrixLiteral):
-        elems = ", ".join(expr_to_str(e) for e in node.elements)
+        parts = [expr_to_str(e) for e in node.elements]
         if node.cols <= 1:  # vector -> 1-D array
-            return f"col({elems})", _ATOM
-        return f"matrix({node.rows}, {node.cols}, {elems})", _ATOM
+            return f"col({', '.join(parts)})", _ATOM
+        # ``elements`` is column-major (the XML's order); regroup into one list
+        # per row so the emitted literal reads like the Mathcad matrix does.
+        rows = [
+            "[" + ", ".join(parts[j * node.rows + i] for j in range(node.cols)) + "]"
+            for i in range(node.rows)
+        ]
+        one_line = f"matrix({', '.join(rows)})"
+        # A single row has nothing to line up against, so it never wraps.
+        if len(one_line) <= _WRAP_WIDTH or node.rows == 1:
+            return one_line, _ATOM
+        # Too wide to read: one row per line. The newlines sit inside ``matrix(``'s
+        # own parentheses, so this stays a single expression wherever it is nested;
+        # ``_reindent`` gives the continuation lines the statement's indent.
+        return "matrix(\n" + "".join(f"    {row},\n" for row in rows) + ")", _ATOM
 
     if isinstance(node, ir.Index):
         base = _wrap(node.base, _ATOM, is_left=True, right_assoc=False)
@@ -303,7 +319,27 @@ def _block_lines(block: ir.ProgramBlock, indent: int) -> list[str]:
     return out
 
 
+def _reindent(lines: list[str], pad: str) -> list[str]:
+    """Split statements a wrapped matrix literal spread over several lines.
+
+    The continuation lines already carry their own relative indent (and sit
+    inside an open parenthesis, so Python accepts them either way) -- this adds
+    the enclosing statement's indent on top, so a wrapped literal inside a
+    ``def`` lines up with the body rather than the margin.
+    """
+    out: list[str] = []
+    for line in lines:
+        head, *rest = line.split("\n")
+        out.append(head)
+        out += [pad + cont for cont in rest]
+    return out
+
+
 def _stmt_lines(stmt: ir.Stmt, indent: int) -> list[str]:
+    return _reindent(_stmt_lines_raw(stmt, indent), "    " * indent)
+
+
+def _stmt_lines_raw(stmt: ir.Stmt, indent: int) -> list[str]:
     pad = "    " * indent
     if isinstance(stmt, ir.LocalAssign):
         target, value = stmt.target, stmt.value
@@ -483,7 +519,7 @@ def _recurrence_writes(
         source = "None" if name in create else name
         create.discard(name)
         lines.append(f"{pad}{name} = vec_set({source}, {index}, {value})")
-    return lines
+    return _reindent(lines, pad)
 
 
 def _needs_elementwise(define: ir.Define) -> bool:

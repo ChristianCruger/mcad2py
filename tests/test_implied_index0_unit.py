@@ -203,5 +203,5 @@ def test_stack_accepts_a_scalar_block():
 def test_stack_with_a_wider_block_is_still_a_matrix():
     """Only a single-column result collapses; stacking against a 2x2 keeps the
     2-D shape (and its zero fill)."""
-    stacked = stack(col(1, 2), matrix(2, 2, 3, 4, 5, 6))
+    stacked = stack(col(1, 2), matrix([3, 5], [4, 6]))
     assert np.asarray(stacked, dtype=float).tolist() == [[1, 0], [2, 0], [3, 5], [4, 6]]

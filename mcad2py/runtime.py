@@ -360,24 +360,36 @@ def col(*elements: object) -> object:
     return _build_array(elements, shape=None)
 
 
-def matrix(nrows: int, ncols: int, *elements: object) -> object:
-    """Build a genuine ``nrows``x``ncols`` Mathcad matrix (both > 1).
+def matrix(*rows: object) -> object:
+    """Build a Mathcad matrix from one list per **row**::
 
-    ``elements`` arrive in Prime's own ``<ml:matrix>`` order, which is
-    column-major, hence ``order="F"`` on the reshape. Unit handling mirrors
-    ``col()``: a matrix with one consistent unit is a fused Pint array, while a
-    heterogeneous one (mixed/plain units) becomes an object array of per-element
-    values.
+        matrix([3, 2, 1], [2, 3, 2])   # 2 x 3
 
-    This doubles as Mathcad's ``matrix(m, n, f)`` *builtin*, which fills the
-    matrix from a function of the (0-based) row and column index -- the two
-    spellings are distinguished by the single callable argument.
+    The shape is implied by the rows, and the literal reads in the same order
+    it is written in Prime (the IR stores elements column-major, as the XML
+    does; the emitter regroups them here). Unit handling mirrors ``col()``: a
+    matrix with one consistent unit is a fused Pint array, while a heterogeneous
+    one (mixed/plain units) becomes an object array of per-element values.
+
+    This doubles as Mathcad's ``matrix(m, n, f)`` *builtin*, which fills an
+    ``m x n`` matrix from a function of the (0-based) row and column index --
+    the two spellings are distinguished by the trailing callable argument.
     """
-    if len(elements) == 1 and callable(elements[0]):
-        f = elements[0]
-        elements = tuple(
-            f(i, j) for j in range(int(ncols)) for i in range(int(nrows))
+    if len(rows) == 3 and callable(rows[2]):
+        nrows, ncols, f = int(rows[0]), int(rows[1]), rows[2]
+        elements = tuple(f(i, j) for j in range(ncols) for i in range(nrows))
+        return _build_array(elements, shape=(nrows, ncols))
+
+    if not rows or not all(isinstance(r, (list, tuple)) for r in rows):
+        raise TypeError(
+            "matrix() takes one list per row -- matrix([1, 2], [3, 4]) -- "
+            "or Mathcad's matrix(m, n, f) builtin"
         )
+    nrows, ncols = len(rows), len(rows[0])
+    if any(len(r) != ncols for r in rows):
+        raise ValueError("matrix(): every row must have the same length")
+    # ``_build_array`` reshapes with ``order="F"``, so hand it column-major.
+    elements = tuple(rows[i][j] for j in range(ncols) for i in range(nrows))
     return _build_array(elements, shape=(nrows, ncols))
 
 
