@@ -20,9 +20,23 @@ OPERATOR_TAGS = {
     "lessOrEqual": "le",
     "greaterOrEqual": "ge",
     "equal": "eq",
+    "notEqual": "ne",
     # Boolean connectives (program tests, e.g. ``rho <= x and crack = "Yes"``).
     "and": "and_",
     "or": "or_",
+    "not": "not_",
+}
+
+# Operator tags with no Python infix (or prefix) form -> the callable that
+# implements them. Anything not in ``FUNCTIONS`` passes through verbatim, so a
+# ``math.`` name works here and a bare name is picked up from runtime.py.
+OPERATOR_CALLS = {
+    "factorial": "math.factorial",
+    # Mathcad's ⊕ is a *logical* xor: ``3 ⊕ 2`` is 0, where Python's ``^`` would
+    # do bitwise arithmetic and say 1.
+    "xor": "xor",
+    # ``3 ∈ ℤ``: the right operand is the number-set symbol, passed as a string.
+    "elementOf": "element_of",
 }
 
 # Canonical op -> (python infix symbol, precedence). Higher binds tighter.
@@ -34,6 +48,7 @@ BINARY_OPS = {
     "le": ("<=", 0),
     "ge": (">=", 0),
     "eq": ("==", 0),
+    "ne": ("!=", 0),
     "add": ("+", 1),
     "sub": ("-", 1),
     "mul": ("*", 2),
@@ -200,6 +215,11 @@ FUNCTIONS = {
 # Mathcad symbolic command keyword (first id of a <ml:command> sequence) ->
 # SymPy callable. Symbolic regions emit ``<callable>(expr, *args)``.
 SYMBOLIC_COMMANDS = {
+    # A bare ``→`` -- ``<ml:command><ml:placeholder /></ml:command>``, no keyword
+    # -- is Mathcad's plain symbolic evaluation. SymPy's ``simplify`` is the
+    # closest single call: it evaluates exactly rather than in floating point,
+    # which is the whole point of reaching for the arrow (``π ∈ ℚ``).
+    "": "simplify",
     "solve": "solve",
     "simplify": "simplify",
     "factor": "factor",
@@ -210,12 +230,11 @@ SYMBOLIC_COMMANDS = {
 # consulted for an id Prime labelled CONSTANT, so a worksheet's own ``c``, ``g``
 # or ``R`` (all labelled VARIABLE) is untouched.
 #
-# The physics set is Prime's built-in "Constants" label (see
-# references/Constants.mcdx). Values are the CODATA/SI numbers Prime itself
-# caches, written in **base SI units** rather than the friendlier compound ones
-# (``h`` as ``kg·m²/s``, not ``J·s``): a display override on such a constant is a
-# pure numeric scale (``10⁻³⁴ kg·m²/s``), and ``disp`` renders that by *dividing*
-# -- which only reduces to a plain number when the two agree unit-for-unit.
+# The maths trio inlines (``math.pi`` reads no worse than ``pi`` and can't be
+# shadowed); everything below it is a **name imported from mcad2py.const**, so a
+# formula stays legible -- ``m * c**2``, not ``m * (299792458 * ureg.m /
+# ureg.s)**2``. The header emits the import for exactly those constants the
+# worksheet labels CONSTANT (see ``_const_imports``).
 CONSTANTS = {
     "π": "math.pi",
     "pi": "math.pi",
@@ -224,23 +243,31 @@ CONSTANTS = {
     # the faithful reading of what the symbol *means*, and the one that behaves
     # as an integration limit or a comparison bound.
     "∞": "math.inf",
-    "γ": "0.5772156649015329",  # Euler-Mascheroni
-    # -- physics -----------------------------------------------------------
-    "c": "(299792458 * ureg.m / ureg.s)",  # speed of light
-    "g": "(9.80665 * ureg.m / ureg.s**2)",  # standard gravity
-    "e_c": "(1.602176634e-19 * ureg.coulomb)",  # elementary charge
-    "h": "(6.62607015e-34 * ureg.kg * ureg.m**2 / ureg.s)",  # Planck
-    "ℏ": "(1.054571817e-34 * ureg.kg * ureg.m**2 / ureg.s)",  # reduced Planck
-    "k": "(1.380649e-23 * ureg.kg * ureg.m**2 / (ureg.s**2 * ureg.K))",  # Boltzmann
-    "m_u": "(1.66053906892e-27 * ureg.kg)",  # atomic mass unit
-    "N_A": "(6.02214076e23 / ureg.mol)",  # Avogadro
-    "R": "(8.314462618 * ureg.kg * ureg.m**2 / (ureg.s**2 * ureg.K * ureg.mol))",  # gas
-    "R_∞": "(10973731.56816 / ureg.m)",  # Rydberg
-    "α": "0.0072973525643",  # fine-structure
-    "ε_0": "(8.8541878188e-12 * ureg.A**2 * ureg.s**4 / (ureg.kg * ureg.m**3))",
-    "μ_0": "(1.25663706127e-6 * ureg.kg * ureg.m / (ureg.s**2 * ureg.A**2))",
-    "σ": "(5.670374419e-8 * ureg.kg / (ureg.s**3 * ureg.K**4))",  # Stefan-Boltzmann
-    "Φ_0": "(2.067833848e-15 * ureg.weber)",  # magnetic flux quantum
+    # -- mcad2py.const -----------------------------------------------------
+    # Display name -> the name it is defined under there. Most are the
+    # sanitized spelling; ``ℏ`` and ``R_∞`` would sanitize to something unusable
+    # (``ℏ``, ``R__``), so they are spelled out.
+    "c": "c",  # speed of light
+    "g": "g",  # standard gravity
+    "e_c": "e_c",  # elementary charge
+    "h": "h",  # Planck
+    "ℏ": "hbar",  # reduced Planck
+    "k": "k",  # Boltzmann
+    "m_u": "m_u",  # atomic mass unit
+    "N_A": "N_A",  # Avogadro
+    "R": "R",  # molar gas
+    "R_∞": "R_inf",  # Rydberg
+    "α": "alpha",  # fine-structure
+    "γ": "gamma",  # Euler-Mascheroni
+    "ε_0": "epsilon_0",
+    "μ_0": "mu_0",
+    "σ": "sigma",  # Stefan-Boltzmann
+    "Φ_0": "Phi_0",  # magnetic flux quantum
+}
+
+# The subset of CONSTANTS that lives in mcad2py.const rather than inlining.
+CONST_MODULE_NAMES = {
+    name for key, name in CONSTANTS.items() if not name.startswith("math.")
 }
 
 # Greek letters -> ASCII transliteration for Python identifiers (matches the

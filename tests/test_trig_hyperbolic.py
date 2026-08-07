@@ -170,7 +170,7 @@ def test_generated_source_uses_runtime_helpers():
     ``math.*``), so an angle argument and a Pint ratio both work."""
     trig_src, _, _ = _run(TRIG)
     hyp_src, _, _ = _run(HYPERBOLIC)
-    assert "math." not in trig_src.split("ureg =")[1]
+    assert "math." not in trig_src.split("import ureg")[1]  # body, not the header
     for name in ("sec", "csc", "sinc", "acot", "asec", "acsc", "atan2", "angle"):
         assert re.search(rf"\b{name}\(", trig_src), name
     for name in ("sinh", "cosh", "tanh", "coth", "sech", "csch",

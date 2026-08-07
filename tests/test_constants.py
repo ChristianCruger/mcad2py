@@ -97,16 +97,51 @@ def test_dimensioned_constants_carry_their_units(sheet):
     assert str(gravity.to_base_units().units) == "meter / second ** 2"
 
 
+def test_constants_are_imported_names_not_inlined_values(sheet):
+    """The physics set comes in from ``mcad2py.const``, so a formula reads the
+    way the worksheet does (``m * c**2``) instead of carrying 299792458 around.
+
+    They are pre-built Pint quantities, which is why the module takes the
+    *shared* registry from ``mcad2py.units`` rather than building its own --
+    Pint refuses to combine quantities from two registries.
+    """
+    src, ns, _ = sheet
+    assert "from mcad2py.units import ureg" in src
+    assert "pint.UnitRegistry()" not in src
+    assert "299792458" not in src
+    for name in ("c", "g", "e_c", "hbar", "N_A", "R_inf", "Phi_0"):
+        assert name in src.split("\n\n")[0] or name in ns
+    # Shared registry: a constant and a sheet quantity combine without error.
+    assert (2 * ns["ureg"].kg * ns["c"] ** 2).to_base_units().magnitude > 0
+
+
+def test_only_the_constants_a_sheet_labels_are_imported():
+    """The import list is driven by the **IR**, not by scanning the rendered
+    text: ``c``, ``g``, ``k`` and ``R`` are everyday variable names, and a sheet
+    that merely has a variable called ``k`` must not import Boltzmann's."""
+    from mcad2py.emit.codegen import _const_imports
+
+    ws = convert_worksheet(load_mcdx(reference("RC_torsion")))
+    assert _const_imports(ws) == []
+    assert _const_imports(convert_worksheet(load_mcdx(REFERENCE)))[:2] == ["c", "g"]
+
+
 def test_lookup_is_label_gated():
     """The table is keyed by *display* name and consulted only for an id Prime
     labelled CONSTANT. Names that would collide with everyday worksheet
     variables (``c``, ``g``, ``k``, ``R``, ``e``, ``σ``, ``α``, ``γ``) are in it
     precisely because the label -- not the spelling -- decides."""
     from mcad2py import ir
-    from mcad2py.emit.codegen import expr_to_str
+    from mcad2py.emit.codegen import _const_imports, expr_to_str
 
     assert {"c", "g", "k", "R", "e", "σ", "α", "γ"} <= set(CONSTANTS)
-    as_variable = ir.Name(py="c", original="c", role="VARIABLE")
-    as_constant = ir.Name(py="c", original="c", role="CONSTANT")
-    assert expr_to_str(as_variable) == "c"
-    assert expr_to_str(as_constant) == CONSTANTS["c"]
+    as_variable = ir.Name(py="sigma", original="σ", role="VARIABLE")
+    as_constant = ir.Name(py="sigma", original="σ", role="CONSTANT")
+    assert expr_to_str(as_variable) == "sigma"  # a stress, say
+    assert expr_to_str(as_constant) == "sigma"  # Stefan-Boltzmann
+    # Same text either way -- the import is what separates them, and only the
+    # CONSTANT-labelled one asks for it.
+    only_variable = ir.Worksheet(regions=[ir.Evaluate(value=as_variable)])
+    only_constant = ir.Worksheet(regions=[ir.Evaluate(value=as_constant)])
+    assert _const_imports(only_variable) == []
+    assert _const_imports(only_constant) == ["sigma"]

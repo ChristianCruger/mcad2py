@@ -42,6 +42,8 @@ When adding features, respect this boundary — parsers produce IR, backends con
 | [ir.py](mcad2py/ir.py) | Backend-agnostic node dataclasses |
 | [shapes.py](mcad2py/shapes.py) | Post-parse IR pass: infers each name's shape across the sheet so Mathcad's one `·` splits into scalar `*` vs. `matmul` |
 | [mapping.py](mcad2py/mapping.py) | Data tables: operators, builtins, constants, Greek, unit aliases |
+| [units.py](mcad2py/units.py) | The one Pint registry generated modules and `const.py` share |
+| [const.py](mcad2py/const.py) | Mathcad's built-in physical constants as importable Pint quantities |
 | [runtime.py](mcad2py/runtime.py) | Helpers imported by generated code: the full angle-aware trig + hyperbolic families, the full vector/matrix family (`rows`/`identity`/`det`/`lsolve`/the norm & condition sets/the eigen set/`sort`…), the full statistics family (`median`/`mode`/`var`/`Var`/`percentile`/`histogram`/`corr`/`slope`/`Spear`… plus the `d`/`p`/`q`/`r` sets for `norm`/`t`/`weibull`), `col`/`arange`/`index_build`/`vec_set`/`vectorize`/`transpose`, `linterp` (unit-aware linear interp), `integral` (scipy `quad`), `summation`, `solve_block` (scipy `fsolve`), `sample`/`plot_domain`/`plot_axis`/`plot_trace` (matplotlib plots) |
 | [emit/codegen.py](mcad2py/emit/codegen.py) | Precedence-aware expression printer; shared by both backends. `header_lines(ws, source)` reads the generated module's imports **off the rendered body** — hence both backends build the body first |
 | [emit/notebook_backend.py](mcad2py/emit/notebook_backend.py) | IR→`.ipynb`; region→cell; bare last line echoes result |
@@ -67,11 +69,19 @@ adding support for a new XML construct.
   alone and drop the factor.
 - Mathcad's built-in constants (`mapping.CONSTANTS`) are keyed by *display* name and looked up only for
   an id Prime labelled `CONSTANT`. That gating is what lets names as ordinary as `c`, `g`, `k`, `R`, `e`,
-  `σ` sit in the table without capturing a worksheet's own variables. Dimensioned values are written in
-  **base SI** (`h` as `kg·m²/s`, not `J·s`), matching how `result.xml` caches them and how a scaled
-  override divides down.
+  `σ` sit in the table without capturing a worksheet's own variables. The physics set maps to **names
+  imported from [const.py](mcad2py/const.py)** (`ℏ` → `hbar`), so a formula reads `m * c**2`; the import
+  list comes from the IR's CONSTANT-labelled names, never from scanning the emitted text. Values are
+  defined in **base SI** (`h` as `kg·m²/s`, not `J·s`), matching how `result.xml` caches them and how a
+  scaled override divides down. Because they are pre-built Pint quantities, every generated module takes
+  the one shared registry from [units.py](mcad2py/units.py) — Pint refuses to combine quantities from two
+  registries.
 - Unknown/unsupported constructs emit a visible `# TODO unsupported: <note>` so output still
-  loads — never silently drop a region.
+  loads — never silently drop a region. An echo is built through `print_lines`, which lifts such a note
+  onto its own line: `print(None  # TODO …)` would close its parenthesis *inside* the comment and stop
+  the module parsing, which is the one outcome the convention exists to prevent.
+- Mathcad's `≡` (`<ml:globalDefine>`) binds over the **whole** sheet, so `_hoist_global_defines` moves
+  those regions to the top before every other pass. It's the one construct that breaks reading order.
 - A region **Mathcad itself** couldn't compute (`result.xml` holds an `<engineError>` — `mode(v)` with
   no repeated value, `ln(0)`, a program branch that returns nothing) is translated faithfully and then
   wrapped in a `try`/`except` that prints Mathcad's own wording, so one such region can't abort the

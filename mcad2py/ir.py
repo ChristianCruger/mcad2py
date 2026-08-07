@@ -8,7 +8,7 @@ the other half of the pipeline.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields, is_dataclass
 
 # ---------------------------------------------------------------------------
 # Expression nodes
@@ -65,6 +65,8 @@ class BinOp(Expr):
 
 @dataclass
 class UnaryOp(Expr):
+    """A prefix operator: ``"neg"`` (``-x``) or ``"not_"`` (Mathcad's ``¬x``)."""
+
     op: str
     operand: Expr
 
@@ -383,6 +385,9 @@ class Define(Region):
     the assignment (used to document a scriptable control's cached value).
     ``source`` is the originating region's :class:`SourceRef` (see
     ``--trace-source``), or ``None`` if the sheet wasn't tagged.
+    ``global_scope`` marks Mathcad's ``≡`` (``<ml:globalDefine>``), which binds
+    across the *whole* sheet rather than from its position down -- so the parser
+    hoists it above the ordinary regions.
     """
 
     target: Name
@@ -392,6 +397,7 @@ class Define(Region):
     params: list[str] = field(default_factory=list)
     comment: str | None = None
     source: SourceRef | None = None
+    global_scope: bool = False
 
 
 @dataclass
@@ -759,6 +765,33 @@ def child_exprs(node: object) -> list[Expr]:
             out2.extend(_stmt_exprs(stmt))
         return out2
     return []
+
+
+def region_exprs(region: object) -> list[Expr]:
+    """Every top-level expression a region holds, found *generically*.
+
+    Walking the region's dataclass fields (and any nested dataclass, such as a
+    plot's traces) rather than listing them per region type: there is no table
+    to fall out of date when a region grows a field, and a caller that recurses
+    with :func:`child_exprs` from here sees the whole sheet.
+    """
+    out: list[Expr] = []
+    _collect_exprs(region, out)
+    return out
+
+
+def _collect_exprs(value: object, out: list[Expr]) -> None:
+    if isinstance(value, Expr):
+        out.append(value)  # stop here: child_exprs is the caller's job
+    elif is_dataclass(value) and not isinstance(value, type):
+        for f in fields(value):
+            _collect_exprs(getattr(value, f.name, None), out)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            _collect_exprs(item, out)
+    elif isinstance(value, dict):
+        for item in value.values():
+            _collect_exprs(item, out)
 
 
 def _stmt_exprs(stmt: Stmt) -> list[Expr]:

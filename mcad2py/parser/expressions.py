@@ -6,7 +6,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import replace
 
 from .. import ir
-from ..mapping import GREEK, OPERATOR_TAGS
+from ..mapping import GREEK, OPERATOR_CALLS, OPERATOR_TAGS
 from .namespaces import localname
 
 
@@ -223,17 +223,38 @@ def _parse_apply(elem: ET.Element) -> ir.Expr:
             degree = parse_expr(degree_elem)
         return ir.Root(operand=parse_expr(operand_elem), degree=degree)
 
+    # Operators with no Python infix form (``3!``, ``a ⊕ b``, ``3 ∈ ℤ``).
+    if head_tag in OPERATOR_CALLS:
+        args = [parse_expr(c) for c in rest]
+        if head_tag == "elementOf":
+            # The number set is an unlabelled ``<ml:id>ℤ</ml:id>`` -- a symbol,
+            # not a variable the sheet ever defines, so it travels as a string.
+            args[-1] = _number_set(rest[-1], args[-1])
+        return ir.Call(func=OPERATOR_CALLS[head_tag], args=args, role="FUNCTION")
+
     # Arithmetic operators.
     if head_tag in OPERATOR_TAGS:
         op = OPERATOR_TAGS[head_tag]
         operands = [parse_expr(c) for c in rest]
-        if op == "neg":
-            return ir.UnaryOp(op="neg", operand=operands[0])
+        if op in ("neg", "not_"):
+            return ir.UnaryOp(op=op, operand=operands[0])
         if len(operands) == 2:
             return ir.BinOp(op=op, left=operands[0], right=operands[1])
         return ir.Unsupported(note=f"{head_tag}/arity={len(operands)}")
 
     return ir.Unsupported(note=f"apply/{head_tag}", raw=_summarize(elem))
+
+
+def _number_set(elem: ET.Element, parsed: ir.Expr) -> ir.Expr:
+    """The right operand of ``∈`` as a string: ``ℤ``, ``ℝ``, ``ℚ``, ``ℂ``, ``ℕ``.
+
+    Prime writes it as a bare ``<ml:id>`` with *no* ``labels`` attribute at all,
+    which is otherwise unheard of -- every other id is VARIABLE/FUNCTION/UNIT/
+    CONSTANT. Left as an ``ir.Name`` it would emit an undefined identifier.
+    """
+    if localname(elem.tag) == "id":
+        return ir.Str(read_identifier(elem))
+    return parsed
 
 
 def parse_eval(elem: ET.Element) -> tuple[ir.Expr, ir.Expr | None]:

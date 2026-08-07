@@ -16,6 +16,7 @@ from .. import ir
 from ..mapping import (
     BINARY_OPS,
     CONSTANTS,
+    CONST_MODULE_NAMES,
     FUNCTIONS,
     UNARY_PREC,
     unit_attr,
@@ -68,6 +69,13 @@ def _emit(node: ir.Expr) -> tuple[str, int]:
         return f"{left}{joiner}{right}", prec
 
     if isinstance(node, ir.UnaryOp):
+        if node.op == "not_":
+            # Mathcad's ``¬x`` is "x is zero", which is exactly what Python's
+            # ``not`` says of a number. Its precedence sits below the
+            # comparisons, so anything that isn't an atom is parenthesised
+            # rather than given a rung in BINARY_OPS.
+            operand = _wrap(node.operand, _ATOM, is_left=True, right_assoc=False)
+            return f"not {operand}", 0
         operand = _wrap(node.operand, UNARY_PREC, is_left=True, right_assoc=False)
         return f"-{operand}", UNARY_PREC
 
@@ -579,6 +587,22 @@ def _program_ternary(branches: list[tuple[ir.Expr | None, ir.Expr]]) -> str:
     return expr
 
 
+def print_lines(echo: str) -> list[str]:
+    """``print(<echo>)``, with any rendered note lifted onto its own line first.
+
+    An unsupported (or placeholder) node renders as ``None  # TODO unsupported:
+    …``; wrapping *that* in ``print(...)`` puts the closing parenthesis inside
+    the comment and the module stops parsing altogether -- which is exactly what
+    the "never silently drop a region, the output still loads" convention exists
+    to prevent. Splitting on the last note marker keeps the TODO visible without
+    letting it swallow the call.
+    """
+    expr, marker, note = echo.rpartition("  # ")
+    if marker and note.startswith(("TODO", "placeholder")):
+        return [f"# {note}", f"print({expr})"]
+    return [f"print({echo})"]
+
+
 def echo_expr(region: ir.Region) -> str | None:
     """The expression to display for an evaluated region, or None.
 
@@ -967,7 +991,6 @@ def header_lines(ws: ir.Worksheet, source: str) -> list[str]:
         lines.append("import numpy as np")
     if any(isinstance(r, (ir.Plot, ir.GridPlot)) for r in ws.regions):
         lines.append("import matplotlib.pyplot as plt")
-    lines.append("import pint")
     sympy_names = _sympy_imports(ws)
     if sympy_names:
         order = ["Eq", "Symbol", "solve", "simplify", "factor", "expand"]
@@ -975,11 +998,57 @@ def header_lines(ws: ir.Worksheet, source: str) -> list[str]:
         ordered += sorted(sympy_names - set(order))
         lines.append(f"from sympy import {', '.join(ordered)}")
     lines.append("")
+    constants = _const_imports(ws)
+    if constants:
+        lines.append(f"from mcad2py.const import {', '.join(constants)}")
     runtime = [n for n in _runtime_exports() if n in names]
     if runtime:
         lines.append(f"from mcad2py.runtime import {', '.join(runtime)}")
-    lines.append("ureg = pint.UnitRegistry()")
+    # The *shared* registry, not a fresh one: a constant from mcad2py.const is a
+    # pre-built quantity, and Pint refuses to combine quantities whose
+    # registries differ. See mcad2py/units.py.
+    lines.append("from mcad2py.units import ureg")
     return lines
+
+
+def _const_imports(ws: ir.Worksheet) -> list[str]:
+    """The ``mcad2py.const`` names this worksheet needs, in definition order.
+
+    Driven by the **IR**, not by the rendered text the way the runtime imports
+    are: these are short, everyday spellings (``c``, ``g``, ``k``, ``R``), so
+    scanning the source for them would import a constant on the strength of a
+    worksheet variable that merely shares a letter. A CONSTANT-labelled
+    ``ir.Name`` is unambiguous -- it is precisely what the lookup emits.
+    """
+    used = {
+        CONSTANTS[node.original]
+        for region in ws.regions
+        for node in _walk_expr_tree(region)
+        if isinstance(node, ir.Name)
+        and node.role == "CONSTANT"
+        and node.original in CONSTANTS
+    }
+    return [n for n in _const_module_order() if n in used & CONST_MODULE_NAMES]
+
+
+@lru_cache(maxsize=1)
+def _const_module_order() -> tuple[str, ...]:
+    """Every constant defined in ``const.py``, in definition order (as with the
+    runtime helpers, so the emitted import line keeps the module's grouping)."""
+    from .. import const
+
+    return tuple(name for name in vars(const) if not name.startswith("_"))
+
+
+def _walk_expr_tree(region: ir.Region) -> "list[ir.Expr]":
+    """Every expression in a region and its sub-expressions, pre-order."""
+    out: list[ir.Expr] = []
+    stack = list(ir.region_exprs(region))
+    while stack:
+        node = stack.pop()
+        out.append(node)
+        stack.extend(ir.child_exprs(node))
+    return out
 
 
 @lru_cache(maxsize=1)
