@@ -235,6 +235,12 @@ def disp(value, unit=None):
     builtins return bare radians (Mathcad's ``deg`` being just the π/180 scale),
     so ``atan(B) = … deg`` has to rescale rather than divide.
 
+    An override can also carry a **numeric scale** -- Mathcad shows Planck's
+    constant as ``10⁻³⁴ kg·m²/s`` -- which arrives here as a Pint *Quantity*
+    rather than a *Unit*. Dividing is the only faithful rendering: ``.to()``
+    accepts a quantity but silently uses its units alone, dropping the ``10⁻³⁴``
+    and reporting the unscaled number.
+
     With **no** override (Mathcad's automatic display) a *dimensionless but
     unreduced* quantity is collapsed to a plain number: Pint leaves ``sin(θ)/θ``
     as ``0.0164 1/degree`` and ``l/s`` as ``m/mm``, where Mathcad -- for which
@@ -242,6 +248,9 @@ def disp(value, unit=None):
     """
     if unit is None:
         return _reduce_dimensionless(value)
+    scale = getattr(unit, "magnitude", 1)
+    if scale != 1:
+        return _reduce_dimensionless(value / unit)
     if not hasattr(value, "to") and str(getattr(unit, "units", unit)) in _ANGLE_UNITS:
         return unit._REGISTRY.Quantity(value, "radian").to(unit)
     try:
@@ -274,6 +283,48 @@ def power(base, exp):
     A dimensioned base keeps its (fractional) unit, as Pint intends.
     """
     return _reduce_dimensionless(base) ** exp
+
+
+def xor(a, b):
+    """Mathcad's ``⊕`` -- a *logical* exclusive-or returning 1 or 0.
+
+    Python's ``^`` is bitwise on integers (``3 ^ 2`` is 1), so it can't stand in:
+    Mathcad reads every non-zero operand as true, making ``3 ⊕ 2`` zero.
+    """
+    return int(bool(a) != bool(b))
+
+
+# Mathcad's number sets. ``ℚ`` is the odd one out -- see :func:`element_of`.
+_NUMBER_SETS = {"ℕ", "ℤ", "ℚ", "ℝ", "ℂ"}
+
+
+def element_of(value, number_set):
+    """Mathcad's ``∈``: is ``value`` in ``ℕ``/``ℤ``/``ℚ``/``ℝ``/``ℂ``? -> 1 or 0.
+
+    ``ℚ`` cannot be answered by looking at a float -- every float *is* a rational
+    -- which is why Mathcad itself refuses to evaluate ``π ∈ ℚ`` numerically and
+    the worksheet reaches for the symbolic ``→``. SymPy's ``nsimplify`` recovers
+    the closed form a float came from (0.3333… -> 1/3, 3.14159… -> π) and answers
+    from that. The caveat is inherent to the question: a float that merely
+    approximates π reads as irrational, because as far as anything downstream is
+    concerned it *is* π.
+    """
+    if number_set not in _NUMBER_SETS:
+        raise ValueError(f"unknown number set {number_set!r}")
+    x = getattr(value, "magnitude", value)
+    if number_set == "ℂ":
+        return int(isinstance(x, (int, float, complex)))
+    if isinstance(x, complex) and x.imag:
+        return 0  # ℕ/ℤ/ℚ/ℝ are all real
+    x = x.real if isinstance(x, complex) else x
+    if number_set == "ℝ":
+        return int(isinstance(x, (int, float)))
+    if number_set == "ℚ":
+        from sympy import nsimplify  # local: keeps SymPy off the import path
+
+        return int(bool(nsimplify(x, rational=False).is_rational))
+    integral = float(x).is_integer()
+    return int(integral and (x >= 0 if number_set == "ℕ" else True))
 
 
 def _is_negative_real(x):

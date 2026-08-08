@@ -77,12 +77,18 @@ def cached_results(path: Path | str) -> dict[str, list[float]]:
     expectations would be both unreadable and a fresh source of error. Regions
     Mathcad itself could not compute hold an ``<engineError>`` rather than a
     result, so they are simply absent here.
+
+    A value carrying units is cached as ``<unitedValue>`` -- a number plus a
+    ``<u:unitMonomial>``. Only the **number** is returned; Mathcad states it in
+    base SI, so the caller compares against ``.to_base_units().magnitude``.
     """
     root = _part(path, "mathcad/result.xml")
     out: dict[str, list[float]] = {}
     for data in root:
         result = data.find("./{*}result")
         node = next(iter(result), None) if result is not None else None
+        if node is not None and _local(node.tag) == "unitedValue":
+            node = next((c for c in node if _local(c.tag) in ("real", "matrix")), None)
         if node is None:
             continue
         if _local(node.tag) == "matrix":

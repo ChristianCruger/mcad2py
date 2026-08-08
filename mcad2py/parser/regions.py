@@ -84,6 +84,9 @@ def parse_worksheet(
             if isinstance(item, ir.Define) and isinstance(item.value, ir.Range):
                 range_names.add(item.target.py)
             ws.regions.append(item)
+    # ``≡`` binds over the whole sheet, so it has to come first -- before the
+    # passes below, which all reason about reading order.
+    _hoist_global_defines(ws)
     _inject_symbol_declarations(ws)
     # A difference equation's driving range variable, and which of its target
     # vectors it is the first region to write, are only knowable from the sheet
@@ -206,6 +209,24 @@ def _parse_region(
     return None
 
 
+def _hoist_global_defines(ws: ir.Worksheet) -> None:
+    """Move every ``≡`` definition to the top of the sheet, order preserved.
+
+    A global definition is Mathcad's one departure from top-to-bottom reading
+    order: it is in scope everywhere, so a region *above* it may use the name.
+    A generated Python module has no such notion, so the faithful translation is
+    to emit them first. The partition is stable, so the regions keep their
+    relative order within each group -- and text regions stay where they are,
+    which means the ``≡``'s own heading text is left behind (a small cost, and
+    less confusing than dragging unrelated prose to the top with it).
+    """
+    hoisted = [r for r in ws.regions if getattr(r, "global_scope", False)]
+    if not hoisted:
+        return
+    moved = {id(r) for r in hoisted}  # identity: two regions can compare equal
+    ws.regions[:] = hoisted + [r for r in ws.regions if id(r) not in moved]
+
+
 def _parse_math(math_elem: ET.Element) -> ir.Region:
     children = list(math_elem)
     if not children:
@@ -215,6 +236,15 @@ def _parse_math(math_elem: ET.Element) -> ir.Region:
 
     if tag == "define":
         return _parse_define(inner)
+
+    if tag == "globalDefine":
+        # Mathcad's ``≡``. Structurally identical to ``<ml:define>``; what
+        # differs is *scope* -- it binds over the whole sheet, including the
+        # regions above it -- which ``_hoist_global_defines`` then honours.
+        defined = _parse_define(inner)
+        if isinstance(defined, ir.Define):
+            defined.global_scope = True
+        return defined
 
     if tag == "eval":
         value, unit = parse_eval(inner)

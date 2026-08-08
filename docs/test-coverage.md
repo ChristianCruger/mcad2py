@@ -302,6 +302,58 @@ Two **documented divergences** there, neither a bug:
   correctness for a matching digit, so the test loosens the tolerance on those four indices only
   (`APPROXIMATE`) and everything else stays at 1e-12.
 
+[tests/test_constants.py](../tests/test_constants.py) covers `references/Constants.mcdx`, which
+evaluates Prime's whole built-in **Constants** label with nothing defined on the sheet: the maths trio
+(`e`/`π`/`∞`), Euler-Mascheroni `γ`, and the physics set (`c`, `g`, `e_c`, `h`, `ℏ`, `k`, `m_u`, `N_A`,
+`R`, `R_∞`, `α`, `ε_0`, `μ_0`, `σ`, `Φ_0`). All 19 echoes are read out of `result.xml` by `resultRef`
+rather than transcribed, and 18 match to 1e-12. What the sheet pinned down: the lookup is **label-gated**
+— Prime writes `<ml:id labels="CONSTANT">`, which is the only thing distinguishing the speed of light
+from a worksheet's own `c`, so names as ordinary as `c`/`g`/`k`/`R`/`σ` can live in `mapping.CONSTANTS`
+safely; the cache states a dimensioned constant in **base SI**, so `mcad2py/const.py` defines it that
+way and the test compares `to_base_units().magnitude`. The values are **imported names**
+(`from mcad2py.const import c, g, …`), not inlined numbers, so a formula reads `m * c**2`; because they
+are pre-built Pint quantities, generated modules now share one registry
+(`from mcad2py.units import ureg`) instead of each building their own. The import list is chosen from
+the **IR** rather than by scanning the emitted text — `c`/`g`/`k`/`R` are everyday variable names, and
+`test_only_the_constants_a_sheet_labels_are_imported` pins that a sheet with its own `k` imports
+nothing. It also turned up a **real bug in `disp`**: a display override
+that carries a numeric scale (`h` shown as `10⁻³⁴ kg·m²/s`) evaluates to a Pint *Quantity*, and
+`Quantity.to(<Quantity>)` silently uses the argument's units and drops the `10⁻³⁴` — every such echo was
+off by the scale factor. `disp` now divides when the override's magnitude isn't 1.
+
+One **documented divergence**: Mathcad's `∞` is 10³⁰⁷ and that is what the cache holds, while we emit
+`math.inf` — the faithful reading of the symbol, and the only one that works as an integration limit or
+a comparison bound. That echo is asserted to be an infinity instead (`test_infinity_is_a_real_infinity`,
+which also pins the cached 1e307 so the difference stays visible).
+
+
+[tests/test_breaks_sets_logic.py](../tests/test_breaks_sets_logic.py) covers
+`references/breaks-sets-logic.mcdx`, a small catalogue of four corners that are all about *notation*
+rather than numerics: `≡` global definitions, equation breaks, number sets, and the logic operators.
+All 24 echoes are read from `result.xml` by `resultRef`; 23 are numeric and match, and the 24th is the
+symbolic one below. What the sheet pinned down: `<ml:globalDefine>` is structurally a define but binds
+over the **whole** sheet, so those regions are hoisted to the top (`ir.Define.global_scope`) — the only
+way a linear module can honour sheet-wide scope; `split="true"` on an operator is Mathcad wrapping a
+long formula in its *display* and means nothing to the tree; the right operand of `∈` is an `<ml:id>`
+with **no `labels` attribute at all** (unique in the schema) and travels to `element_of` as a string;
+and `⊕` needs a runtime helper because Python's `^` is bitwise, so `3 ⊕ 2` would answer 1 where Mathcad
+says 0. `¬` and `≠` do map straight onto Python's `not` and `!=`.
+
+`π ∈ ℚ` is the one that earns its place: no float can answer it, since every float *is* a rational.
+Mathcad refuses too — the sheet's own text says "Rational numbers has to be evaluated symbolically" —
+and writes the region as an `<ml:symEval>` whose command is a bare `<ml:placeholder />`, a plain `→`
+with no keyword. That empty command now maps to SymPy's `simplify`, and `element_of`'s `ℚ` branch
+answers from the closed form `nsimplify` recovers (`3.14159…` → `π`), matching Mathcad's cached
+`<symResult>` of 0. Its caveat is inherent to the question and documented on the helper: a float that
+merely approximates π reads as irrational.
+
+Two things this fixture fixed beyond itself: comparisons and connectives are checked *numerically*
+because Mathcad answers 1/0 where Python gives `True`/`False` (the same value — `bool` is an `int`),
+and a rendered `# TODO unsupported: …` can no longer be wrapped in `print(...)`, where the closing
+parenthesis used to land inside the comment and stop the whole module parsing — exactly what emitting
+a visible TODO instead of dropping the region exists to prevent (`print_lines`).
+
+
 [tests/test_generated_imports.py](../tests/test_generated_imports.py) is not tied to one fixture: it
 runs over **every** `references/*.mcdx` and asserts that a generated module's imports and its body
 agree, in both directions. That invariant is new. `header_lines` used to *predict* which runtime

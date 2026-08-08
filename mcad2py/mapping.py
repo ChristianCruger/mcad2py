@@ -20,9 +20,23 @@ OPERATOR_TAGS = {
     "lessOrEqual": "le",
     "greaterOrEqual": "ge",
     "equal": "eq",
+    "notEqual": "ne",
     # Boolean connectives (program tests, e.g. ``rho <= x and crack = "Yes"``).
     "and": "and_",
     "or": "or_",
+    "not": "not_",
+}
+
+# Operator tags with no Python infix (or prefix) form -> the callable that
+# implements them. Anything not in ``FUNCTIONS`` passes through verbatim, so a
+# ``math.`` name works here and a bare name is picked up from runtime.py.
+OPERATOR_CALLS = {
+    "factorial": "math.factorial",
+    # Mathcad's ⊕ is a *logical* xor: ``3 ⊕ 2`` is 0, where Python's ``^`` would
+    # do bitwise arithmetic and say 1.
+    "xor": "xor",
+    # ``3 ∈ ℤ``: the right operand is the number-set symbol, passed as a string.
+    "elementOf": "element_of",
 }
 
 # Canonical op -> (python infix symbol, precedence). Higher binds tighter.
@@ -34,6 +48,7 @@ BINARY_OPS = {
     "le": ("<=", 0),
     "ge": (">=", 0),
     "eq": ("==", 0),
+    "ne": ("!=", 0),
     "add": ("+", 1),
     "sub": ("-", 1),
     "mul": ("*", 2),
@@ -200,18 +215,59 @@ FUNCTIONS = {
 # Mathcad symbolic command keyword (first id of a <ml:command> sequence) ->
 # SymPy callable. Symbolic regions emit ``<callable>(expr, *args)``.
 SYMBOLIC_COMMANDS = {
+    # A bare ``→`` -- ``<ml:command><ml:placeholder /></ml:command>``, no keyword
+    # -- is Mathcad's plain symbolic evaluation. SymPy's ``simplify`` is the
+    # closest single call: it evaluates exactly rather than in floating point,
+    # which is the whole point of reaching for the arrow (``π ∈ ℚ``).
+    "": "simplify",
     "solve": "solve",
     "simplify": "simplify",
     "factor": "factor",
     "expand": "expand",
 }
 
-# Mathcad constants -> Python expression.
+# Mathcad constants -> Python expression. Keyed by the *display* name and only
+# consulted for an id Prime labelled CONSTANT, so a worksheet's own ``c``, ``g``
+# or ``R`` (all labelled VARIABLE) is untouched.
+#
+# The maths trio inlines (``math.pi`` reads no worse than ``pi`` and can't be
+# shadowed); everything below it is a **name imported from mcad2py.const**, so a
+# formula stays legible -- ``m * c**2``, not ``m * (299792458 * ureg.m /
+# ureg.s)**2``. The header emits the import for exactly those constants the
+# worksheet labels CONSTANT (see ``_const_imports``).
 CONSTANTS = {
     "π": "math.pi",
     "pi": "math.pi",
     "e": "math.e",
+    # Mathcad's ∞ is really 10³⁰⁷ (that is what result.xml caches); math.inf is
+    # the faithful reading of what the symbol *means*, and the one that behaves
+    # as an integration limit or a comparison bound.
     "∞": "math.inf",
+    # -- mcad2py.const -----------------------------------------------------
+    # Display name -> the name it is defined under there. Most are the
+    # sanitized spelling; ``ℏ`` and ``R_∞`` would sanitize to something unusable
+    # (``ℏ``, ``R__``), so they are spelled out.
+    "c": "c",  # speed of light
+    "g": "g",  # standard gravity
+    "e_c": "e_c",  # elementary charge
+    "h": "h",  # Planck
+    "ℏ": "hbar",  # reduced Planck
+    "k": "k",  # Boltzmann
+    "m_u": "m_u",  # atomic mass unit
+    "N_A": "N_A",  # Avogadro
+    "R": "R",  # molar gas
+    "R_∞": "R_inf",  # Rydberg
+    "α": "alpha",  # fine-structure
+    "γ": "gamma",  # Euler-Mascheroni
+    "ε_0": "epsilon_0",
+    "μ_0": "mu_0",
+    "σ": "sigma",  # Stefan-Boltzmann
+    "Φ_0": "Phi_0",  # magnetic flux quantum
+}
+
+# The subset of CONSTANTS that lives in mcad2py.const rather than inlining.
+CONST_MODULE_NAMES = {
+    name for key, name in CONSTANTS.items() if not name.startswith("math.")
 }
 
 # Greek letters -> ASCII transliteration for Python identifiers (matches the

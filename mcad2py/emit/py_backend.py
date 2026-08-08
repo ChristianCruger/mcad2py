@@ -15,6 +15,7 @@ from .codegen import (
     index_assign_line,
     multi_assign_lines,
     plot_lines,
+    print_lines,
     recurrence_lines,
     solve_block_lines,
     source_comment,
@@ -63,14 +64,14 @@ def _render_region(region: ir.Region) -> list[str]:
         out = ["", assignment_line(region)]
         echo = echo_expr(region)
         if echo is not None:
-            out.append(f"print({echo})")
+            out.extend(print_lines(echo))
         return out
 
     if isinstance(region, ir.MultiAssign):
         out = ["", *multi_assign_lines(region)]
         echo = echo_expr(region)
         if echo is not None:
-            out.append(f"print({echo})")
+            out.extend(print_lines(echo))
         return out
 
     if isinstance(region, ir.ComboBoxAssign):
@@ -80,19 +81,19 @@ def _render_region(region: ir.Region) -> list[str]:
         out = ["", index_assign_line(region)]
         echo = echo_expr(region)
         if echo is not None:
-            out.append(f"print({echo})")
+            out.extend(print_lines(echo))
         return out
 
     if isinstance(region, ir.Recurrence):
         out = ["", *recurrence_lines(region)]
         echo = echo_expr(region)
         if echo is not None:
-            out.append(f"print({echo})")
+            out.extend(print_lines(echo))
         return out
 
     if isinstance(region, ir.Evaluate):
         echo = echo_expr(region)
-        return ["", f"print({echo})"] if echo is not None else []
+        return ["", *print_lines(echo)] if echo is not None else []
 
     if isinstance(region, ir.StatusControl):
         return ["", status_control_line(region)]
@@ -105,7 +106,7 @@ def _render_region(region: ir.Region) -> list[str]:
         return ["", expr_to_str(region.equation)]
 
     if isinstance(region, ir.SymbolicEval):
-        return ["", f"print({symbolic_eval_expr(region)})"]
+        return ["", *print_lines(symbolic_eval_expr(region))]
 
     if isinstance(region, ir.SolveBlock):
         return ["", *solve_block_lines(region)]
