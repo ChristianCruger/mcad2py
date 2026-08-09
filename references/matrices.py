@@ -1,10 +1,9 @@
 """Auto-generated from a Mathcad worksheet by mcad2py."""
 import math
 import matplotlib.pyplot as plt
-import pint
 
 from mcad2py.runtime import sin, mc_max, mc_min, disp, nth_root, col, matrix, transpose, augment, matmul, matcol, rows, cols, last, identity, diag, tr, det, determinant, matrow, matelem, submatrix, cross, lsolve, geninv, rank, rref, norm, norm1, norm2, norme, normi, cond1, cond2, conde, condi, eigenvals, eigenvecs, eigenvec, genvals, genvecs, svds, mean, sort, reverse, IsArray, IsScalar, index_build, index_build_2d, unpack, total, arange, plot_axis, plot_trace, vectorize
-ureg = pint.UnitRegistry()
+from mcad2py.units import ureg
 
 
 # Matrix functions - not complete yet!

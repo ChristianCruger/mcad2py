@@ -1,9 +1,8 @@
 """Auto-generated from a Mathcad worksheet by mcad2py."""
 import math
-import pint
 
 from mcad2py.runtime import col, sort, reverse, csort, rsort, index_build_2d, arange
-ureg = pint.UnitRegistry()
+from mcad2py.units import ureg
 
 
 i = arange(0, 4, 1)

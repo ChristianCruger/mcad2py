@@ -1,9 +1,8 @@
 """Auto-generated from a Mathcad worksheet by mcad2py."""
 import math
-import pint
 
 from mcad2py.runtime import sin, tan, cot, disp, nth_root
-ureg = pint.UnitRegistry()
+from mcad2py.units import ureg
 
 
 f_cd = 30 * ureg.MPa / 1.5

@@ -1,9 +1,8 @@
 """Auto-generated from a Mathcad worksheet by mcad2py."""
 import math
-import pint
 
 from mcad2py.runtime import sin, cos, tan, cot, sec, csc, sinc, asin, acos, atan, acot, asec, acsc, atan2, angle, disp
-ureg = pint.UnitRegistry()
+from mcad2py.units import ureg
 
 
 # trigonometric functions

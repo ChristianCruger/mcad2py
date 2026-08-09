@@ -1,8 +1,7 @@
 """Auto-generated from a Mathcad worksheet by mcad2py."""
 import math
-import pint
 
-ureg = pint.UnitRegistry()
+from mcad2py.units import ureg
 
 
 # outside area
