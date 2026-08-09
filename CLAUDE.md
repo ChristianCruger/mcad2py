@@ -104,11 +104,24 @@ adding support for a new XML construct.
   `region-id` (its per-column `resultRef` isn't captured). `integration.xml` is a sibling zip part
   to `worksheet.xml`, present (usually as a bare `<regions/>`) in every `.mcdx`.
 - Add new builtins/units/constants to [mapping.py](mcad2py/mapping.py) (data, not code). A new
-  **runtime helper** needs no registration at all: the generated module's imports are read off the
+  **runtime helper** needs no *import* registration: the generated module's imports are read off the
   emitted text (every public name defined in [runtime.py](mcad2py/runtime.py) is a candidate), so
-  writing the helper and mapping the Mathcad name to it is the whole job. Anything the text doesn't
+  writing the helper and mapping the Mathcad name to it is most of the job. Anything the text doesn't
   reference isn't imported — [tests/test_generated_imports.py](tests/test_generated_imports.py) pins
-  both directions across every fixture.
+  both directions across every fixture. Two things it *does* need:
+  - **Every argument can arrive as a Pint quantity**, so a bare `float(x)`, `int(x)`, `x.magnitude`
+    or `np.<anything>(x)` on an incoming value is a bug — `float()` reads an *unreduced* dimensionless
+    ratio's raw magnitude (`mm/mm` → not what Mathcad shows), and most NumPy entry points simply raise
+    on a quantity (`np.real` has no Pint implementation at all). Go through the existing seam:
+    `_split`/`_join` to take a value apart and put its unit back, `_reduce_dimensionless` (or the
+    distribution family's `_num`/`_count`) for a parameter that must end up a plain number, and
+    `.to(unit)` before comparing two values that each carry one. Binning `mm` edges against `m` data,
+    or feeding `fsolve` a raw magnitude, produces a plausible wrong number rather than an error —
+    which is the failure mode this seam exists to prevent.
+  - An entry in [shapes.py](mcad2py/shapes.py)'s `_CALL_KINDS` if it **always** returns an array (see
+    the `·` bullet below). Leave it out when the return shape follows the *argument's* shape (the
+    `d`/`p`/`q` distribution wrappers) or depends on which overload was called (`histogram`) — a wrong
+    kind is worse than `UNKNOWN`, which just declines to rewrite.
 - Run [tools/strip_mcdx_metadata.py](tools/strip_mcdx_metadata.py) on any new fixture before
   committing: it removes the authoring metadata a `.mcdx` carries in parts you never see in Prime
   (`docProps/core.xml`'s `creator`/`lastModifiedBy`, `docProps/app.xml`'s `Company`, and the printed
@@ -132,6 +145,14 @@ each `print` argument as an *object*), `flat` (column-major magnitudes, matching
 Per-test detail — which fixture pins which feature, and the documented divergences (stale caches, LAPACK
 eigenvalue ordering, Pint's Julian year) — lives in [docs/test-coverage.md](docs/test-coverage.md); read
 the entry for a test before changing it, and add one when you add a fixture.
+
+**A green fixture doesn't mean the helper is right** — it means it's right for the one call the
+worksheet happens to make. A fixture exercises a helper at whatever units, shapes and argument types
+its author used, so anything the sheet didn't reach is untested: a helper called only on dimensionless
+values, only on scalars, or only with both arguments already in the same unit. After the
+execute-and-compare test passes, add a direct unit test for the arms the sheet skipped — the
+dimensioned call, the array call, the two-values-in-different-units call. Both bugs found reviewing
+`probability.mcdx` were of exactly this kind, and both were in helper code its 90 green echoes ran.
 
 **Reference files are test fixtures — don't edit them.** Tests compare generated output against each
 `.mcdx`'s cached `result.xml`; changing a worksheet (e.g. a `phi` value) silently shifts every
