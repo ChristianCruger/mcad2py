@@ -158,6 +158,14 @@ dimensioned call, the array call, the two-values-in-different-units call. Both b
 `.mcdx`'s cached `result.xml`; changing a worksheet (e.g. a `phi` value) silently shifts every
 dependent cached number and breaks the hardcoded expected values.
 
+The committed `references/*.py` and `*.ipynb` beside them are **generated artifacts**, and
+[tests/test_reference_artifacts.py](tests/test_reference_artifacts.py) holds them to a fresh
+conversion. A change to codegen is therefore expected to fail that test — regenerate the artifacts in
+the same commit (`mcad2py convert references/<sheet>.mcdx [-f py]`) rather than adjusting the test.
+Notebooks are the exception worth knowing: `nbformat` re-randomises every cell `id` on each run, so
+regenerate one only when its *content* changed and patch the affected cell otherwise — the test
+compares notebooks with ids stripped for exactly this reason.
+
 ## Not yet supported (next targets)
 
 For a full **function-catalog coverage map** — every Mathcad function category vs. what we emit, plus a

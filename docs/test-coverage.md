@@ -415,3 +415,20 @@ seven dead imports the old predictor had been emitting: `import numpy as np` in 
 `min`/`max` are reductions (they emit `mc_min`/`mc_max`, so no bare `np.` is ever written), and
 `sample` in three whose only plots are parametric (both axes data vectors, so no `sample(lambda …)`).
 Nothing was found *missing*, which is the reassuring half of the result.
+
+[tests/test_reference_artifacts.py](../tests/test_reference_artifacts.py) is the other fixture-wide
+guard: every committed `references/*.py` and `*.ipynb` must equal a fresh conversion of its worksheet.
+These are generated artifacts kept in git so a reader can see a sheet's output without running
+anything — but nothing *consumed* them (the rest of the suite converts each `.mcdx` fresh and executes
+that), so they drifted through several header changes unnoticed and were still emitting
+`ureg = pint.UnitRegistry()` long after generated modules moved onto the shared registry in
+`units.py`. Refreshing them was a one-liner; the value of this test is that the commit which *changes
+codegen* is the one that fails, instead of a reader hitting a stale artifact months later.
+
+Two details. Notebooks are compared with their cell **ids stripped** — `nbformat` mints a fresh random
+id per cell on every run, so a byte comparison would fail on every notebook always, and regenerating
+to satisfy it would churn ~500 lines of `RC_col.ipynb` to change three; everything else, cell order and
+content included, is compared exactly. And the parametrization walks the *committed artifacts* rather
+than the worksheets, because not every sheet ships both (`shrinkage.mcdx` has only a notebook) —
+`test_every_artifact_has_a_worksheet` covers the reverse, since an artifact whose `.mcdx` was renamed
+would otherwise sit here with no test running against it at all.
