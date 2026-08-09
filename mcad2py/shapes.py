@@ -67,6 +67,29 @@ _CALL_KINDS = {
     "vlookup": VECTOR,
     "hlookup": VECTOR,
     "vhlookup": VECTOR,
+    # Every ``r<distribution>`` returns a vector of ``m`` random draws. Their
+    # ``d``/``p``/``q`` siblings are deliberately absent: those follow the
+    # shape of their *argument*, which this table can't express, and UNKNOWN
+    # (no rewrite) is the safe reading.
+    "rnorm": VECTOR,
+    "rt": VECTOR,
+    "rweibull": VECTOR,
+    "runif": VECTOR,
+    "rexp": VECTOR,
+    "rgamma": VECTOR,
+    "rlogis": VECTOR,
+    "rcauchy": VECTOR,
+    "rgeom": VECTOR,
+    "rhypergeom": VECTOR,
+    "rbinom": VECTOR,
+    "rnbinom": VECTOR,
+    "rbeta": VECTOR,
+    "rchisq": VECTOR,
+    "rF": VECTOR,
+    "rlnorm": VECTOR,
+    # ``histogram`` is intentionally *not* listed: it returns an ``n x 2``
+    # matrix for ``histogram(n, A)`` but a bare count vector for
+    # ``histogram(intvls, A)``, and which one depends on the argument's shape.
     # -> scalar
     "rows": SCALAR,
     "cols": SCALAR,

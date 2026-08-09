@@ -302,6 +302,52 @@ Two **documented divergences** there, neither a bug:
   correctness for a matching digit, so the test loosens the tolerance on those four indices only
   (`APPROXIMATE`) and everything else stays at 1e-12.
 
+[tests/test_probability.py](../tests/test_probability.py) covers `references/probability.mcdx`, PTC's own
+probability tutorial and the fixture that completes the distribution catalogue `statistics.mcdx` started:
+uniform, exponential, gamma, logistic, Cauchy, geometric, hypergeometric, binomial, negative binomial,
+beta, chi-squared, F, and log-normal, each with its full `d`/`p`/`q`/`r` set, plus the Mathcad-15 `cnorm`
+alias (`pnorm(x, 0, 1)`) and `Re` (needed because the sheet wraps a Student-t density `Re(dt(x, v))`
+defensively). **90 evaluated regions**, 74 matching the cache to 1e-9 (SciPy's `ppf`/`cdf` round-trips
+aren't quite the ~1e-12 the closed-form families hit). Two things it exposed that weren't bugs in the new
+distributions themselves:
+
+* `histogram` has a **second call shape**. `statistics.mcdx` only exercises `histogram(n, A)` (an `n × 2`
+  midpoint/count matrix); this sheet also calls `histogram(intvls, A)` with an explicit boundary vector,
+  which returns just the `len(intvls) - 1` counts — both are real Mathcad overloads, disambiguated on
+  whether the first argument is scalar or array-like.
+* **`plot_trace`'s NaN-pad only handled 1-D traces.** The "Uniformly Distributed" plot draws a 21-point
+  `range` (`n := 0 .. n_bins`, a genuine Mathcad range — the upper bound is inclusive, so 20 bins gives 21
+  points) against `histogram`'s 20-row output; Mathcad plots the mismatch by NaN-padding the shorter trace
+  (same behaviour `difference_eq.mcdx` pins for 1-D), but here the shorter side is a 2-column matrix, and
+  padding used to concatenate a flat NaN block that only matched a 1-D shape. Fixed to pad along axis 0
+  using the trailing dimensions of whichever array is shorter.
+
+Three further **unit-safety** cases the fixture itself doesn't reach, pinned by direct tests because a
+worksheet plausibly would:
+
+* **`histogram(intvls, A)` converts the boundaries into the data's unit** before binning
+  (`test_histogram_converts_boundaries_into_the_data_unit`). Comparing raw magnitudes put `mm` edges
+  against `m` data straight into the first bin — a wrong count with no error, the worst failure mode
+  here. An *incompatible* unit now raises Pint's `DimensionalityError` rather than returning a
+  plausible-looking number.
+* **`Re` is unit-aware** (`test_Re_keeps_a_unit_and_takes_the_real_part`). Mathcad takes `Re` of a
+  dimensioned complex value (a complex impedance, a complex modulus) as readily as of a plain number, and
+  `np.real` has no implementation for a Pint quantity — it raises instead of reaching the magnitude. The
+  sheet only calls it on a dimensionless Student-t density, so nothing else catches this.
+* **Every distribution parameter is dimensionless-reduced** (`test_distribution_parameters_accept_an_unreduced_ratio`).
+  A worksheet routinely feeds these a ratio Pint still carries as `mm/mm`; a bare `float()` would read the
+  unreduced magnitude. The `r*` draws take their parameters through `_num`/`_count` for that reason. The
+  `d`/`p`/`q` wrappers deliberately return SciPy's own result rather than coercing to `float`, so a vector
+  of `x` evaluates element-wise — which is also why only the `r*` names are registered in
+  [shapes.py](../mcad2py/shapes.py)'s `_CALL_KINDS` (they always return a vector; their siblings follow
+  their argument's shape, and `histogram`'s shape depends on which overload was called).
+
+One **documented divergence**, the same shape as `statistics.mcdx`'s: every `r*` draw, and anything
+computed from one downstream (a random histogram's `lower`/`upper` bin edges, a Monte Carlo `Prob`
+estimate and the `qlogis` built from it), is a fresh sample each run and cannot reproduce a cached number
+— 16 of the 90 echoes (the test's `RANDOM` set). They still execute, so the code path is covered; the
+`d`/`p`/`q` inverse relationships are checked directly instead (`test_distributions_are_mutually_consistent`).
+
 [tests/test_constants.py](../tests/test_constants.py) covers `references/Constants.mcdx`, which
 evaluates Prime's whole built-in **Constants** label with nothing defined on the sheet: the maths trio
 (`e`/`π`/`∞`), Euler-Mascheroni `γ`, and the physics set (`c`, `g`, `e_c`, `h`, `ℏ`, `k`, `m_u`, `N_A`,

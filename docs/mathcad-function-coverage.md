@@ -91,9 +91,9 @@ Legend: ✅ done · 🟡 partial · ⬜ not started · ⛔ out of scope (unlikel
 | **Solving & optimization** | 🟡 | `find` (numeric), `solve` (symbolic), `lsolve` (linear systems) | `root`, `polyroots`, `minerr`, `maximize` `minimize`, `Isolve` |
 | **Interpolation & prediction** | 🟡 | `linterp` | `cspline`/`pspline`/`lspline` + `interp`, `bicubic`/`bilinear`, `predict`, `sinterp` |
 | **Statistics** | ✅ | mean median mode gmean hmean, var Var stdev Stdev, skew kurt, percentile Rank histogram, corr cvar, Ftest Spear kendltau kendltau2 contingtbl | — (see `references/statistics.mcdx`). Lower-case `var`/`stdev` are the *population* forms, capitalised `Var`/`Stdev` the *sample* forms |
-| **Probability distributions** | 🟡 | the `d/p/q/r` families for `norm`, `t` and `weibull` | the remaining families (`binom` `pois` `unif` `exp` `gamma` `beta` `F` `chisq` `lnorm` `logis` `geom` `hypergeom` …) — each is a four-line `scipy.stats` wrap following the same pattern |
+| **Probability distributions** | ✅ | the `d/p/q/r` families for `norm` `t` `weibull` `unif` `exp` `gamma` `beta` `F` `chisq` `lnorm` `logis` `cauchy` `geom` `hypergeom` `binom` `nbinom`, plus `cnorm` (Mathcad-15's `pnorm(x,0,1)` alias) | `pois` and the remaining niche families (see `references/probability.mcdx`) |
 | **Regression & smoothing** | 🟡 | `slope` `intercept` (least-squares line) | `line`, `regress` `loess`, `linfit` `genfit` `expfit` `logfit` `pwrfit` `sinfit`, `medsmooth` `ksmooth` `supsmooth` |
-| **Complex numbers** | 🟡 | `abs` (`|z|`), the imaginary literal `i` (`<ml:imag>`), `ln`/`log` returning complex for a negative real argument | `Re` `Im` `arg` `csgn` `signum`, conjugate |
+| **Complex numbers** | 🟡 | `abs` (`|z|`), the imaginary literal `i` (`<ml:imag>`), `ln`/`log` returning complex for a negative real argument, `Re` | `Im` `arg` `csgn` `signum`, conjugate |
 | **Number theory & combinatorics** | ⬜ | — | `mod` `gcd` `lcm` (engineering-relevant), `combin` `permut` `!` factorial, `isprime` `fibonacci` |
 | **Special functions** | ⬜ | — | `erf` `erfc`, `Γ` `lgamma`, `Ψ` digamma, `β` beta, `fhyper` |
 | **Bessel functions** | ⬜ | — | `J0/J1/Jn` `Y0/Y1/Yn` `I…` `K…` `Ai` `Bi` (rare here) |
@@ -114,22 +114,21 @@ Legend: ✅ done · 🟡 partial · ⬜ not started · ⛔ out of scope (unlikel
 
 Ranked by expected payoff × frequency in the kind of sheets this repo converts, and roughly by effort.
 
-1. **The remaining distribution families** — the `d/p/q/r` set for `binom`, `pois`, `exp`, `gamma`,
-   `beta`, `F`, `chisq`, … now that `norm`/`t`/`weibull` have established the pattern (a four-line
-   `scipy.stats` wrap each, plus one `mapping.py` row). *(The statistics batch that used to head this
-   item is done — see `references/statistics.mcdx`.)*
-2. **Cubic-spline interpolation** — `cspline`/`lspline`/`pspline` + `interp`, extending the existing
-   `linterp`. Maps onto `scipy.interpolate`. Common for material curves.
-3. **More solving** — `root` (scalar) and `polyroots`, then `minerr`/`maximize`/`minimize` (extend the
+1. **Cubic-spline interpolation** — `cspline`/`lspline`/`pspline` + `interp`, extending the existing
+   `linterp`. Maps onto `scipy.interpolate`. Common for material curves. *(The distribution-family batch
+   that used to head this item is done — see `references/probability.mcdx`; only `pois` and out-of-scope
+   niche families remain.)*
+2. **More solving** — `root` (scalar) and `polyroots`, then `minerr`/`maximize`/`minimize` (extend the
    `solve_block` machinery: `minerr` = least-squares residual, the optimizers = `scipy.optimize`).
-4. **Complex-number accessors** — `Re`, `Im`, `arg`, conjugate. Trivial; occasionally needed. (The
-   imaginary literal and complex-valued `ln`/`log` already work — see `references/log-exp.mcdx`.)
-5. **`mod`, `gcd`, `lcm`** — trivial, high-completeness-per-line. *(The trig and hyperbolic families
+3. **Complex-number accessors** — `Im`, `arg`, conjugate. Trivial; occasionally needed. (The imaginary
+   literal, complex-valued `ln`/`log`, and `Re` already work — see `references/log-exp.mcdx` and
+   `references/probability.mcdx`.)
+4. **`mod`, `gcd`, `lcm`** — trivial, high-completeness-per-line. *(The trig and hyperbolic families
    that used to head this item are done — see `references/trig.mcdx` / `references/hyperbolic.mcdx`.)*
-6. **Special functions** — `erf`/`erfc`, `Γ` — thin `scipy.special` wraps; occasional.
-7. **Differential equations** (`odesolve`, `rkfixed`, …) — a larger effort (a solve-block-like block
+5. **Special functions** — `erf`/`erfc`, `Γ` — thin `scipy.special` wraps; occasional.
+6. **Differential equations** (`odesolve`, `rkfixed`, …) — a larger effort (a solve-block-like block
    construct over `scipy.integrate.solve_ivp`). Do only when a sample needs it.
-8. **Fourier** (`fft`/`ifft`) — low priority for structural work; `scipy.fft` wraps if needed.
+7. **Fourier** (`fft`/`ifft`) — low priority for structural work; `scipy.fft` wraps if needed.
 
 Explicitly **not** planned: finance, image processing, file I/O, wavelets/signal — out of scope for a
 structural worksheet converter.

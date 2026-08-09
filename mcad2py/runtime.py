@@ -1307,16 +1307,32 @@ def Rank(a):  # noqa: N802 -- Mathcad's own spelling
     return ranks
 
 
-def histogram(n, a):
-    """Mathcad ``histogram(n, A)``: an ``n x 2`` matrix of bin midpoints and counts.
+def histogram(n_or_intvls, a):
+    """Mathcad ``histogram``, both overloads.
 
-    The bins are ``n`` equal-width intervals spanning the data; column 0 holds
-    each bin's midpoint (in the data's unit) and column 1 its count.
+    ``histogram(n, A)`` -- ``n`` equal-width intervals spanning the data --
+    returns an ``n x 2`` matrix of bin midpoints (column 0, in the data's
+    unit) and counts (column 1). ``histogram(intvls, A)`` -- an explicit
+    vector of ``m`` interval boundaries -- returns just the ``m - 1`` counts,
+    one per interval between consecutive boundaries.
+
+    Boundaries are converted into the data's unit first: comparing raw
+    magnitudes would bin ``mm`` edges against ``m`` data silently, and a
+    genuinely incompatible unit should raise (Pint's ``.to``) rather than
+    return a plausible-looking wrong count.
     """
     mag, unit = _data(a)
-    counts, edges = np.histogram(mag, bins=int(n))
+    if _is_arraylike(n_or_intvls):
+        intvls = n_or_intvls
+        if unit is not None and hasattr(intvls, "to"):
+            intvls = intvls.to(unit)
+        edges, _ = _data(intvls)
+        counts, _ = np.histogram(mag, bins=edges)
+        return counts.astype(float)
+    n = int(n_or_intvls)
+    counts, edges = np.histogram(mag, bins=n)
     midpoints = (edges[:-1] + edges[1:]) / 2.0
-    out = np.empty((int(n), 2), dtype=object)
+    out = np.empty((n, 2), dtype=object)
     out[:, 0] = [_join(float(m), unit) for m in midpoints]
     out[:, 1] = counts.astype(float)
     return out
@@ -1540,6 +1556,23 @@ def contingtbl(tab):
 # cumulative probability, ``q`` the quantile (inverse cumulative), and ``r`` a
 # vector of ``m`` random draws. A random one obviously can't reproduce a cached
 # worksheet value -- the numbers below it differ every run, by design.
+#
+# Every argument goes through ``_reduce_dimensionless`` (via ``_num``/``_count``
+# for the plain-number parameters a draw needs): a worksheet routinely feeds
+# these a ratio Pint still carries as ``m/mm``, and a bare ``float()`` on that
+# reads the unreduced magnitude. The ``d``/``p``/``q`` wrappers return SciPy's
+# own result rather than coercing to ``float``, so passing a vector of ``x``
+# evaluates element-wise the way Mathcad's vectorize arrow expects.
+
+
+def _num(x):
+    """A distribution parameter as a plain ``float``, dimensionless-reduced."""
+    return float(_reduce_dimensionless(x))
+
+
+def _count(m):
+    """A draw count (or integer parameter) as a plain ``int``."""
+    return int(_reduce_dimensionless(m))
 
 
 def dnorm(x, mu=0.0, sigma=1.0):
@@ -1565,7 +1598,7 @@ def qnorm(p, mu=0.0, sigma=1.0):
 
 def rnorm(m, mu=0.0, sigma=1.0):
     """Mathcad ``rnorm``: ``m`` random draws from a normal distribution."""
-    return np.random.normal(float(mu), float(sigma), int(m))
+    return np.random.normal(_num(mu), _num(sigma), _count(m))
 
 
 def dt(x, d):
@@ -1591,7 +1624,7 @@ def qt(p, d):
 
 def rt(m, d):
     """Mathcad ``rt``: ``m`` random draws from a Student's *t* distribution."""
-    return np.random.standard_t(float(d), int(m))
+    return np.random.standard_t(_num(d), _count(m))
 
 
 def dweibull(x, s):
@@ -1617,7 +1650,394 @@ def qweibull(p, s):
 
 def rweibull(m, s):
     """Mathcad ``rweibull``: ``m`` random draws from a Weibull distribution."""
-    return np.random.weibull(float(s), int(m))
+    return np.random.weibull(_num(s), _count(m))
+
+
+def Re(x):
+    """Mathcad ``Re(z)``: the real part of a (possibly complex) value.
+
+    Unit-aware: Mathcad takes ``Re`` of a *dimensioned* complex value as
+    readily as of a plain number (a complex impedance in ohms, a complex
+    modulus in MPa), and ``np.real`` has no implementation for a Pint
+    quantity -- it raises rather than reaching the magnitude.
+    """
+    if hasattr(x, "units"):
+        return _join(np.real(x.magnitude), x.units)
+    return np.real(x)
+
+
+def cnorm(x):
+    """Mathcad ``cnorm``: the standard normal cumulative probability -- a
+    Mathcad-15-era alias for ``pnorm(x, 0, 1)``, kept for compatibility."""
+    return pnorm(x, 0.0, 1.0)
+
+
+def dunif(x, a, b):
+    """Mathcad ``dunif``: the uniform density on ``[a, b]``."""
+    from scipy.stats import uniform
+
+    a, b = _reduce_dimensionless(a), _reduce_dimensionless(b)
+    return uniform.pdf(_reduce_dimensionless(x), a, b - a)
+
+
+def punif(x, a, b):
+    """Mathcad ``punif``: the uniform cumulative probability up to ``x``."""
+    from scipy.stats import uniform
+
+    a, b = _reduce_dimensionless(a), _reduce_dimensionless(b)
+    return uniform.cdf(_reduce_dimensionless(x), a, b - a)
+
+
+def qunif(p, a, b):
+    """Mathcad ``qunif``: the uniform quantile -- the inverse of :func:`punif`."""
+    from scipy.stats import uniform
+
+    a, b = _reduce_dimensionless(a), _reduce_dimensionless(b)
+    return uniform.ppf(_reduce_dimensionless(p), a, b - a)
+
+
+def runif(m, a, b):
+    """Mathcad ``runif``: ``m`` random draws from a uniform distribution."""
+    return np.random.uniform(_num(a), _num(b), _count(m))
+
+
+def dexp(x, r):
+    """Mathcad ``dexp``: the exponential density with rate ``r``."""
+    from scipy.stats import expon
+
+    return expon.pdf(_reduce_dimensionless(x), scale=1.0 / _reduce_dimensionless(r))
+
+
+def pexp(x, r):
+    """Mathcad ``pexp``: the exponential cumulative probability up to ``x``."""
+    from scipy.stats import expon
+
+    return expon.cdf(_reduce_dimensionless(x), scale=1.0 / _reduce_dimensionless(r))
+
+
+def qexp(p, r):
+    """Mathcad ``qexp``: the exponential quantile -- the inverse of :func:`pexp`."""
+    from scipy.stats import expon
+
+    return expon.ppf(_reduce_dimensionless(p), scale=1.0 / _reduce_dimensionless(r))
+
+
+def rexp(m, r):
+    """Mathcad ``rexp``: ``m`` random draws from an exponential distribution."""
+    return np.random.exponential(1.0 / _num(r), _count(m))
+
+
+def dgamma(x, s):
+    """Mathcad ``dgamma``: the gamma density (shape ``s``, unit scale)."""
+    from scipy.stats import gamma
+
+    return gamma.pdf(_reduce_dimensionless(x), _reduce_dimensionless(s))
+
+
+def pgamma(x, s):
+    """Mathcad ``pgamma``: the gamma cumulative probability up to ``x``."""
+    from scipy.stats import gamma
+
+    return gamma.cdf(_reduce_dimensionless(x), _reduce_dimensionless(s))
+
+
+def qgamma(p, s):
+    """Mathcad ``qgamma``: the gamma quantile -- the inverse of :func:`pgamma`."""
+    from scipy.stats import gamma
+
+    return gamma.ppf(_reduce_dimensionless(p), _reduce_dimensionless(s))
+
+
+def rgamma(m, s):
+    """Mathcad ``rgamma``: ``m`` random draws from a gamma distribution."""
+    return np.random.gamma(_num(s), 1.0, _count(m))
+
+
+def dlogis(x, loc, s):
+    """Mathcad ``dlogis``: the logistic density (location, scale ``s``).
+
+    Mathcad spells the location parameter ``l``; it is ``loc`` here because a
+    bare ``l`` is an ambiguous identifier. Both are positional either way."""
+    from scipy.stats import logistic
+
+    return logistic.pdf(_reduce_dimensionless(x), _reduce_dimensionless(loc), _reduce_dimensionless(s))
+
+
+def plogis(x, loc, s):
+    """Mathcad ``plogis``: the logistic cumulative probability up to ``x``."""
+    from scipy.stats import logistic
+
+    return logistic.cdf(_reduce_dimensionless(x), _reduce_dimensionless(loc), _reduce_dimensionless(s))
+
+
+def qlogis(p, loc, s):
+    """Mathcad ``qlogis``: the logistic quantile -- the inverse of :func:`plogis`."""
+    from scipy.stats import logistic
+
+    return logistic.ppf(_reduce_dimensionless(p), _reduce_dimensionless(loc), _reduce_dimensionless(s))
+
+
+def rlogis(m, loc, s):
+    """Mathcad ``rlogis``: ``m`` random draws from a logistic distribution."""
+    return np.random.logistic(_num(loc), _num(s), _count(m))
+
+
+def dcauchy(x, loc, s):
+    """Mathcad ``dcauchy``: the Cauchy density (location ``loc``, scale ``s``);
+    Mathcad's own name for ``loc`` is ``l`` -- see :func:`dlogis`."""
+    from scipy.stats import cauchy
+
+    return cauchy.pdf(_reduce_dimensionless(x), _reduce_dimensionless(loc), _reduce_dimensionless(s))
+
+
+def pcauchy(x, loc, s):
+    """Mathcad ``pcauchy``: the Cauchy cumulative probability up to ``x``."""
+    from scipy.stats import cauchy
+
+    return cauchy.cdf(_reduce_dimensionless(x), _reduce_dimensionless(loc), _reduce_dimensionless(s))
+
+
+def qcauchy(p, loc, s):
+    """Mathcad ``qcauchy``: the Cauchy quantile -- the inverse of :func:`pcauchy`."""
+    from scipy.stats import cauchy
+
+    return cauchy.ppf(_reduce_dimensionless(p), _reduce_dimensionless(loc), _reduce_dimensionless(s))
+
+
+def rcauchy(m, loc, s):
+    """Mathcad ``rcauchy``: ``m`` random draws from a Cauchy distribution."""
+    return _num(loc) + _num(s) * np.random.standard_cauchy(_count(m))
+
+
+def dgeom(k, q):
+    """Mathcad ``dgeom``: probability of ``k`` failures before the first success
+    (success probability ``q``). Mathcad's ``k`` starts at 0; SciPy's ``geom``
+    counts the trial of the first success starting at 1, hence the ``k + 1``."""
+    from scipy.stats import geom
+
+    return geom.pmf(_reduce_dimensionless(k) + 1, _reduce_dimensionless(q))
+
+
+def pgeom(k, q):
+    """Mathcad ``pgeom``: cumulative probability of at most ``k`` failures
+    before the first success."""
+    from scipy.stats import geom
+
+    return geom.cdf(_reduce_dimensionless(k) + 1, _reduce_dimensionless(q))
+
+
+def qgeom(p, q):
+    """Mathcad ``qgeom``: the geometric quantile -- the inverse of :func:`pgeom`."""
+    from scipy.stats import geom
+
+    return geom.ppf(_reduce_dimensionless(p), _reduce_dimensionless(q)) - 1
+
+
+def rgeom(m, q):
+    """Mathcad ``rgeom``: ``m`` random draws (failures before first success)
+    from a geometric distribution."""
+    return np.random.geometric(_num(q), _count(m)) - 1
+
+
+def dhypergeom(k, a, b, n):
+    """Mathcad ``dhypergeom``: probability of ``k`` successes when drawing a
+    sample of size ``n`` without replacement from ``a`` successes + ``b``
+    failures."""
+    from scipy.stats import hypergeom
+
+    a, b, n = _reduce_dimensionless(a), _reduce_dimensionless(b), _reduce_dimensionless(n)
+    return hypergeom.pmf(_reduce_dimensionless(k), a + b, a, n)
+
+
+def phypergeom(k, a, b, n):
+    """Mathcad ``phypergeom``: cumulative probability of at most ``k``
+    successes."""
+    from scipy.stats import hypergeom
+
+    a, b, n = _reduce_dimensionless(a), _reduce_dimensionless(b), _reduce_dimensionless(n)
+    return hypergeom.cdf(_reduce_dimensionless(k), a + b, a, n)
+
+
+def qhypergeom(p, a, b, n):
+    """Mathcad ``qhypergeom``: the hypergeometric quantile -- the inverse of
+    :func:`phypergeom`."""
+    from scipy.stats import hypergeom
+
+    a, b, n = _reduce_dimensionless(a), _reduce_dimensionless(b), _reduce_dimensionless(n)
+    return hypergeom.ppf(_reduce_dimensionless(p), a + b, a, n)
+
+
+def rhypergeom(m, a, b, n):
+    """Mathcad ``rhypergeom``: ``m`` random draws from a hypergeometric
+    distribution."""
+    return np.random.hypergeometric(_count(a), _count(b), _count(n), _count(m))
+
+
+def dbinom(k, n, q):
+    """Mathcad ``dbinom``: probability of ``k`` successes in ``n`` trials
+    (success probability ``q``)."""
+    from scipy.stats import binom
+
+    return binom.pmf(_reduce_dimensionless(k), _reduce_dimensionless(n), _reduce_dimensionless(q))
+
+
+def pbinom(k, n, q):
+    """Mathcad ``pbinom``: cumulative probability of at most ``k`` successes."""
+    from scipy.stats import binom
+
+    return binom.cdf(_reduce_dimensionless(k), _reduce_dimensionless(n), _reduce_dimensionless(q))
+
+
+def qbinom(p, n, q):
+    """Mathcad ``qbinom``: the binomial quantile -- the inverse of :func:`pbinom`."""
+    from scipy.stats import binom
+
+    return binom.ppf(_reduce_dimensionless(p), _reduce_dimensionless(n), _reduce_dimensionless(q))
+
+
+def rbinom(m, n, q):
+    """Mathcad ``rbinom``: ``m`` random draws from a binomial distribution."""
+    return np.random.binomial(_count(n), _num(q), _count(m))
+
+
+def dnbinom(k, n, q):
+    """Mathcad ``dnbinom``: probability of ``k`` failures before the ``n``-th
+    success (success probability ``q``)."""
+    from scipy.stats import nbinom
+
+    return nbinom.pmf(_reduce_dimensionless(k), _reduce_dimensionless(n), _reduce_dimensionless(q))
+
+
+def pnbinom(k, n, q):
+    """Mathcad ``pnbinom``: cumulative probability of at most ``k`` failures."""
+    from scipy.stats import nbinom
+
+    return nbinom.cdf(_reduce_dimensionless(k), _reduce_dimensionless(n), _reduce_dimensionless(q))
+
+
+def qnbinom(p, n, q):
+    """Mathcad ``qnbinom``: the negative-binomial quantile -- the inverse of
+    :func:`pnbinom`."""
+    from scipy.stats import nbinom
+
+    return nbinom.ppf(_reduce_dimensionless(p), _reduce_dimensionless(n), _reduce_dimensionless(q))
+
+
+def rnbinom(m, n, q):
+    """Mathcad ``rnbinom``: ``m`` random draws from a negative-binomial
+    distribution."""
+    return np.random.negative_binomial(_count(n), _num(q), _count(m))
+
+
+def dbeta(x, s1, s2):
+    """Mathcad ``dbeta``: the beta density (shape parameters ``s1``, ``s2``)."""
+    from scipy.stats import beta
+
+    return beta.pdf(_reduce_dimensionless(x), _reduce_dimensionless(s1), _reduce_dimensionless(s2))
+
+
+def pbeta(x, s1, s2):
+    """Mathcad ``pbeta``: the beta cumulative probability up to ``x``."""
+    from scipy.stats import beta
+
+    return beta.cdf(_reduce_dimensionless(x), _reduce_dimensionless(s1), _reduce_dimensionless(s2))
+
+
+def qbeta(p, s1, s2):
+    """Mathcad ``qbeta``: the beta quantile -- the inverse of :func:`pbeta`."""
+    from scipy.stats import beta
+
+    return beta.ppf(_reduce_dimensionless(p), _reduce_dimensionless(s1), _reduce_dimensionless(s2))
+
+
+def rbeta(m, s1, s2):
+    """Mathcad ``rbeta``: ``m`` random draws from a beta distribution."""
+    return np.random.beta(_num(s1), _num(s2), _count(m))
+
+
+def dchisq(x, d):
+    """Mathcad ``dchisq``: the chi-squared density with ``d`` degrees of
+    freedom."""
+    from scipy.stats import chi2
+
+    return chi2.pdf(_reduce_dimensionless(x), _reduce_dimensionless(d))
+
+
+def pchisq(x, d):
+    """Mathcad ``pchisq``: the chi-squared cumulative probability up to ``x``."""
+    from scipy.stats import chi2
+
+    return chi2.cdf(_reduce_dimensionless(x), _reduce_dimensionless(d))
+
+
+def qchisq(p, d):
+    """Mathcad ``qchisq``: the chi-squared quantile -- the inverse of
+    :func:`pchisq`."""
+    from scipy.stats import chi2
+
+    return chi2.ppf(_reduce_dimensionless(p), _reduce_dimensionless(d))
+
+
+def rchisq(m, d):
+    """Mathcad ``rchisq``: ``m`` random draws from a chi-squared distribution."""
+    return np.random.chisquare(_num(d), _count(m))
+
+
+def dF(x, d1, d2):
+    """Mathcad ``dF``: the F density with ``d1``/``d2`` degrees of freedom."""
+    from scipy.stats import f
+
+    return f.pdf(_reduce_dimensionless(x), _reduce_dimensionless(d1), _reduce_dimensionless(d2))
+
+
+def pF(x, d1, d2):
+    """Mathcad ``pF``: the F cumulative probability up to ``x``."""
+    from scipy.stats import f
+
+    return f.cdf(_reduce_dimensionless(x), _reduce_dimensionless(d1), _reduce_dimensionless(d2))
+
+
+def qF(p, d1, d2):
+    """Mathcad ``qF``: the F quantile -- the inverse of :func:`pF`."""
+    from scipy.stats import f
+
+    return f.ppf(_reduce_dimensionless(p), _reduce_dimensionless(d1), _reduce_dimensionless(d2))
+
+
+def rF(m, d1, d2):
+    """Mathcad ``rF``: ``m`` random draws from an F distribution."""
+    return np.random.f(_num(d1), _num(d2), _count(m))
+
+
+def dlnorm(x, mu, sigma):
+    """Mathcad ``dlnorm``: the log-normal density (``mu``/``sigma`` are the
+    underlying normal's mean and standard deviation)."""
+    from scipy.stats import lognorm
+
+    mu, sigma = _reduce_dimensionless(mu), _reduce_dimensionless(sigma)
+    return lognorm.pdf(_reduce_dimensionless(x), sigma, scale=np.exp(mu))
+
+
+def plnorm(x, mu, sigma):
+    """Mathcad ``plnorm``: the log-normal cumulative probability up to ``x``."""
+    from scipy.stats import lognorm
+
+    mu, sigma = _reduce_dimensionless(mu), _reduce_dimensionless(sigma)
+    return lognorm.cdf(_reduce_dimensionless(x), sigma, scale=np.exp(mu))
+
+
+def qlnorm(p, mu, sigma):
+    """Mathcad ``qlnorm``: the log-normal quantile -- the inverse of
+    :func:`plnorm`."""
+    from scipy.stats import lognorm
+
+    mu, sigma = _reduce_dimensionless(mu), _reduce_dimensionless(sigma)
+    return lognorm.ppf(_reduce_dimensionless(p), sigma, scale=np.exp(mu))
+
+
+def rlnorm(m, mu, sigma):
+    """Mathcad ``rlnorm``: ``m`` random draws from a log-normal distribution."""
+    return np.random.lognormal(_num(mu), _num(sigma), _count(m))
 
 
 # --- Table search (match / lookup / vlookup / hlookup / vhlookup) -----------
@@ -2203,7 +2623,10 @@ def plot_trace(x, y):
 
     def pad(axis):
         missing = n - axis.shape[0]
-        return axis if missing == 0 else np.concatenate([axis, np.full(missing, np.nan)])
+        if missing == 0:
+            return axis
+        fill = np.full((missing,) + axis.shape[1:], np.nan)
+        return np.concatenate([axis, fill])
 
     return pad(x), pad(y)
 

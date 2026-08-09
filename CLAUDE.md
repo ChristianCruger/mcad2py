@@ -44,7 +44,7 @@ When adding features, respect this boundary — parsers produce IR, backends con
 | [mapping.py](mcad2py/mapping.py) | Data tables: operators, builtins, constants, Greek, unit aliases |
 | [units.py](mcad2py/units.py) | The one Pint registry generated modules and `const.py` share |
 | [const.py](mcad2py/const.py) | Mathcad's built-in physical constants as importable Pint quantities |
-| [runtime.py](mcad2py/runtime.py) | Helpers imported by generated code: the full angle-aware trig + hyperbolic families, the full vector/matrix family (`rows`/`identity`/`det`/`lsolve`/the norm & condition sets/the eigen set/`sort`…), the full statistics family (`median`/`mode`/`var`/`Var`/`percentile`/`histogram`/`corr`/`slope`/`Spear`… plus the `d`/`p`/`q`/`r` sets for `norm`/`t`/`weibull`), `col`/`arange`/`index_build`/`vec_set`/`vectorize`/`transpose`, `linterp` (unit-aware linear interp), `integral` (scipy `quad`), `summation`, `solve_block` (scipy `fsolve`), `sample`/`plot_domain`/`plot_axis`/`plot_trace` (matplotlib plots) |
+| [runtime.py](mcad2py/runtime.py) | Helpers imported by generated code: the full angle-aware trig + hyperbolic families, the full vector/matrix family (`rows`/`identity`/`det`/`lsolve`/the norm & condition sets/the eigen set/`sort`…), the full statistics family (`median`/`mode`/`var`/`Var`/`percentile`/`histogram`/`corr`/`slope`/`Spear`…), the full probability-distribution family (`d`/`p`/`q`/`r` sets for `norm`/`t`/`weibull`/`unif`/`exp`/`gamma`/`beta`/`F`/`chisq`/`lnorm`/`logis`/`cauchy`/`geom`/`hypergeom`/`binom`/`nbinom`, plus `cnorm`), `col`/`arange`/`index_build`/`vec_set`/`vectorize`/`transpose`, `linterp` (unit-aware linear interp), `integral` (scipy `quad`), `summation`, `solve_block` (scipy `fsolve`), `sample`/`plot_domain`/`plot_axis`/`plot_trace` (matplotlib plots) |
 | [emit/codegen.py](mcad2py/emit/codegen.py) | Precedence-aware expression printer; shared by both backends. `header_lines(ws, source)` reads the generated module's imports **off the rendered body** — hence both backends build the body first |
 | [emit/notebook_backend.py](mcad2py/emit/notebook_backend.py) | IR→`.ipynb`; region→cell; bare last line echoes result |
 | [emit/py_backend.py](mcad2py/emit/py_backend.py) | IR→`.py`; evaluations become `print(...)` |
@@ -150,11 +150,15 @@ integral) — capped at one retry so a bad case costs a few minutes, not tens; i
 returns its best candidate if that still doesn't confirm convergence, rather than silently returning a
 wrong answer.
 The **statistics family is complete** (descriptive, regression, and the Numerical Recipes correlation
-set — see `references/statistics.mcdx`); of the **probability distributions**, only `norm`/`t`/`weibull`
-have their `d`/`p`/`q`/`r` sets, and the rest are a four-line `scipy.stats` wrap each. Two things there
-are not byte-reproducible: anything downstream of the **random** `rnorm`/`rweibull`/`rt` draws, and the
-four NR p-values, which use a Chebyshev `erfcc` we deliberately don't reproduce (SciPy's exact `erfc` is
-the better number; they agree to ~1e-7).
+set — see `references/statistics.mcdx`), and so is the **probability distribution family**: `norm`, `t`,
+`weibull`, `unif`, `exp`, `gamma`, `beta`, `F`, `chisq`, `lnorm`, `logis`, `cauchy`, `geom`, `hypergeom`,
+`binom`, and `nbinom` all have their `d`/`p`/`q`/`r` sets (a four-line `scipy.stats` wrap each), plus the
+Mathcad-15 `cnorm` alias (`pnorm(x, 0, 1)`) — see `references/probability.mcdx`. Only `pois` and a few
+out-of-scope niche families (finance-adjacent) remain unmapped. Two things there are not byte-reproducible:
+anything downstream of a **random** `r*` draw (`rnorm`/`rweibull`/`rt`/… — includes a Monte Carlo
+simulation's derived `Prob` and a random sample's histogram bin edges), and the four NR p-values, which
+use a Chebyshev `erfcc` we deliberately don't reproduce (SciPy's exact `erfc` is the better number; they
+agree to ~1e-7).
 **Difference equations** (seeded iteration) are supported in all three shapes — scalar, a simultaneous
 system, and a matrix recurrence writing two-subscript slots (`references/difference_eq.mcdx`). Not
 covered: a *self-referential* bare-index form (`X[i] := f(X[i-1])` with no offset on the target), which
