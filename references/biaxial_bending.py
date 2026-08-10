@@ -1,10 +1,9 @@
 """Auto-generated from a Mathcad worksheet by mcad2py."""
 import math
 import matplotlib.pyplot as plt
-import pint
 
 from mcad2py.runtime import elementwise, power, double_integral, solve_block, arange, sample, plot_axis, plot_trace, mesh_grid, resolve_plot_grid
-ureg = pint.UnitRegistry()
+from mcad2py.units import ureg
 
 
 W = 600 * ureg.mm

@@ -1,10 +1,9 @@
 """Auto-generated from a Mathcad worksheet by mcad2py."""
 import math
 import matplotlib.pyplot as plt
-import pint
 
 from mcad2py.runtime import disp, nth_root, col, matrix, transpose, vec_set, matcol, rows, submatrix, mean, sort, median, mode, gmean, hmean, var, Var, stdev, Stdev, skew, kurt, percentile, Rank, histogram, cvar, corr, slope, intercept, Ftest, Spear, kendltau, kendltau2, contingtbl, dnorm, pnorm, qnorm, rnorm, pt, qt, rt, rweibull, vlookup, index_build, summation, total, arange, sample, plot_domain, plot_axis, plot_trace
-ureg = pint.UnitRegistry()
+from mcad2py.units import ureg
 
 
 data = col(79, 85, 46, 86, 81)

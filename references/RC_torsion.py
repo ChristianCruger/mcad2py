@@ -1,9 +1,8 @@
 """Auto-generated from a Mathcad worksheet by mcad2py."""
 import math
-import pint
 
 from mcad2py.runtime import mc_max, mc_min, disp, ceil, index_build, arange
-ureg = pint.UnitRegistry()
+from mcad2py.units import ureg
 
 
 # Torsion in concrete section

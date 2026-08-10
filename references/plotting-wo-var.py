@@ -1,10 +1,9 @@
 """Auto-generated from a Mathcad worksheet by mcad2py."""
 import math
 import matplotlib.pyplot as plt
-import pint
 
 from mcad2py.runtime import sin, cos, sample, plot_domain, plot_axis, plot_trace
-ureg = pint.UnitRegistry()
+from mcad2py.units import ureg
 
 
 # plot without defined plotting variable

@@ -1,9 +1,8 @@
 """Auto-generated from a Mathcad worksheet by mcad2py."""
 import math
-import pint
 
 from mcad2py.runtime import cos, solve_block
-ureg = pint.UnitRegistry()
+from mcad2py.units import ureg
 
 
 def f(a, b):

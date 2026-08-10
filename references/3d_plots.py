@@ -1,10 +1,9 @@
 """Auto-generated from a Mathcad worksheet by mcad2py."""
 import math
 import matplotlib.pyplot as plt
-import pint
 
 from mcad2py.runtime import matrix, arange, plot_axis, mesh_grid, CreateMesh, resolve_plot_grid
-ureg = pint.UnitRegistry()
+from mcad2py.units import ureg
 
 
 # Approach #1 - function of 2 ranges: (ranges cannot have units, function values can)

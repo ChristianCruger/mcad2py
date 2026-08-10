@@ -1,10 +1,9 @@
 """Auto-generated from a Mathcad worksheet by mcad2py."""
 import math
 import matplotlib.pyplot as plt
-import pint
 
 from mcad2py.runtime import elementwise, mc_max, mc_min, disp, nth_root, power, mround, col, matrix, transpose, vec_set, augment, matmul, matcol, matelem, total, solve_block, arange, plot_axis, plot_trace, vectorize
-ureg = pint.UnitRegistry()
+from mcad2py.units import ureg
 
 
 # Example: Biaxial bending verification of RC column

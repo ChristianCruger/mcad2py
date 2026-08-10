@@ -1,9 +1,8 @@
 """Auto-generated from a Mathcad worksheet by mcad2py."""
 import math
-import pint
 
 from mcad2py.runtime import disp
-ureg = pint.UnitRegistry()
+from mcad2py.units import ureg
 
 
 x = 1 * ureg.m

@@ -44,7 +44,7 @@ When adding features, respect this boundary — parsers produce IR, backends con
 | [mapping.py](mcad2py/mapping.py) | Data tables: operators, builtins, constants, Greek, unit aliases |
 | [units.py](mcad2py/units.py) | The one Pint registry generated modules and `const.py` share |
 | [const.py](mcad2py/const.py) | Mathcad's built-in physical constants as importable Pint quantities |
-| [runtime.py](mcad2py/runtime.py) | Helpers imported by generated code: the full angle-aware trig + hyperbolic families, the full vector/matrix family (`rows`/`identity`/`det`/`lsolve`/the norm & condition sets/the eigen set/`sort`…), the full statistics family (`median`/`mode`/`var`/`Var`/`percentile`/`histogram`/`corr`/`slope`/`Spear`… plus the `d`/`p`/`q`/`r` sets for `norm`/`t`/`weibull`), `col`/`arange`/`index_build`/`vec_set`/`vectorize`/`transpose`, `linterp` (unit-aware linear interp), `integral` (scipy `quad`), `summation`, `solve_block` (scipy `fsolve`), `sample`/`plot_domain`/`plot_axis`/`plot_trace` (matplotlib plots) |
+| [runtime.py](mcad2py/runtime.py) | Helpers imported by generated code: the full angle-aware trig + hyperbolic families, the full vector/matrix family (`rows`/`identity`/`det`/`lsolve`/the norm & condition sets/the eigen set/`sort`…), the full statistics family (`median`/`mode`/`var`/`Var`/`percentile`/`histogram`/`corr`/`slope`/`Spear`…), the full probability-distribution family (`d`/`p`/`q`/`r` sets for `norm`/`t`/`weibull`/`unif`/`exp`/`gamma`/`beta`/`F`/`chisq`/`lnorm`/`logis`/`cauchy`/`geom`/`hypergeom`/`binom`/`nbinom`, plus `cnorm`), `col`/`arange`/`index_build`/`vec_set`/`vectorize`/`transpose`, `linterp` (unit-aware linear interp), `integral` (scipy `quad`), `summation`, `solve_block` (scipy `fsolve`), `sample`/`plot_domain`/`plot_axis`/`plot_trace` (matplotlib plots) |
 | [emit/codegen.py](mcad2py/emit/codegen.py) | Precedence-aware expression printer; shared by both backends. `header_lines(ws, source)` reads the generated module's imports **off the rendered body** — hence both backends build the body first |
 | [emit/notebook_backend.py](mcad2py/emit/notebook_backend.py) | IR→`.ipynb`; region→cell; bare last line echoes result |
 | [emit/py_backend.py](mcad2py/emit/py_backend.py) | IR→`.py`; evaluations become `print(...)` |
@@ -104,11 +104,24 @@ adding support for a new XML construct.
   `region-id` (its per-column `resultRef` isn't captured). `integration.xml` is a sibling zip part
   to `worksheet.xml`, present (usually as a bare `<regions/>`) in every `.mcdx`.
 - Add new builtins/units/constants to [mapping.py](mcad2py/mapping.py) (data, not code). A new
-  **runtime helper** needs no registration at all: the generated module's imports are read off the
+  **runtime helper** needs no *import* registration: the generated module's imports are read off the
   emitted text (every public name defined in [runtime.py](mcad2py/runtime.py) is a candidate), so
-  writing the helper and mapping the Mathcad name to it is the whole job. Anything the text doesn't
+  writing the helper and mapping the Mathcad name to it is most of the job. Anything the text doesn't
   reference isn't imported — [tests/test_generated_imports.py](tests/test_generated_imports.py) pins
-  both directions across every fixture.
+  both directions across every fixture. Two things it *does* need:
+  - **Every argument can arrive as a Pint quantity**, so a bare `float(x)`, `int(x)`, `x.magnitude`
+    or `np.<anything>(x)` on an incoming value is a bug — `float()` reads an *unreduced* dimensionless
+    ratio's raw magnitude (`mm/mm` → not what Mathcad shows), and most NumPy entry points simply raise
+    on a quantity (`np.real` has no Pint implementation at all). Go through the existing seam:
+    `_split`/`_join` to take a value apart and put its unit back, `_reduce_dimensionless` (or the
+    distribution family's `_num`/`_count`) for a parameter that must end up a plain number, and
+    `.to(unit)` before comparing two values that each carry one. Binning `mm` edges against `m` data,
+    or feeding `fsolve` a raw magnitude, produces a plausible wrong number rather than an error —
+    which is the failure mode this seam exists to prevent.
+  - An entry in [shapes.py](mcad2py/shapes.py)'s `_CALL_KINDS` if it **always** returns an array (see
+    the `·` bullet below). Leave it out when the return shape follows the *argument's* shape (the
+    `d`/`p`/`q` distribution wrappers) or depends on which overload was called (`histogram`) — a wrong
+    kind is worse than `UNKNOWN`, which just declines to rewrite.
 - Run [tools/strip_mcdx_metadata.py](tools/strip_mcdx_metadata.py) on any new fixture before
   committing: it removes the authoring metadata a `.mcdx` carries in parts you never see in Prime
   (`docProps/core.xml`'s `creator`/`lastModifiedBy`, `docProps/app.xml`'s `Company`, and the printed
@@ -133,9 +146,25 @@ Per-test detail — which fixture pins which feature, and the documented diverge
 eigenvalue ordering, Pint's Julian year) — lives in [docs/test-coverage.md](docs/test-coverage.md); read
 the entry for a test before changing it, and add one when you add a fixture.
 
+**A green fixture doesn't mean the helper is right** — it means it's right for the one call the
+worksheet happens to make. A fixture exercises a helper at whatever units, shapes and argument types
+its author used, so anything the sheet didn't reach is untested: a helper called only on dimensionless
+values, only on scalars, or only with both arguments already in the same unit. After the
+execute-and-compare test passes, add a direct unit test for the arms the sheet skipped — the
+dimensioned call, the array call, the two-values-in-different-units call. Both bugs found reviewing
+`probability.mcdx` were of exactly this kind, and both were in helper code its 90 green echoes ran.
+
 **Reference files are test fixtures — don't edit them.** Tests compare generated output against each
 `.mcdx`'s cached `result.xml`; changing a worksheet (e.g. a `phi` value) silently shifts every
 dependent cached number and breaks the hardcoded expected values.
+
+The committed `references/*.py` and `*.ipynb` beside them are **generated artifacts**, and
+[tests/test_reference_artifacts.py](tests/test_reference_artifacts.py) holds them to a fresh
+conversion. A change to codegen is therefore expected to fail that test — regenerate the artifacts in
+the same commit (`mcad2py convert references/<sheet>.mcdx [-f py]`) rather than adjusting the test.
+Notebooks are the exception worth knowing: `nbformat` re-randomises every cell `id` on each run, so
+regenerate one only when its *content* changed and patch the affected cell otherwise — the test
+compares notebooks with ids stripped for exactly this reason.
 
 ## Not yet supported (next targets)
 
@@ -150,11 +179,18 @@ integral) — capped at one retry so a bad case costs a few minutes, not tens; i
 returns its best candidate if that still doesn't confirm convergence, rather than silently returning a
 wrong answer.
 The **statistics family is complete** (descriptive, regression, and the Numerical Recipes correlation
-set — see `references/statistics.mcdx`); of the **probability distributions**, only `norm`/`t`/`weibull`
-have their `d`/`p`/`q`/`r` sets, and the rest are a four-line `scipy.stats` wrap each. Two things there
-are not byte-reproducible: anything downstream of the **random** `rnorm`/`rweibull`/`rt` draws, and the
-four NR p-values, which use a Chebyshev `erfcc` we deliberately don't reproduce (SciPy's exact `erfc` is
-the better number; they agree to ~1e-7).
+set — see `references/statistics.mcdx`), and so is the **probability distribution family**: `norm`, `t`,
+`weibull`, `unif`, `exp`, `gamma`, `beta`, `F`, `chisq`, `lnorm`, `logis`, `cauchy`, `geom`, `hypergeom`,
+`binom`, `nbinom` and `pois` all have their `d`/`p`/`q`/`r` sets (a four-line `scipy.stats` wrap each),
+plus the Mathcad-15 `cnorm` alias (`pnorm(x, 0, 1)`) — see `references/probability.mcdx`. Only a few
+out-of-scope niche families (finance-adjacent) remain unmapped. Mathcad applies any of these
+**element-wise to a vector with no vectorize arrow** (`dweibull(x, s)` over a column of measurements is
+an ordinary worksheet line), so a `d`/`p`/`q` helper returns SciPy's own result and must never wrap it
+in `float()` — that raises on exactly the array call. Two things there are not byte-reproducible:
+anything downstream of a **random** `r*` draw (`rnorm`/`rweibull`/`rt`/… — includes a Monte Carlo
+simulation's derived `Prob` and a random sample's histogram bin edges), and the four NR p-values, which
+use a Chebyshev `erfcc` we deliberately don't reproduce (SciPy's exact `erfc` is the better number; they
+agree to ~1e-7).
 **Difference equations** (seeded iteration) are supported in all three shapes — scalar, a simultaneous
 system, and a matrix recurrence writing two-subscript slots (`references/difference_eq.mcdx`). Not
 covered: a *self-referential* bare-index form (`X[i] := f(X[i-1])` with no offset on the target), which

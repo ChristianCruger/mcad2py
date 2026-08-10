@@ -302,6 +302,64 @@ Two **documented divergences** there, neither a bug:
   correctness for a matching digit, so the test loosens the tolerance on those four indices only
   (`APPROXIMATE`) and everything else stays at 1e-12.
 
+[tests/test_probability.py](../tests/test_probability.py) covers `references/probability.mcdx`, PTC's own
+probability tutorial and the fixture that completes the distribution catalogue `statistics.mcdx` started:
+uniform, exponential, gamma, logistic, Cauchy, geometric, hypergeometric, binomial, negative binomial,
+beta, chi-squared, F, log-normal and Poisson, each with its full `d`/`p`/`q`/`r` set, plus the Mathcad-15
+`cnorm` alias (`pnorm(x, 0, 1)`) and `Re` (needed because the sheet wraps a Student-t density
+`Re(dt(x, v))` defensively). **99 evaluated regions**, 80 matching the cache to 1e-9 (SciPy's `ppf`/`cdf`
+round-trips aren't quite the ~1e-12 the closed-form families hit).
+
+The Poisson and Weibull blocks were added to the sheet after the rest, and they pin something none of
+the earlier blocks did: **Mathcad maps a distribution function over a vector with no vectorize arrow.**
+`dweibull(x, s)` over a column of five measurements, or `dpois(k, λ)` over a column of counts, is an
+ordinary worksheet line that reaches the runtime as a single call with an array `x`. The
+`norm`/`t`/`weibull` helpers predated that and wrapped their result in `float()`, which raises on
+exactly this call — they now return SciPy's result like every later family, and
+`test_distributions_apply_element_wise_to_a_vector` checks the array call against the scalar one it has
+to agree with. (Re-saving the sheet in Prime also renumbered every `region-id` and inserted an `rt(m, ν)`
+echo mid-sheet, shifting the tail of the test's index-based `RANDOM` set by one; the cached values of
+every pre-existing *deterministic* echo were verified unchanged across that re-save.)
+
+Two things the sheet exposed that weren't bugs in the distributions themselves:
+
+* `histogram` has a **second call shape**. `statistics.mcdx` only exercises `histogram(n, A)` (an `n × 2`
+  midpoint/count matrix); this sheet also calls `histogram(intvls, A)` with an explicit boundary vector,
+  which returns just the `len(intvls) - 1` counts — both are real Mathcad overloads, disambiguated on
+  whether the first argument is scalar or array-like.
+* **`plot_trace`'s NaN-pad only handled 1-D traces.** The "Uniformly Distributed" plot draws a 21-point
+  `range` (`n := 0 .. n_bins`, a genuine Mathcad range — the upper bound is inclusive, so 20 bins gives 21
+  points) against `histogram`'s 20-row output; Mathcad plots the mismatch by NaN-padding the shorter trace
+  (same behaviour `difference_eq.mcdx` pins for 1-D), but here the shorter side is a 2-column matrix, and
+  padding used to concatenate a flat NaN block that only matched a 1-D shape. Fixed to pad along axis 0
+  using the trailing dimensions of whichever array is shorter.
+
+Three further **unit-safety** cases the fixture itself doesn't reach, pinned by direct tests because a
+worksheet plausibly would:
+
+* **`histogram(intvls, A)` converts the boundaries into the data's unit** before binning
+  (`test_histogram_converts_boundaries_into_the_data_unit`). Comparing raw magnitudes put `mm` edges
+  against `m` data straight into the first bin — a wrong count with no error, the worst failure mode
+  here. An *incompatible* unit now raises Pint's `DimensionalityError` rather than returning a
+  plausible-looking number.
+* **`Re` is unit-aware** (`test_Re_keeps_a_unit_and_takes_the_real_part`). Mathcad takes `Re` of a
+  dimensioned complex value (a complex impedance, a complex modulus) as readily as of a plain number, and
+  `np.real` has no implementation for a Pint quantity — it raises instead of reaching the magnitude. The
+  sheet only calls it on a dimensionless Student-t density, so nothing else catches this.
+* **Every distribution parameter is dimensionless-reduced** (`test_distribution_parameters_accept_an_unreduced_ratio`).
+  A worksheet routinely feeds these a ratio Pint still carries as `mm/mm`; a bare `float()` would read the
+  unreduced magnitude. The `r*` draws take their parameters through `_num`/`_count` for that reason. The
+  `d`/`p`/`q` wrappers deliberately return SciPy's own result rather than coercing to `float`, so a vector
+  of `x` evaluates element-wise — which is also why only the `r*` names are registered in
+  [shapes.py](../mcad2py/shapes.py)'s `_CALL_KINDS` (they always return a vector; their siblings follow
+  their argument's shape, and `histogram`'s shape depends on which overload was called).
+
+One **documented divergence**, the same shape as `statistics.mcdx`'s: every `r*` draw, and anything
+computed from one downstream (a random histogram's `lower`/`upper` bin edges, a Monte Carlo `Prob`
+estimate and the `qlogis` built from it), is a fresh sample each run and cannot reproduce a cached number
+— 19 of the 99 echoes (the test's `RANDOM` set). They still execute, so the code path is covered; the
+`d`/`p`/`q` inverse relationships are checked directly instead (`test_distributions_are_mutually_consistent`).
+
 [tests/test_constants.py](../tests/test_constants.py) covers `references/Constants.mcdx`, which
 evaluates Prime's whole built-in **Constants** label with nothing defined on the sheet: the maths trio
 (`e`/`π`/`∞`), Euler-Mascheroni `γ`, and the physics set (`c`, `g`, `e_c`, `h`, `ℏ`, `k`, `m_u`, `N_A`,
@@ -369,3 +427,31 @@ seven dead imports the old predictor had been emitting: `import numpy as np` in 
 `min`/`max` are reductions (they emit `mc_min`/`mc_max`, so no bare `np.` is ever written), and
 `sample` in three whose only plots are parametric (both axes data vectors, so no `sample(lambda …)`).
 Nothing was found *missing*, which is the reassuring half of the result.
+
+[tests/test_reference_artifacts.py](../tests/test_reference_artifacts.py) is the other fixture-wide
+guard: every committed `references/*.py` and `*.ipynb` must equal a fresh conversion of its worksheet.
+These are generated artifacts kept in git so a reader can see a sheet's output without running
+anything — but nothing *consumed* them (the rest of the suite converts each `.mcdx` fresh and executes
+that), so they drifted through several header changes unnoticed and were still emitting
+`ureg = pint.UnitRegistry()` long after generated modules moved onto the shared registry in
+`units.py`. Refreshing them was a one-liner; the value of this test is that the commit which *changes
+codegen* is the one that fails, instead of a reader hitting a stale artifact months later.
+
+Two things are normalised before comparing notebooks, both because they are irreproducible rather than
+unimportant. Cell **ids** are stripped — `nbformat` mints a fresh random id per cell on every run, so a
+byte comparison would fail on every notebook always, and regenerating to satisfy it would churn ~500
+lines of `RC_col.ipynb` to change three. And **embedded image payloads** are replaced with a marker:
+`Elastic_foundation_eq_line_spring.mcdx` carries a BMP (the only non-web raster in the fixtures), which
+the notebook backend re-encodes to PNG through Pillow, whose bytes are not stable across platforms or
+versions. That one is a **documented divergence** worth knowing about — it was found the hard way, as a
+CI failure on an artifact that was perfectly current: the committed notebook was generated on Windows
+and CI runs Linux, so the base64 blob differed while the picture was identical. The payload is compared
+as *pixels* instead (`test_reference_notebook_images_are_pixel_identical`, which decodes both sides and
+compares size, mode and `tobytes()`), so a genuinely changed image is still caught. Everything else,
+cell order and content included, is compared exactly. The `.py` artifacts need none of this — that
+backend emits a `# [image: …]` comment rather than embedding the data.
+
+The parametrization walks the *committed artifacts* rather
+than the worksheets, because not every sheet ships both (`shrinkage.mcdx` has only a notebook) —
+`test_every_artifact_has_a_worksheet` covers the reverse, since an artifact whose `.mcdx` was renamed
+would otherwise sit here with no test running against it at all.
