@@ -181,9 +181,12 @@ wrong answer.
 The **statistics family is complete** (descriptive, regression, and the Numerical Recipes correlation
 set — see `references/statistics.mcdx`), and so is the **probability distribution family**: `norm`, `t`,
 `weibull`, `unif`, `exp`, `gamma`, `beta`, `F`, `chisq`, `lnorm`, `logis`, `cauchy`, `geom`, `hypergeom`,
-`binom`, and `nbinom` all have their `d`/`p`/`q`/`r` sets (a four-line `scipy.stats` wrap each), plus the
-Mathcad-15 `cnorm` alias (`pnorm(x, 0, 1)`) — see `references/probability.mcdx`. Only `pois` and a few
-out-of-scope niche families (finance-adjacent) remain unmapped. Two things there are not byte-reproducible:
+`binom`, `nbinom` and `pois` all have their `d`/`p`/`q`/`r` sets (a four-line `scipy.stats` wrap each),
+plus the Mathcad-15 `cnorm` alias (`pnorm(x, 0, 1)`) — see `references/probability.mcdx`. Only a few
+out-of-scope niche families (finance-adjacent) remain unmapped. Mathcad applies any of these
+**element-wise to a vector with no vectorize arrow** (`dweibull(x, s)` over a column of measurements is
+an ordinary worksheet line), so a `d`/`p`/`q` helper returns SciPy's own result and must never wrap it
+in `float()` — that raises on exactly the array call. Two things there are not byte-reproducible:
 anything downstream of a **random** `r*` draw (`rnorm`/`rweibull`/`rt`/… — includes a Monte Carlo
 simulation's derived `Prob` and a random sample's histogram bin edges), and the four NR p-values, which
 use a Chebyshev `erfcc` we deliberately don't reproduce (SciPy's exact `erfc` is the better number; they

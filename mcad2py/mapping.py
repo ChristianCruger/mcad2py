@@ -264,6 +264,10 @@ FUNCTIONS = {
     "plnorm": "plnorm",
     "qlnorm": "qlnorm",
     "rlnorm": "rlnorm",
+    "dpois": "dpois",
+    "ppois": "ppois",
+    "qpois": "qpois",
+    "rpois": "rpois",
 }
 
 # Mathcad symbolic command keyword (first id of a <ml:command> sequence) ->

@@ -1560,9 +1560,15 @@ def contingtbl(tab):
 # Every argument goes through ``_reduce_dimensionless`` (via ``_num``/``_count``
 # for the plain-number parameters a draw needs): a worksheet routinely feeds
 # these a ratio Pint still carries as ``m/mm``, and a bare ``float()`` on that
-# reads the unreduced magnitude. The ``d``/``p``/``q`` wrappers return SciPy's
-# own result rather than coercing to ``float``, so passing a vector of ``x``
-# evaluates element-wise the way Mathcad's vectorize arrow expects.
+# reads the unreduced magnitude.
+#
+# The ``d``/``p``/``q`` wrappers return SciPy's own result rather than coercing
+# to ``float``, because Mathcad applies these **element-wise to a vector**
+# without needing a vectorize arrow -- ``dweibull(x, s)`` over a column of
+# measurements is an ordinary worksheet line, and it reaches here as one call
+# with an array ``x``. A ``float()`` around the result raises on exactly that
+# call, which is what the Weibull and Poisson blocks of ``probability.mcdx``
+# now pin.
 
 
 def _num(x):
@@ -1579,21 +1585,21 @@ def dnorm(x, mu=0.0, sigma=1.0):
     """Mathcad ``dnorm``: the normal probability *density* at ``x``."""
     from scipy.stats import norm
 
-    return float(norm.pdf(_reduce_dimensionless(x), float(mu), float(sigma)))
+    return norm.pdf(_reduce_dimensionless(x), _num(mu), _num(sigma))
 
 
 def pnorm(x, mu=0.0, sigma=1.0):
     """Mathcad ``pnorm``: the normal *cumulative* probability up to ``x``."""
     from scipy.stats import norm
 
-    return float(norm.cdf(_reduce_dimensionless(x), float(mu), float(sigma)))
+    return norm.cdf(_reduce_dimensionless(x), _num(mu), _num(sigma))
 
 
 def qnorm(p, mu=0.0, sigma=1.0):
     """Mathcad ``qnorm``: the normal quantile -- the inverse of :func:`pnorm`."""
     from scipy.stats import norm
 
-    return float(norm.ppf(float(_reduce_dimensionless(p)), float(mu), float(sigma)))
+    return norm.ppf(_reduce_dimensionless(p), _num(mu), _num(sigma))
 
 
 def rnorm(m, mu=0.0, sigma=1.0):
@@ -1605,21 +1611,21 @@ def dt(x, d):
     """Mathcad ``dt``: the Student's *t* density at ``x`` with ``d`` d.o.f."""
     from scipy.stats import t
 
-    return float(t.pdf(_reduce_dimensionless(x), float(d)))
+    return t.pdf(_reduce_dimensionless(x), _num(d))
 
 
 def pt(x, d):
     """Mathcad ``pt``: the Student's *t* cumulative probability up to ``x``."""
     from scipy.stats import t
 
-    return float(t.cdf(_reduce_dimensionless(x), float(d)))
+    return t.cdf(_reduce_dimensionless(x), _num(d))
 
 
 def qt(p, d):
     """Mathcad ``qt``: the Student's *t* quantile -- the inverse of :func:`pt`."""
     from scipy.stats import t
 
-    return float(t.ppf(float(_reduce_dimensionless(p)), float(d)))
+    return t.ppf(_reduce_dimensionless(p), _num(d))
 
 
 def rt(m, d):
@@ -1631,21 +1637,21 @@ def dweibull(x, s):
     """Mathcad ``dweibull``: the Weibull density (shape ``s``, unit scale)."""
     from scipy.stats import weibull_min
 
-    return float(weibull_min.pdf(_reduce_dimensionless(x), float(s)))
+    return weibull_min.pdf(_reduce_dimensionless(x), _num(s))
 
 
 def pweibull(x, s):
     """Mathcad ``pweibull``: the Weibull cumulative probability up to ``x``."""
     from scipy.stats import weibull_min
 
-    return float(weibull_min.cdf(_reduce_dimensionless(x), float(s)))
+    return weibull_min.cdf(_reduce_dimensionless(x), _num(s))
 
 
 def qweibull(p, s):
     """Mathcad ``qweibull``: the Weibull quantile (inverse of :func:`pweibull`)."""
     from scipy.stats import weibull_min
 
-    return float(weibull_min.ppf(float(_reduce_dimensionless(p)), float(s)))
+    return weibull_min.ppf(_reduce_dimensionless(p), _num(s))
 
 
 def rweibull(m, s):
@@ -2038,6 +2044,33 @@ def qlnorm(p, mu, sigma):
 def rlnorm(m, mu, sigma):
     """Mathcad ``rlnorm``: ``m`` random draws from a log-normal distribution."""
     return np.random.lognormal(_num(mu), _num(sigma), _count(m))
+
+
+def dpois(k, lamb):
+    """Mathcad ``dpois``: probability of exactly ``k`` events when the mean
+    rate is ``lambda``."""
+    from scipy.stats import poisson
+
+    return poisson.pmf(_reduce_dimensionless(k), _reduce_dimensionless(lamb))
+
+
+def ppois(k, lamb):
+    """Mathcad ``ppois``: cumulative probability of at most ``k`` events."""
+    from scipy.stats import poisson
+
+    return poisson.cdf(_reduce_dimensionless(k), _reduce_dimensionless(lamb))
+
+
+def qpois(p, lamb):
+    """Mathcad ``qpois``: the Poisson quantile -- the inverse of :func:`ppois`."""
+    from scipy.stats import poisson
+
+    return poisson.ppf(_reduce_dimensionless(p), _reduce_dimensionless(lamb))
+
+
+def rpois(m, lamb):
+    """Mathcad ``rpois``: ``m`` random draws from a Poisson distribution."""
+    return np.random.poisson(_num(lamb), _count(m))
 
 
 # --- Table search (match / lookup / vlookup / hlookup / vhlookup) -----------

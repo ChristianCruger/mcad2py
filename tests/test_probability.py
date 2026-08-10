@@ -1,11 +1,21 @@
 """Tests for the probability distribution family (``references/probability.mcdx``).
 
-PTC's own probability tutorial: the normal/Student-t/Weibull families were
-already covered by ``statistics.mcdx`` (``test_statistics.py``); this sheet is
-what pins the *rest* -- uniform, exponential, gamma, logistic, Cauchy,
-geometric, hypergeometric, binomial, negative binomial, beta, chi-squared, F,
-and log-normal, each with its full ``d``/``p``/``q``/``r`` set, plus the
-Mathcad-15 ``cnorm`` alias and a Monte Carlo simulation exercising ``Re``.
+PTC's own probability tutorial, and the sheet that completes the distribution
+catalogue: uniform, exponential, gamma, logistic, Cauchy, geometric,
+hypergeometric, binomial, negative binomial, beta, chi-squared, F, log-normal
+and Poisson, each with its full ``d``/``p``/``q``/``r`` set, plus the Mathcad-15
+``cnorm`` alias and a Monte Carlo simulation exercising ``Re``. The
+normal/Student-t/Weibull families are also covered by ``statistics.mcdx``
+(``test_statistics.py``), but their blocks here are what pin the *vector* call
+(below).
+
+* Mathcad applies a distribution function **element-wise to a vector** with no
+  vectorize arrow: ``dweibull(x, s)`` over a column of five measurements, or
+  ``dpois(k, lambda)`` over a column of counts, is an ordinary worksheet line
+  that reaches the runtime as one call with an array ``x``. The
+  ``d``/``p``/``q`` helpers therefore return SciPy's own result instead of
+  coercing to ``float`` -- a ``float()`` around it raises on exactly this call.
+  The Weibull and Poisson blocks are the fixture coverage for that.
 
 * Every ``r*`` draw, and anything computed *from* one downstream (a histogram's
   ``lower``/``upper`` bin edges, a Monte Carlo ``Prob`` estimate and the
@@ -38,12 +48,16 @@ from mcad2py.units import ureg
 REFERENCE = reference("probability")
 
 # Echoes fed by a random draw, or computed from one downstream: a different
-# sample every run, so there is no cached number to match.
+# sample every run, so there is no cached number to match. Indices are into the
+# sheet's echo order, so inserting a region shifts every later entry -- the
+# `rt(m, nu)` echo at 55 pushed the whole tail down by one.
 RANDOM = frozenset(
     {9, 13, 19, 28}            # rbinom / rbeta / rF / rchisq
-    | {55, 56, 57, 58}         # lower/upper bin edges of a random histogram
-    | {59, 62}                 # Monte Carlo Prob, and qlogis(Prob, ...)
-    | {67, 71, 75, 79, 83, 89} # rgamma / rgeom / rhypergeom / rbinom / rnbinom / rlnorm
+    | {55}                     # rt
+    | {56, 57, 58, 59}         # lower/upper bin edges of a random histogram
+    | {60, 63}                 # Monte Carlo Prob, and qlogis(Prob, ...)
+    | {68, 72, 76, 80, 84, 90} # rgamma / rgeom / rhypergeom / rbinom / rnbinom / rlnorm
+    | {94, 98}                 # rpois / rweibull
 )
 
 
@@ -58,7 +72,7 @@ def test_sheet_runs_end_to_end(sheet):
     """Nothing is dropped or unsupported, and every evaluated region echoes."""
     src, _, echoed = sheet
     assert "TODO unsupported" not in src
-    assert len(echoed) == 90
+    assert len(echoed) == 99
 
 
 def test_sheet_matches_cached_results(sheet):
@@ -80,7 +94,7 @@ def test_sheet_matches_cached_results(sheet):
             f"echo {index} ({echo_expr(region)}): {got} != {want}"
         )
         checked += 1
-    assert checked == 90 - len(RANDOM)
+    assert checked == 99 - len(RANDOM)
 
 
 def test_distributions_are_mutually_consistent():
@@ -194,4 +208,36 @@ def test_random_draws_have_the_right_shape_even_though_they_cannot_match(sheet):
     assert len(flat(echoed[13])) == 5   # rbeta(5, 6, 0.75)
     assert len(flat(echoed[19])) == 7   # rF(7, 2, 3)
     assert len(flat(echoed[28])) == 9   # rchisq(9, 3)
-    assert len(flat(echoed[89])) == 8   # rlnorm(8, mu, sigma)
+    assert len(flat(echoed[90])) == 8   # rlnorm(8, mu, sigma)
+    assert len(flat(echoed[94])) == 8   # rpois(8, 3)
+    assert len(flat(echoed[98])) == 7   # rweibull(7, 6.8)
+
+
+def test_distributions_apply_element_wise_to_a_vector(sheet):
+    """Mathcad needs no vectorize arrow to map a distribution over a column, so
+    the helper receives one call with an array ``x`` and must return an array.
+    The sheet's Weibull and Poisson blocks are the fixture form of this; here it
+    is checked directly, including against the scalar call it must agree with."""
+    from mcad2py.runtime import dpois, dweibull, ppois, pweibull
+
+    x = np.array([1.254, 0.965, 1.193, 0.802, 0.8])
+    density = dweibull(x, 6.8)
+    assert density.shape == x.shape
+    assert math.isclose(density[0], dweibull(1.254, 6.8), rel_tol=1e-14)
+    assert pweibull(x, 6.8).shape == x.shape
+
+    k = np.array([7.0, 3.0, 12.0, 9.0, 8.0])
+    assert dpois(k, 3).shape == k.shape
+    assert math.isclose(dpois(k, 3)[1], dpois(3, 3), rel_tol=1e-14)
+    assert ppois(k, 3).shape == k.shape
+
+
+def test_poisson_pmf_is_zero_indexed_and_sums_to_one():
+    """``dpois(k, lambda)`` is the probability of exactly ``k`` events, ``k``
+    starting at 0, so a long-enough prefix sums to 1."""
+    from mcad2py.runtime import dpois, ppois, qpois
+
+    assert math.isclose(sum(dpois(k, 3) for k in range(60)), 1.0, rel_tol=1e-12)
+    # q gives the smallest k whose cdf clears p (discrete, so >= not ==).
+    assert ppois(qpois(0.75, 3), 3) >= 0.75
+    assert math.isclose(ppois(0, 3), dpois(0, 3), rel_tol=1e-14)

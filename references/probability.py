@@ -2,7 +2,7 @@
 import math
 import matplotlib.pyplot as plt
 
-from mcad2py.runtime import mc_max, mc_min, disp, nth_root, ceil, floor, col, mean, stdev, histogram, dnorm, pnorm, qnorm, rnorm, dt, pt, qt, Re, cnorm, runif, dexp, pexp, qexp, rexp, dgamma, pgamma, qgamma, rgamma, dlogis, plogis, qlogis, rlogis, dcauchy, pcauchy, qcauchy, rcauchy, dgeom, pgeom, rgeom, dhypergeom, phypergeom, qhypergeom, rhypergeom, dbinom, pbinom, qbinom, rbinom, dnbinom, pnbinom, qnbinom, rnbinom, dbeta, pbeta, qbeta, rbeta, dchisq, pchisq, qchisq, rchisq, pF, qF, rF, dlnorm, plnorm, qlnorm, rlnorm, index_build, integral, summation, total, arange, sample, static_axis, plot_domain, plot_axis, plot_trace, vectorize
+from mcad2py.runtime import mc_max, mc_min, disp, nth_root, ceil, floor, col, mean, stdev, histogram, dnorm, pnorm, qnorm, rnorm, dt, pt, qt, rt, dweibull, pweibull, qweibull, rweibull, Re, cnorm, runif, dexp, pexp, qexp, rexp, dgamma, pgamma, qgamma, rgamma, dlogis, plogis, qlogis, rlogis, dcauchy, pcauchy, qcauchy, rcauchy, dgeom, pgeom, rgeom, dhypergeom, phypergeom, qhypergeom, rhypergeom, dbinom, pbinom, qbinom, rbinom, dnbinom, pnbinom, qnbinom, rnbinom, dbeta, pbeta, qbeta, rbeta, dchisq, pchisq, qchisq, rchisq, pF, qF, rF, dlnorm, plnorm, qlnorm, rlnorm, dpois, ppois, qpois, rpois, index_build, integral, summation, total, arange, sample, static_axis, plot_domain, plot_axis, plot_trace, vectorize
 from mcad2py.units import ureg
 
 
@@ -280,6 +280,12 @@ _ax.set_xlabel('x')
 _ax.set_ylabel('')
 _ax.legend()
 plt.show()
+
+# random number with student dist:
+
+m = 5
+
+print(rt(m, nu))
 
 # Example: Generating Random Numbers
 
@@ -697,3 +703,39 @@ print(qlnorm(p, mu, sigma))
 m = 8
 
 print(rlnorm(m, mu, sigma))
+
+# poison
+
+k = col(7, 3, 12, 9, 8)
+
+lambda_ = 3
+
+print(dpois(k, lambda_))
+
+print(ppois(k, lambda_))
+
+p = 0.75
+
+print(qpois(p, lambda_))
+
+m = 8
+
+print(rpois(m, lambda_))
+
+# Weibull
+
+x = col(1.254, 0.965, 1.193, 0.802, 0.8)
+
+s = 6.8
+
+print(dweibull(x, s))
+
+print(pweibull(x, s))
+
+p = 0.9
+
+print(qweibull(p, s))
+
+m = 7
+
+print(rweibull(m, s))

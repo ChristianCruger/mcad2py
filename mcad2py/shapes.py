@@ -87,6 +87,7 @@ _CALL_KINDS = {
     "rchisq": VECTOR,
     "rF": VECTOR,
     "rlnorm": VECTOR,
+    "rpois": VECTOR,
     # ``histogram`` is intentionally *not* listed: it returns an ``n x 2``
     # matrix for ``histogram(n, A)`` but a bare count vector for
     # ``histogram(intvls, A)``, and which one depends on the argument's shape.

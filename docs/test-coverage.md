@@ -305,11 +305,23 @@ Two **documented divergences** there, neither a bug:
 [tests/test_probability.py](../tests/test_probability.py) covers `references/probability.mcdx`, PTC's own
 probability tutorial and the fixture that completes the distribution catalogue `statistics.mcdx` started:
 uniform, exponential, gamma, logistic, Cauchy, geometric, hypergeometric, binomial, negative binomial,
-beta, chi-squared, F, and log-normal, each with its full `d`/`p`/`q`/`r` set, plus the Mathcad-15 `cnorm`
-alias (`pnorm(x, 0, 1)`) and `Re` (needed because the sheet wraps a Student-t density `Re(dt(x, v))`
-defensively). **90 evaluated regions**, 74 matching the cache to 1e-9 (SciPy's `ppf`/`cdf` round-trips
-aren't quite the ~1e-12 the closed-form families hit). Two things it exposed that weren't bugs in the new
-distributions themselves:
+beta, chi-squared, F, log-normal and Poisson, each with its full `d`/`p`/`q`/`r` set, plus the Mathcad-15
+`cnorm` alias (`pnorm(x, 0, 1)`) and `Re` (needed because the sheet wraps a Student-t density
+`Re(dt(x, v))` defensively). **99 evaluated regions**, 80 matching the cache to 1e-9 (SciPy's `ppf`/`cdf`
+round-trips aren't quite the ~1e-12 the closed-form families hit).
+
+The Poisson and Weibull blocks were added to the sheet after the rest, and they pin something none of
+the earlier blocks did: **Mathcad maps a distribution function over a vector with no vectorize arrow.**
+`dweibull(x, s)` over a column of five measurements, or `dpois(k, λ)` over a column of counts, is an
+ordinary worksheet line that reaches the runtime as a single call with an array `x`. The
+`norm`/`t`/`weibull` helpers predated that and wrapped their result in `float()`, which raises on
+exactly this call — they now return SciPy's result like every later family, and
+`test_distributions_apply_element_wise_to_a_vector` checks the array call against the scalar one it has
+to agree with. (Re-saving the sheet in Prime also renumbered every `region-id` and inserted an `rt(m, ν)`
+echo mid-sheet, shifting the tail of the test's index-based `RANDOM` set by one; the cached values of
+every pre-existing *deterministic* echo were verified unchanged across that re-save.)
+
+Two things the sheet exposed that weren't bugs in the distributions themselves:
 
 * `histogram` has a **second call shape**. `statistics.mcdx` only exercises `histogram(n, A)` (an `n × 2`
   midpoint/count matrix); this sheet also calls `histogram(intvls, A)` with an explicit boundary vector,
@@ -345,7 +357,7 @@ worksheet plausibly would:
 One **documented divergence**, the same shape as `statistics.mcdx`'s: every `r*` draw, and anything
 computed from one downstream (a random histogram's `lower`/`upper` bin edges, a Monte Carlo `Prob`
 estimate and the `qlogis` built from it), is a fresh sample each run and cannot reproduce a cached number
-— 16 of the 90 echoes (the test's `RANDOM` set). They still execute, so the code path is covered; the
+— 19 of the 99 echoes (the test's `RANDOM` set). They still execute, so the code path is covered; the
 `d`/`p`/`q` inverse relationships are checked directly instead (`test_distributions_are_mutually_consistent`).
 
 [tests/test_constants.py](../tests/test_constants.py) covers `references/Constants.mcdx`, which

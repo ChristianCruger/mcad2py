@@ -91,7 +91,7 @@ Legend: ✅ done · 🟡 partial · ⬜ not started · ⛔ out of scope (unlikel
 | **Solving & optimization** | 🟡 | `find` (numeric), `solve` (symbolic), `lsolve` (linear systems) | `root`, `polyroots`, `minerr`, `maximize` `minimize`, `Isolve` |
 | **Interpolation & prediction** | 🟡 | `linterp` | `cspline`/`pspline`/`lspline` + `interp`, `bicubic`/`bilinear`, `predict`, `sinterp` |
 | **Statistics** | ✅ | mean median mode gmean hmean, var Var stdev Stdev, skew kurt, percentile Rank histogram, corr cvar, Ftest Spear kendltau kendltau2 contingtbl | — (see `references/statistics.mcdx`). Lower-case `var`/`stdev` are the *population* forms, capitalised `Var`/`Stdev` the *sample* forms |
-| **Probability distributions** | ✅ | the `d/p/q/r` families for `norm` `t` `weibull` `unif` `exp` `gamma` `beta` `F` `chisq` `lnorm` `logis` `cauchy` `geom` `hypergeom` `binom` `nbinom`, plus `cnorm` (Mathcad-15's `pnorm(x,0,1)` alias) | `pois` and the remaining niche families (see `references/probability.mcdx`) |
+| **Probability distributions** | ✅ | the `d/p/q/r` families for `norm` `t` `weibull` `unif` `exp` `gamma` `beta` `F` `chisq` `lnorm` `logis` `cauchy` `geom` `hypergeom` `binom` `nbinom` `pois`, plus `cnorm` (Mathcad-15's `pnorm(x,0,1)` alias). All apply element-wise to a vector argument | the remaining niche families, finance-adjacent (see `references/probability.mcdx`) |
 | **Regression & smoothing** | 🟡 | `slope` `intercept` (least-squares line) | `line`, `regress` `loess`, `linfit` `genfit` `expfit` `logfit` `pwrfit` `sinfit`, `medsmooth` `ksmooth` `supsmooth` |
 | **Complex numbers** | 🟡 | `abs` (`|z|`), the imaginary literal `i` (`<ml:imag>`), `ln`/`log` returning complex for a negative real argument, `Re` | `Im` `arg` `csgn` `signum`, conjugate |
 | **Number theory & combinatorics** | ⬜ | — | `mod` `gcd` `lcm` (engineering-relevant), `combin` `permut` `!` factorial, `isprime` `fibonacci` |
@@ -116,8 +116,8 @@ Ranked by expected payoff × frequency in the kind of sheets this repo converts,
 
 1. **Cubic-spline interpolation** — `cspline`/`lspline`/`pspline` + `interp`, extending the existing
    `linterp`. Maps onto `scipy.interpolate`. Common for material curves. *(The distribution-family batch
-   that used to head this item is done — see `references/probability.mcdx`; only `pois` and out-of-scope
-   niche families remain.)*
+   that used to head this item is done — see `references/probability.mcdx`; only out-of-scope niche
+   families remain.)*
 2. **More solving** — `root` (scalar) and `polyroots`, then `minerr`/`maximize`/`minimize` (extend the
    `solve_block` machinery: `minerr` = least-squares residual, the optimizers = `scipy.optimize`).
 3. **Complex-number accessors** — `Im`, `arg`, conjugate. Trivial; occasionally needed. (The imaginary
