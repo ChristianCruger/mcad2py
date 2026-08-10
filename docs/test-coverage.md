@@ -437,10 +437,21 @@ that), so they drifted through several header changes unnoticed and were still e
 `units.py`. Refreshing them was a one-liner; the value of this test is that the commit which *changes
 codegen* is the one that fails, instead of a reader hitting a stale artifact months later.
 
-Two details. Notebooks are compared with their cell **ids stripped** — `nbformat` mints a fresh random
-id per cell on every run, so a byte comparison would fail on every notebook always, and regenerating
-to satisfy it would churn ~500 lines of `RC_col.ipynb` to change three; everything else, cell order and
-content included, is compared exactly. And the parametrization walks the *committed artifacts* rather
+Two things are normalised before comparing notebooks, both because they are irreproducible rather than
+unimportant. Cell **ids** are stripped — `nbformat` mints a fresh random id per cell on every run, so a
+byte comparison would fail on every notebook always, and regenerating to satisfy it would churn ~500
+lines of `RC_col.ipynb` to change three. And **embedded image payloads** are replaced with a marker:
+`Elastic_foundation_eq_line_spring.mcdx` carries a BMP (the only non-web raster in the fixtures), which
+the notebook backend re-encodes to PNG through Pillow, whose bytes are not stable across platforms or
+versions. That one is a **documented divergence** worth knowing about — it was found the hard way, as a
+CI failure on an artifact that was perfectly current: the committed notebook was generated on Windows
+and CI runs Linux, so the base64 blob differed while the picture was identical. The payload is compared
+as *pixels* instead (`test_reference_notebook_images_are_pixel_identical`, which decodes both sides and
+compares size, mode and `tobytes()`), so a genuinely changed image is still caught. Everything else,
+cell order and content included, is compared exactly. The `.py` artifacts need none of this — that
+backend emits a `# [image: …]` comment rather than embedding the data.
+
+The parametrization walks the *committed artifacts* rather
 than the worksheets, because not every sheet ships both (`shrinkage.mcdx` has only a notebook) —
 `test_every_artifact_has_a_worksheet` covers the reverse, since an artifact whose `.mcdx` was renamed
 would otherwise sit here with no test running against it at all.
