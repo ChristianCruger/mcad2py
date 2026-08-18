@@ -95,6 +95,9 @@ def _render_region(region: ir.Region) -> list[str]:
         echo = echo_expr(region)
         return ["", *print_lines(echo)] if echo is not None else []
 
+    if isinstance(region, ir.Statement):
+        return ["", expr_to_str(region.value)]
+
     if isinstance(region, ir.StatusControl):
         return ["", status_control_line(region)]
 

@@ -109,6 +109,11 @@ def _render_region(region: ir.Region) -> nbformat.NotebookNode | None:
         echo = echo_expr(region)
         return nbformat.v4.new_code_cell(echo) if echo is not None else None
 
+    if isinstance(region, ir.Statement):
+        # Trailing ";" so Jupyter suppresses the return value: the Mathcad
+        # region shows no result either.
+        return nbformat.v4.new_code_cell(expr_to_str(region.value) + ";")
+
     if isinstance(region, ir.StatusControl):
         return nbformat.v4.new_code_cell(status_control_line(region))
 

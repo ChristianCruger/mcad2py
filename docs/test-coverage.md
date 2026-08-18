@@ -455,3 +455,47 @@ The parametrization walks the *committed artifacts* rather
 than the worksheets, because not every sheet ships both (`shrinkage.mcdx` has only a notebook) —
 `test_every_artifact_has_a_worksheet` covers the reverse, since an artifact whose `.mcdx` was renamed
 would otherwise sit here with no test running against it at all.
+
+## `tests/test_seed.py` — `references/seed.mcdx`
+
+Pins Mathcad's own random number generator, which mcad2py now reproduces exactly, and the `r*`
+distribution family built on top of it. See the `seed.mcdx` entry in
+[mcdx-schema-notes.md](mcdx-schema-notes.md) for the algorithms and for how each was identified.
+
+The comparisons here use exact equality — not a tolerance, deliberately. These helpers are
+bit-for-bit Mathcad, so any drift at all is a real change and should fail.
+
+Echoes are paired with regions by **`region-id`**, not by position. The sheet is a long catalogue of
+near-identical three-region blocks and it keeps growing, so a positional index would break on every
+edit; the `blocks` fixture counts `print(` in each region's rendered lines to do the alignment.
+
+| Test | Pins |
+|------|------|
+| `test_generated_source_shape` | The three constructs this fixture is first to reach: a bare `Seed(1)` region that must not print, a bare call in a program body that must not become a return, and `M^<i> :=` as a `col_set`. Plus `range` renamed to `range_`. |
+| `test_seed_returns_the_previous_state` | Six consecutive `Seed` regions: `Seed(n) =` echoes the state left behind, not `n` and not a status code |
+| `test_rnorm_matches_mathcad` | One normal draw, and that the four uniforms after it are `U[4..7]` — the stream continuing, not restarting |
+| `test_distribution_draw_and_its_stream_position` | 13 `r*` functions, each as a `Seed(1)` / draw / `runif(4,0,1)` block. The trailing uniforms are the stricter half: they pin **consumption**, so a helper cannot return the right number off the wrong uniforms |
+| `test_rt_matches_mathcad` | `xfail(strict)` — the one unsolved member. Marked strict so it fails loudly if `rt` is ever cracked and the mark left behind |
+| `test_first_runif_block_diverges_by_mathcad_recalculation_order` | The one non-exact block, asserted as a divergence rather than hidden: reading order vs. Prime's own evaluation order |
+| `test_program_reseeds_each_pass` | The sheet's point: three passes of `Seed(1)` + `rnorm` give three identical columns, and that column is Mathcad's |
+| `test_histogram_of_the_repeated_set` | `hist` over the seeded sample |
+
+**What the worksheet does not reach.** Every `r*` block draws **one** value at **one** parameter set,
+so the array call, a dimensioned parameter, and every gamma shape split other than the single piece
+each block happened to use are all untested by the table above. The direct unit tests below the
+fixture ones cover: `Seed` on a Pint quantity and on an *unreduced* ratio (`7000 mm / 1 m`, where a
+bare `float()` would read 7000); a distribution parameter arriving the same two ways; `m > 1` drawing
+off one shared stream rather than restarting it; the gamma shape split at a whole shape, a half shape
+and a mixed 2.5; `rbinom` at `n = 20` (one uniform, not 20 Bernoulli trials) and across its whole
+support; `rlnorm` against `rnorm`, since the sheet has no `rlnorm` block; and the location/scale arms
+of `rcauchy` and `rlogis`, which the sheet only calls at 0 and 1.
+
+**Still on NumPy:** `rt` and `rhypergeom`. `rt`'s cached value is exactly `z1/z2`, six uniforms, but
+the block consumed seven — the seventh is unexplained, and guessing would silently negate half of all
+draws. `rhypergeom`'s only block is degenerate (zero white balls, no uniform drawn). Both are
+repeatable run to run because `Seed` reseeds NumPy too, but neither is Mathcad's number, and a sheet
+that calls either desynchronises the stream for everything after it.
+
+A sheet that never calls `Seed` **is** reproducible: Prime opens a new worksheet at state 1, the same
+as `Seed(1)`. `test_a_fresh_worksheet_starts_at_state_one` pins that the module-level generator starts
+there too.
