@@ -2,7 +2,7 @@
 import math
 import matplotlib.pyplot as plt
 
-from mcad2py.runtime import mc_max, col_set, matcol, histogram, Seed, rnorm, runif, index_build, arange, plot_axis, plot_trace
+from mcad2py.runtime import mc_max, col_set, matcol, histogram, Seed, rnorm, rt, rweibull, runif, rexp, rgamma, rlogis, rcauchy, rgeom, rhypergeom, rbinom, rnbinom, rbeta, rchisq, rF, rpois, index_build, arange, plot_axis, plot_trace
 from mcad2py.units import ureg
 
 
@@ -54,5 +54,103 @@ print(runif(20, 0, 1))
 print(Seed(1))
 
 print(rnorm(1, 0, 1))
+
+print(runif(4, 0, 1))
+
+# Seed return value seems to be the value of the previous rng seed?
+
+print(Seed(1))
+
+print(Seed(1))
+
+print(Seed(1))
+
+print(Seed(2))
+
+print(Seed(2))
+
+# Different random functions:
+
+print(Seed(1))
+
+print(rF(1, 1, 1))
+
+print(runif(4, 0, 1))
+
+print(Seed(1))
+
+print(rgeom(1, 0.5))
+
+print(runif(4, 0, 1))
+
+print(Seed(1))
+
+print(rgamma(1, 0.5))
+
+print(runif(4, 0, 1))
+
+print(Seed(1))
+
+print(rhypergeom(1, 0, 1, 1))
+
+print(runif(4, 0, 1))
+
+print(Seed(1))
+
+print(rbeta(1, 1, 1))
+
+print(runif(4, 0, 1))
+
+print(Seed(1))
+
+print(rcauchy(1, 0, 1))
+
+print(runif(4, 0, 1))
+
+print(Seed(1))
+
+print(rbinom(1, 1, 0.5))
+
+print(runif(4, 0, 1))
+
+print(Seed(1))
+
+print(rexp(1, 0.5))
+
+print(runif(4, 0, 1))
+
+print(Seed(1))
+
+print(rchisq(1, 0.5))
+
+print(runif(4, 0, 1))
+
+print(Seed(1))
+
+print(rlogis(1, 0, 1))
+
+print(runif(4, 0, 1))
+
+print(Seed(1))
+
+print(rnbinom(1, 1, 0.5))
+
+print(runif(4, 0, 1))
+
+print(Seed(1))
+
+print(rpois(1, 1))
+
+print(runif(4, 0, 1))
+
+print(Seed(1))
+
+print(rt(1, 1))
+
+print(runif(4, 0, 1))
+
+print(Seed(1))
+
+print(rweibull(1, 1))
 
 print(runif(4, 0, 1))

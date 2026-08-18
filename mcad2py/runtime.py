@@ -1607,10 +1607,14 @@ def _count(m):
 # ``runif`` draw consumes **two** ``rand()`` calls, packed into 30 bits --
 # confirmed exact (0.0 error) against ``references/seed.mcdx``'s cached values.
 #
-# Reproducing the stream is what makes ``Seed`` meaningful, so these two
-# helpers deliberately do *not* use NumPy's generator.  The remaining ``r*``
-# helpers still do; ``Seed`` reseeds NumPy as well, so they stay repeatable
-# run-to-run even though their values are not Mathcad's.
+# Reproducing the stream is what makes ``Seed`` meaningful, so the whole family
+# below deliberately does *not* use NumPy's generator.  ``rt`` and
+# ``rhypergeom`` are the two exceptions and still do -- ``seed.mcdx`` does not
+# pin either (``rt`` draws one uniform more than its value accounts for,
+# ``rhypergeom``'s only block is degenerate), and a guess there would be a
+# plausible wrong number rather than an error.  ``Seed`` reseeds NumPy as well,
+# so those two stay repeatable run-to-run even though their values are not
+# Mathcad's; a sheet that calls either desynchronises the stream after it.
 
 
 class _MathcadRNG:
@@ -1639,13 +1643,16 @@ _KM_C = math.sqrt(8.0 / math.e)
 def Seed(n):
     """Mathcad ``Seed``: restart the random stream at ``n``.
 
-    Returns ``1`` -- a status code, not the seed.  Prime caches ``1`` for both
-    ``Seed(1)`` and ``Seed(3)``.
+    Returns the generator's **previous** 32-bit state, not the new seed and not
+    a status code.  ``Seed(1)`` twice in a row therefore returns ``1`` the
+    second time, which is why the value looks constant until a draw moves the
+    stream; after ``runif(20, 0, 1)`` it returns that run's end state.
     """
     seed = _count(n)
+    previous = _RNG.state
     _RNG.state = seed & 0xFFFFFFFF
     np.random.seed(seed & 0xFFFFFFFF)
-    return 1
+    return previous
 
 
 def _standard_normal():
@@ -1658,6 +1665,78 @@ def _standard_normal():
         x = v / u
         if x * x <= -4.0 * math.log(u):
             return x
+
+
+def _exponential():
+    """One unit-mean exponential: Prime's inverse CDF on ``u``, not ``1 - u``."""
+    return -math.log(_RNG.unif())
+
+
+def _johnk_gamma(a):
+    """One Gamma(``a``, 1) draw for ``0 < a < 1``, by Johnk's ratio.
+
+    Two uniforms per attempt plus one exponential, so three in the common case
+    of a first-attempt accept -- which is the count ``seed.mcdx``'s
+    ``rchisq(1, 0.5)`` block measures.  The two powers are deliberately spelled
+    differently: ``exp(log(u)/a)`` for the first and ``**`` for the second is
+    what reproduces Prime's last two bits, and ``**`` for both does not.
+    """
+    while True:
+        x = math.exp(math.log(_RNG.unif()) / a)
+        y = _RNG.unif() ** (1.0 / (1.0 - a))
+        if x + y <= 1.0:
+            return (x / (x + y)) * _exponential()
+
+
+def _gamma(a):
+    """One Gamma(``a``, 1) draw, split the way Prime splits the shape.
+
+    Gamma shapes add, so Prime builds ``a`` from pieces it can draw directly:
+    the whole part as that many exponentials, a remaining half as one squared
+    normal over two, and any other fraction by :func:`_johnk_gamma`.  Each
+    piece is pinned by a ``seed.mcdx`` block -- ``a = 1`` (inside ``rnbinom``
+    and ``rbeta``), ``a = 1/2`` (``rgamma``), ``a = 1/4`` (``rchisq``) -- but
+    no block mixes two of them, so the *order* of the pieces is inferred.
+    """
+    whole = math.floor(a)
+    total = math.fsum(_exponential() for _ in range(int(whole)))
+    frac = a - whole
+    if frac == 0.0:
+        return total
+    if frac == 0.5:
+        z = _standard_normal()
+        return total + z * z / 2.0
+    return total + _johnk_gamma(frac)
+
+
+def _chisq(d):
+    """One chi-squared draw with ``d`` degrees of freedom: ``2 * Gamma(d/2)``.
+
+    Integer ``d`` therefore lands on the squared-normal arm -- ``chisq(1)`` is
+    exactly ``z**2``, which is what makes ``rF(1, 1, 1)`` two normals.
+    """
+    return 2.0 * _gamma(d / 2.0)
+
+
+def _poisson(lamb):
+    """One Poisson draw by Knuth's multiplication method.
+
+    Consumes ``k + 1`` uniforms to return ``k``.  ``seed.mcdx`` pins it twice:
+    directly as ``rpois(1, 1)``, and as the second half of ``rnbinom``.
+    """
+    limit = math.exp(-lamb)
+    product = 1.0
+    k = 0
+    while True:
+        product *= _RNG.unif()
+        if product < limit:
+            return k
+        k += 1
+
+
+def _draws(m, one):
+    """``m`` draws from a scalar generator, as an array."""
+    return np.array([one() for _ in range(_count(m))])
 
 
 def dnorm(x, mu=0.0, sigma=1.0):
@@ -1738,8 +1817,12 @@ def qweibull(p, s):
 
 
 def rweibull(m, s):
-    """Mathcad ``rweibull``: ``m`` random draws from a Weibull distribution."""
-    return np.random.weibull(_num(s), _count(m))
+    """Mathcad ``rweibull``: ``m`` random draws from a Weibull distribution.
+
+    Prime's inverse CDF, on ``u`` rather than ``1 - u``: ``(-ln u) ** (1/s)``.
+    """
+    s = _num(s)
+    return _draws(m, lambda: _exponential() ** (1.0 / s))
 
 
 def Re(x):
@@ -1816,8 +1899,12 @@ def qexp(p, r):
 
 
 def rexp(m, r):
-    """Mathcad ``rexp``: ``m`` random draws from an exponential distribution."""
-    return np.random.exponential(1.0 / _num(r), _count(m))
+    """Mathcad ``rexp``: ``m`` random draws from an exponential distribution.
+
+    Prime's inverse CDF: ``-ln(u) / r``, one uniform per draw.
+    """
+    r = _num(r)
+    return _draws(m, lambda: _exponential() / r)
 
 
 def dgamma(x, s):
@@ -1843,7 +1930,8 @@ def qgamma(p, s):
 
 def rgamma(m, s):
     """Mathcad ``rgamma``: ``m`` random draws from a gamma distribution."""
-    return np.random.gamma(_num(s), 1.0, _count(m))
+    s = _num(s)
+    return _draws(m, lambda: _gamma(s))
 
 
 def dlogis(x, loc, s):
@@ -1871,8 +1959,15 @@ def qlogis(p, loc, s):
 
 
 def rlogis(m, loc, s):
-    """Mathcad ``rlogis``: ``m`` random draws from a logistic distribution."""
-    return np.random.logistic(_num(loc), _num(s), _count(m))
+    """Mathcad ``rlogis``: ``m`` random draws from a logistic distribution.
+
+    Prime's inverse CDF: ``loc + s * ln(u / (1 - u))``.
+    """
+    loc, s = _num(loc), _num(s)
+    def one():
+        u = _RNG.unif()
+        return loc + s * math.log(u / (1.0 - u))
+    return _draws(m, one)
 
 
 def dcauchy(x, loc, s):
@@ -1898,8 +1993,12 @@ def qcauchy(p, loc, s):
 
 
 def rcauchy(m, loc, s):
-    """Mathcad ``rcauchy``: ``m`` random draws from a Cauchy distribution."""
-    return _num(loc) + _num(s) * np.random.standard_cauchy(_count(m))
+    """Mathcad ``rcauchy``: ``m`` random draws from a Cauchy distribution.
+
+    Prime's inverse CDF: ``loc + s * tan(pi * (u - 1/2))``.
+    """
+    loc, s = _num(loc), _num(s)
+    return _draws(m, lambda: loc + s * math.tan(math.pi * (_RNG.unif() - 0.5)))
 
 
 def dgeom(k, q):
@@ -1928,8 +2027,12 @@ def qgeom(p, q):
 
 def rgeom(m, q):
     """Mathcad ``rgeom``: ``m`` random draws (failures before first success)
-    from a geometric distribution."""
-    return np.random.geometric(_num(q), _count(m)) - 1
+    from a geometric distribution.
+
+    Prime's inverse CDF: ``floor(ln(u) / ln(1 - q))``.
+    """
+    denom = math.log(1.0 - _num(q))
+    return _draws(m, lambda: float(math.floor(math.log(_RNG.unif()) / denom)))
 
 
 def dhypergeom(k, a, b, n):
@@ -1989,8 +2092,25 @@ def qbinom(p, n, q):
 
 
 def rbinom(m, n, q):
-    """Mathcad ``rbinom``: ``m`` random draws from a binomial distribution."""
-    return np.random.binomial(_count(n), _num(q), _count(m))
+    """Mathcad ``rbinom``: ``m`` random draws from a binomial distribution.
+
+    Inverse CDF: walk the mass function until it covers ``u``, one uniform per
+    draw.  ``seed.mcdx`` only calls it with ``n = 1``, where this and a single
+    Bernoulli trial agree on both the value and the uniform count, so ``n > 1``
+    rests on the one-uniform count rather than on a cached number.
+    """
+    n, q = _count(n), _num(q)
+    def one():
+        u = _RNG.unif()
+        term = (1.0 - q) ** n
+        total = term
+        for k in range(n):
+            if u < total:
+                return float(k)
+            term *= (n - k) / (k + 1.0) * q / (1.0 - q)
+            total += term
+        return float(n)
+    return _draws(m, one)
 
 
 def dnbinom(k, n, q):
@@ -2018,8 +2138,14 @@ def qnbinom(p, n, q):
 
 def rnbinom(m, n, q):
     """Mathcad ``rnbinom``: ``m`` random draws from a negative-binomial
-    distribution."""
-    return np.random.negative_binomial(_count(n), _num(q), _count(m))
+    distribution.
+
+    Prime draws it as a gamma-Poisson mixture: a Gamma(``n``) rate scaled by
+    ``(1 - q) / q``, then one Poisson draw at that rate.
+    """
+    n, q = _num(n), _num(q)
+    scale = (1.0 - q) / q
+    return _draws(m, lambda: float(_poisson(_gamma(n) * scale)))
 
 
 def dbeta(x, s1, s2):
@@ -2044,8 +2170,15 @@ def qbeta(p, s1, s2):
 
 
 def rbeta(m, s1, s2):
-    """Mathcad ``rbeta``: ``m`` random draws from a beta distribution."""
-    return np.random.beta(_num(s1), _num(s2), _count(m))
+    """Mathcad ``rbeta``: ``m`` random draws from a beta distribution.
+
+    Built from two gamma draws, ``G(s1) / (G(s1) + G(s2))``.
+    """
+    s1, s2 = _num(s1), _num(s2)
+    def one():
+        a, b = _gamma(s1), _gamma(s2)
+        return a / (a + b)
+    return _draws(m, one)
 
 
 def dchisq(x, d):
@@ -2073,7 +2206,8 @@ def qchisq(p, d):
 
 def rchisq(m, d):
     """Mathcad ``rchisq``: ``m`` random draws from a chi-squared distribution."""
-    return np.random.chisquare(_num(d), _count(m))
+    d = _num(d)
+    return _draws(m, lambda: _chisq(d))
 
 
 def dF(x, d1, d2):
@@ -2098,8 +2232,14 @@ def qF(p, d1, d2):
 
 
 def rF(m, d1, d2):
-    """Mathcad ``rF``: ``m`` random draws from an F distribution."""
-    return np.random.f(_num(d1), _num(d2), _count(m))
+    """Mathcad ``rF``: ``m`` random draws from an F distribution.
+
+    The ratio of two chi-squared draws over their degrees of freedom.  For
+    ``d1 = d2 = 1`` that is two squared normals, which is the six-uniform
+    fingerprint ``seed.mcdx`` records.
+    """
+    d1, d2 = _num(d1), _num(d2)
+    return _draws(m, lambda: (_chisq(d1) / d1) / (_chisq(d2) / d2))
 
 
 def dlnorm(x, mu, sigma):
@@ -2129,8 +2269,13 @@ def qlnorm(p, mu, sigma):
 
 
 def rlnorm(m, mu, sigma):
-    """Mathcad ``rlnorm``: ``m`` random draws from a log-normal distribution."""
-    return np.random.lognormal(_num(mu), _num(sigma), _count(m))
+    """Mathcad ``rlnorm``: ``m`` random draws from a log-normal distribution.
+
+    The exponential of a normal draw.  ``seed.mcdx`` has no ``rlnorm`` block,
+    so the value follows from :func:`rnorm` rather than from a cached number.
+    """
+    mu, sigma = _num(mu), _num(sigma)
+    return _draws(m, lambda: math.exp(mu + sigma * _standard_normal()))
 
 
 def dpois(k, lamb):
@@ -2157,7 +2302,8 @@ def qpois(p, lamb):
 
 def rpois(m, lamb):
     """Mathcad ``rpois``: ``m`` random draws from a Poisson distribution."""
-    return np.random.poisson(_num(lamb), _count(m))
+    lamb = _num(lamb)
+    return _draws(m, lambda: float(_poisson(lamb)))
 
 
 # --- Table search (match / lookup / vlookup / hlookup / vhlookup) -----------

@@ -192,19 +192,28 @@ set — see `references/statistics.mcdx`), and so is the **probability distribut
 `binom`, `nbinom` and `pois` all have their `d`/`p`/`q`/`r` sets (a four-line `scipy.stats` wrap each),
 plus the Mathcad-15 `cnorm` alias (`pnorm(x, 0, 1)`) — see `references/probability.mcdx`. Only a few
 out-of-scope niche families (finance-adjacent) remain unmapped.
-**`Seed(n)` reproduces Mathcad's random stream exactly.** Prime's generator is the Microsoft C runtime
-`rand()`; `Seed` is `srand`; `runif` packs two `rand()` calls into 30 bits; `rnorm` is Kinderman-Monahan
-ratio of uniforms with the exact `sqrt(8/e)` constant. Those two helpers are byte-exact against
-`references/seed.mcdx`'s cache (0.0 error, including its 1000-element sample) and deliberately do *not*
-use NumPy. The other 15 `r*` helpers still do; `Seed` reseeds NumPy as well, so they stay repeatable
-run-to-run without being Mathcad's numbers. To crack another one, use the trick the schema note records:
-seed, draw *one* value, then `runif(4,0,1)` — where the stream resumes tells you how many uniforms the
-draw consumed, which identifies the method. Mathcad applies any of these
+**The random number family reproduces Mathcad's stream exactly**, all but two of it. Prime's generator
+is the Microsoft C runtime `rand()`; `Seed` is `srand`, and it **returns the previous 32-bit state**
+(not the seed, not a status code — running the LCG backwards from that echo is a useful debugging
+tool). `runif` packs two `rand()` calls into 30 bits; `rnorm` is Kinderman-Monahan ratio of uniforms
+with the exact `sqrt(8/e)` constant; the continuous families are inverse CDFs on `u` (never `1 - u`);
+`rpois` is Knuth multiplication; `rgamma`/`rchisq`/`rbeta`/`rF`/`rnbinom` are all built on one gamma
+whose shape Prime splits into exponentials, a squared normal for a half, and Johnk's ratio for any
+other fraction. Every one of those is byte-exact against `references/seed.mcdx`'s cache (0.0 error,
+including its 1000-element sample) and deliberately does *not* use NumPy — see the `seed.mcdx` schema
+note for the per-function table.
+Two remain on NumPy: **`rt`** (its value is exactly `z1/z2`, six uniforms, but the cached block
+consumed seven — the extra one is unexplained and guessing would silently negate half the draws) and
+**`rhypergeom`** (its only cached call is degenerate). `Seed` reseeds NumPy as well, so both stay
+repeatable run-to-run without being Mathcad's numbers, and a sheet calling either desynchronises the
+stream for everything after it. To crack one, use the trick the schema note records: seed, draw *one*
+value, then `runif(4,0,1)` — where the stream resumes tells you how many uniforms the draw consumed,
+which identifies the method. Mathcad applies any of these
 **element-wise to a vector with no vectorize arrow** (`dweibull(x, s)` over a column of measurements is
 an ordinary worksheet line), so a `d`/`p`/`q` helper returns SciPy's own result and must never wrap it
 in `float()` — that raises on exactly the array call. Two things there are not byte-reproducible:
-anything downstream of a **random** `r*` draw *other than* `runif`/`rnorm` (`rweibull`/`rt`/… — includes
-a Monte Carlo simulation's derived `Prob` and a random sample's histogram bin edges), and the four NR p-values, which
+anything downstream of an `rt` or `rhypergeom` draw (including a Monte Carlo simulation's derived
+`Prob` and a random sample's histogram bin edges), and the four NR p-values, which
 use a Chebyshev `erfcc` we deliberately don't reproduce (SciPy's exact `erfc` is the better number; they
 agree to ~1e-7).
 **Difference equations** (seeded iteration) are supported in all three shapes — scalar, a simultaneous

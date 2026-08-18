@@ -809,11 +809,63 @@ Confirmed against every cached value in the fixture at **0.0 absolute error**: t
 sheet's program builds. The constant is `sqrt(8/e)` exactly, **not** Numerical Recipes' rounded
 `1.7156` (they differ at the fifth decimal, which the cached values resolve).
 
-How the method was identified is worth recording, because the same trick works on any other `r*`
-function. `Seed(1)`, then `rnorm(1,0,1)`, then `runif(4,0,1)` — the four trailing uniforms came back
+How the method was identified is worth recording, because the same trick cracked the rest of the
+family. `Seed(1)`, then `rnorm(1,0,1)`, then `runif(4,0,1)` — the four trailing uniforms came back
 as `U[4..7]` of the seeded stream, so one normal draw had consumed exactly **four** uniforms. That
 count is the fingerprint: inverse-CDF would take one, Box-Muller two, sum-of-12 twelve. Four means two
 ratio-of-uniforms attempts, the first rejected.
+
+### The rest of the `r*` family
+
+The sheet repeats that three-region block — `Seed(1)`, one draw, `runif(4,0,1)` — once per function.
+Writing `U[k]` for the uniform stream after `Seed(1)`, the trailing four land at offset `k`, which is
+the draw's consumption; the value then identifies the method uniquely. All of the following are exact
+to the last bit against the cache.
+
+| function | uniforms | how Prime draws it |
+|---|---|---|
+| `rexp(m, r)` | 1 | `-ln(u) / r` |
+| `rweibull(m, s)` | 1 | `(-ln u) ** (1/s)` |
+| `rlogis(m, l, s)` | 1 | `l + s * ln(u / (1 - u))` |
+| `rcauchy(m, l, s)` | 1 | `l + s * tan(pi * (u - 1/2))` |
+| `rgeom(m, q)` | 1 | `floor(ln(u) / ln(1 - q))` |
+| `rbinom(m, n, q)` | 1 | inverse CDF, walking the mass function |
+| `rpois(m, lam)` | k+1 | Knuth multiplication: multiply uniforms until the product drops below `exp(-lam)` |
+| `rnbinom(m, n, q)` | 1 + k+1 | gamma-Poisson mixture: `Poisson(Gamma(n) * (1-q)/q)` |
+| `rgamma(m, s)` | varies | see the shape split below |
+| `rchisq(m, d)` | varies | `2 * Gamma(d/2)` |
+| `rbeta(m, a, b)` | varies | `G(a) / (G(a) + G(b))` |
+| `rF(m, d1, d2)` | 6 at (1,1) | `(chisq(d1)/d1) / (chisq(d2)/d2)` |
+
+Every continuous inverse CDF above is on `u`, **not** `1 - u`. The two differ only in the stream, not
+in the distribution, so a cached value is the only way to tell — and each of these five pins it.
+
+**The gamma shape split.** Gamma shapes add, so Prime builds `Gamma(a)` from pieces it can draw
+directly, and three separate blocks each pin one piece:
+
+- whole part → that many exponentials (`rnbinom` and `rbeta` reach `a = 1`, one uniform);
+- a remaining half → `z**2 / 2`, one normal (`rgamma(1, 0.5)`, four uniforms);
+- any other fraction → **Johnk's ratio**, two uniforms per attempt plus one exponential
+  (`rchisq(1, 0.5)` is `2 * Gamma(0.25)`, three uniforms).
+
+No block mixes two pieces, so the *order* of the pieces is inferred rather than measured. Johnk's two
+powers must be spelled differently to reproduce Prime's last two bits: `exp(log(u)/a)` for the first
+and `**` for the second. `**` for both is off by 2 ulp, which the cached `rchisq` resolves.
+
+Because integer `d` lands on the half arm, `chisq(1)` is exactly `z**2` — which is why `rF(1,1,1)` is
+two normals and comes out as `(z1/z2)**2`.
+
+**`rt` is not solved.** Its cached value is exactly `z1 / z2`, two normals and six uniforms, but the
+block consumed **seven**. The seventh is drawn after the value is formed. One cached draw cannot say
+whether it flips the sign or is discarded, and a wrong guess would silently negate half of all draws,
+so `rt` stays on NumPy. One more block at a different seed would settle it: compute `z1/z2` from that
+seed and see whether the cached `rt` keeps or flips the sign.
+
+**`rhypergeom` is untested.** The sheet calls it as `rhypergeom(1, 0, 1, 1)` — zero white balls, so
+the answer is a deterministic 0 and no uniform is drawn. It stays on NumPy.
+
+**`rlnorm` has no block.** It is `exp(rnorm(...))`, which follows from `rnorm` rather than from a
+cached number.
 
 Three region/statement shapes appear here for the first time.
 
@@ -821,7 +873,12 @@ Three region/statement shapes appear here for the first time.
   `<ml:define>`, no `<ml:eval>`. Mathcad runs it and displays nothing, so it becomes `ir.Statement`
   and emits a plain call. Wrapping it in `print` would invent output the sheet never shows. The same
   call *with* `=` (an `<ml:eval>`) is an ordinary evaluation and echoes.
-- **`Seed(n)` returns `1`, not `n`.** A status code: `Seed(3)` also caches `1`.
+- **`Seed(n)` returns the generator's *previous* 32-bit state**, not `n` and not a status code.
+  Six consecutive `Seed` regions on the sheet make it unambiguous: after a `Seed(1)` the next
+  `Seed(1)` echoes `1`, and after a `Seed(2)` the next echoes `2`, while a `Seed(1)` placed after a
+  20-element `runif` run echoes that run's end state (`2617919885`). Running the LCG **backwards**
+  from such an echo recovers where a block started, which is how the recalculation-order divergence
+  below was found.
 - **A bare call above the last line of a program body is a statement, not a return.** Mathcad's
   implicit return is a block's *final* line only. `Seed(1)` at the top of a `for` body previously
   became `return Seed(1)` and swallowed the two lines below it. `ir.ExprStmt` is that line.
@@ -833,6 +890,22 @@ One more thing this sheet is the first to hit: it names a variable **`range`** (
 which shadows the Python builtin for every line below it. `sanitize()` now suffixes `_` on any name
 that collides with a Python keyword or builtin. Two existing fixtures were already affected —
 `probability.mcdx` was emitting both `range = …` and `int = …`.
+
+### One divergence: Prime's recalculation order
+
+Region 13 is the bare `Seed(1)`; region 14 draws `runif(20, 0, 1)` directly below it. Mathcad's cache
+for region 14 does **not** start at state 1. Running the LCG backwards 40 steps from region 15's
+echoed state gives 1365253, which is 5556 `rand()` calls past state 1 — exactly one `Seed(1)` plus
+`rnorm(1000)`, i.e. one pass of the `Same` program *above* region 13. So Prime evaluated the bare
+`Seed` region before the program rather than in reading order.
+
+Generated code runs in reading order and therefore starts region 14 at state 1. This is Prime's
+evaluation order, not a generator bug, and it is confined to those two regions: region 15 reseeds and
+every block after it is exact. `tests/test_seed.py` pins the divergence rather than hiding it — it
+asserts the two values differ, then reproduces Mathcad's by replaying the program pass first.
+
+A useful side effect: 5556 rands for 1000 normals is itself a check on the Kinderman-Monahan
+acceptance rate, and our `rnorm` lands on the same state to the bit.
 
 The file is a **Prime 12** worksheet and still declares `worksheet50`/`math50`, like every other
 fixture, so nothing in the parser needed a version check.
