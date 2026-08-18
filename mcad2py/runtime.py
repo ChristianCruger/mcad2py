@@ -671,6 +671,24 @@ def vec_set(vec, index, value):
     return _consolidate(vec)
 
 
+def col_set(mat, index, values):
+    """Assign a whole column of a growable program matrix (``M^<i> := v``).
+
+    The column form of :func:`vec_set`, and it shares that helper's growth
+    rules: ``mat`` starts as ``None`` (codegen pre-declares it), the matrix
+    auto-grows to fit, gaps zero-fill, and the result is consolidated back to a
+    fused Pint array once homogeneous. ``values`` goes through
+    :func:`_to_object_matrix` so a dimensioned column keeps its units per
+    element rather than being flattened to magnitudes.
+    """
+    k = _as_int(index)
+    vals = _to_object_matrix(values).reshape(-1)
+    mat = _grow_2d(_explode(mat), len(vals), k + 1)
+    for row in range(len(vals)):
+        mat[row, k] = vals[row]
+    return _consolidate(mat)
+
+
 def _to_object_matrix(x):
     """A per-element object array of ``x`` (Pint scalars kept with their units).
 
@@ -1581,6 +1599,67 @@ def _count(m):
     return int(_reduce_dimensionless(m))
 
 
+# ---------------------------------------------------------------------------
+# Mathcad's own random number generator
+#
+# Prime's generator is the Microsoft C runtime ``rand()``: a 32-bit LCG whose
+# output is bits 16..30 of the state.  ``Seed(n)`` is ``srand(n)``.  One
+# ``runif`` draw consumes **two** ``rand()`` calls, packed into 30 bits --
+# confirmed exact (0.0 error) against ``references/seed.mcdx``'s cached values.
+#
+# Reproducing the stream is what makes ``Seed`` meaningful, so these two
+# helpers deliberately do *not* use NumPy's generator.  The remaining ``r*``
+# helpers still do; ``Seed`` reseeds NumPy as well, so they stay repeatable
+# run-to-run even though their values are not Mathcad's.
+
+
+class _MathcadRNG:
+    """The Microsoft C runtime ``rand()``, which is Prime's generator."""
+
+    def __init__(self, seed: int = 1) -> None:
+        self.state = seed & 0xFFFFFFFF
+
+    def rand(self) -> int:
+        """One 15-bit ``rand()`` output."""
+        self.state = (self.state * 214013 + 2531011) & 0xFFFFFFFF
+        return (self.state >> 16) & 0x7FFF
+
+    def unif(self) -> float:
+        """One uniform on [0, 1), from two ``rand()`` calls (30 bits)."""
+        return (self.rand() * 32768 + self.rand()) / 1073741824.0
+
+
+_RNG = _MathcadRNG(1)
+
+# sqrt(8/e), the Kinderman-Monahan ratio-of-uniforms constant.  Mathcad uses
+# the exact value, not Numerical Recipes' rounded 1.7156.
+_KM_C = math.sqrt(8.0 / math.e)
+
+
+def Seed(n):
+    """Mathcad ``Seed``: restart the random stream at ``n``.
+
+    Returns ``1`` -- a status code, not the seed.  Prime caches ``1`` for both
+    ``Seed(1)`` and ``Seed(3)``.
+    """
+    seed = _count(n)
+    _RNG.state = seed & 0xFFFFFFFF
+    np.random.seed(seed & 0xFFFFFFFF)
+    return 1
+
+
+def _standard_normal():
+    """One N(0, 1) draw by Kinderman-Monahan ratio of uniforms, as Prime does."""
+    while True:
+        u = _RNG.unif()
+        if u <= 0.0:
+            continue
+        v = _KM_C * (_RNG.unif() - 0.5)
+        x = v / u
+        if x * x <= -4.0 * math.log(u):
+            return x
+
+
 def dnorm(x, mu=0.0, sigma=1.0):
     """Mathcad ``dnorm``: the normal probability *density* at ``x``."""
     from scipy.stats import norm
@@ -1603,8 +1682,12 @@ def qnorm(p, mu=0.0, sigma=1.0):
 
 
 def rnorm(m, mu=0.0, sigma=1.0):
-    """Mathcad ``rnorm``: ``m`` random draws from a normal distribution."""
-    return np.random.normal(_num(mu), _num(sigma), _count(m))
+    """Mathcad ``rnorm``: ``m`` random draws from a normal distribution.
+
+    Byte-exact against Prime for a given :func:`Seed`.
+    """
+    mu, sigma = _num(mu), _num(sigma)
+    return np.array([mu + sigma * _standard_normal() for _ in range(_count(m))])
 
 
 def dt(x, d):
@@ -1703,8 +1786,12 @@ def qunif(p, a, b):
 
 
 def runif(m, a, b):
-    """Mathcad ``runif``: ``m`` random draws from a uniform distribution."""
-    return np.random.uniform(_num(a), _num(b), _count(m))
+    """Mathcad ``runif``: ``m`` random draws from a uniform distribution.
+
+    Byte-exact against Prime for a given :func:`Seed`.
+    """
+    a, b = _num(a), _num(b)
+    return np.array([a + (b - a) * _RNG.unif() for _ in range(_count(m))])
 
 
 def dexp(x, r):

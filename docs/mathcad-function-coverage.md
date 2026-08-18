@@ -180,4 +180,9 @@ structural worksheet converter.
 - The four Numerical Recipes p-values (`Spear`'s `probd`, `kendltau`/`kendltau2`'s `prob`, `Ftest`'s
   `p`) match Mathcad only to ~1e-7: it uses NR's Chebyshev `erfcc`/continued-fraction `betai`, we use
   SciPy's exact `erfc`/`betainc`. Deliberate — see [test-coverage.md](test-coverage.md).
-- `rnorm`/`rweibull`/`rt` are **random**, so no sheet built on them can reproduce its cached numbers.
+- `Seed`, `runif` and `rnorm` reproduce Mathcad's stream **exactly** (the MS C runtime `rand()`, plus
+  Kinderman-Monahan for the normal — see the `seed.mcdx` note in
+  [mcdx-schema-notes.md](mcdx-schema-notes.md)). The other 15 `r*` functions (`rweibull`, `rt`,
+  `rbinom`, …) still draw from NumPy: repeatable run-to-run, since `Seed` reseeds NumPy too, but not
+  Mathcad's numbers, so a sheet built on one cannot reproduce its cached values. Each is crackable the
+  same way `rnorm` was — seed, draw one value, then `runif(4,0,1)` to count the uniforms it consumed.

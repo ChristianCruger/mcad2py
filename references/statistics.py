@@ -116,7 +116,7 @@ print(disp(u))
 
 i = arange(0, N - 1, 1)
 
-range = index_build(i, lambda i: i)
+range_ = index_build(i, lambda i: i)
 
 upper = index_build(i, lambda i: u)
 
@@ -125,10 +125,10 @@ data_mean = index_build(i, lambda i: m_s)
 lower = index_build(i, lambda i: l)
 
 _fig, _ax = plt.subplots()
-_ax.plot(*plot_trace(plot_axis(range, None), plot_axis(data, None)), label='range', color='#662D91')
-_ax.plot(*plot_trace(plot_axis(range, None), plot_axis(upper, None)), label='range', color='#FF0000')
-_ax.plot(*plot_trace(plot_axis(range, None), plot_axis(data_mean, None)), label='range', color='#2E3192')
-_ax.plot(*plot_trace(plot_axis(range, None), plot_axis(lower, None)), label='range', color='#ED1D2F')
+_ax.plot(*plot_trace(plot_axis(range_, None), plot_axis(data, None)), label='range_', color='#662D91')
+_ax.plot(*plot_trace(plot_axis(range_, None), plot_axis(upper, None)), label='range_', color='#FF0000')
+_ax.plot(*plot_trace(plot_axis(range_, None), plot_axis(data_mean, None)), label='range_', color='#2E3192')
+_ax.plot(*plot_trace(plot_axis(range_, None), plot_axis(lower, None)), label='range_', color='#ED1D2F')
 _ax.axhline(0, color='0.6', linewidth=0.8)
 _ax.axvline(0, color='0.6', linewidth=0.8)
 _ax.grid(True, alpha=0.3)
@@ -980,11 +980,11 @@ batch1 = vlookup(1, Batch, 1)
 
 batch2 = vlookup(2, Batch, 1)
 
-range = index_build(i, lambda i: i)
+range_ = index_build(i, lambda i: i)
 
 _fig, _ax = plt.subplots()
-_ax.plot(*plot_trace(plot_axis(range, None), plot_axis(batch1, None)), label='range', color='#00008B')
-_ax.plot(*plot_trace(plot_axis(range, None), plot_axis(batch2, None)), label='range', color='#FF0000')
+_ax.plot(*plot_trace(plot_axis(range_, None), plot_axis(batch1, None)), label='range_', color='#00008B')
+_ax.plot(*plot_trace(plot_axis(range_, None), plot_axis(batch2, None)), label='range_', color='#FF0000')
 _ax.axhline(0, color='0.6', linewidth=0.8)
 _ax.axvline(0, color='0.6', linewidth=0.8)
 _ax.grid(True, alpha=0.3)

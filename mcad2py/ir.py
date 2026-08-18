@@ -222,6 +222,17 @@ class Return(Stmt):
 
 
 @dataclass
+class ExprStmt(Stmt):
+    """A bare call inside a program body, run for its effect.
+
+    Mathcad's implicit return is the *last* line of a block only; a bare
+    expression above it is just a call (``Seed(1)`` at the top of a loop).
+    """
+
+    value: Expr
+
+
+@dataclass
 class TryCatch(Stmt):
     """``try: … except Exception: …`` (Mathcad ``<ml:tryCatch>``)."""
 
@@ -406,6 +417,21 @@ class Evaluate(Region):
 
     value: Expr
     display_unit: Expr | None = None
+    source: SourceRef | None = None
+
+
+@dataclass
+class Statement(Region):
+    """A bare call region with no ``=``: Mathcad runs it and shows no result.
+
+    Prime writes this as an ``<ml:apply>`` directly under ``<math>`` -- no
+    ``<ml:define>``, no ``<ml:eval>``. ``Seed(1)`` on its own line is the case
+    that motivated it: it is called for its effect on the random stream, and
+    the sheet displays nothing. Wrapping it in ``print`` would invent output
+    the worksheet never shows.
+    """
+
+    value: Expr
     source: SourceRef | None = None
 
 

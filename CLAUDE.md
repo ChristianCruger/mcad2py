@@ -76,6 +76,14 @@ adding support for a new XML construct.
   scaled override divides down. Because they are pre-built Pint quantities, every generated module takes
   the one shared registry from [units.py](mcad2py/units.py) — Pint refuses to combine quantities from two
   registries.
+- A worksheet name that collides with a Python keyword or builtin gets a `_` suffix (`range` →
+  `range_`). `sanitize()` does it; the one exception is a **builtin call head**, which must reach the
+  `FUNCTIONS` lookup literally (Mathcad's `if` is a Python keyword, and `max`/`min`/`sum` are builtins
+  that `FUNCTIONS` already remaps).
+- A **bare call region** — an `<ml:apply>` under `<math>` with no `<ml:define>` and no `<ml:eval>`, e.g.
+  `Seed(1)` on its own line — is `ir.Statement` and emits a plain call. Mathcad shows no result for it,
+  so printing would invent output. Inside a program body the same shape is `ir.ExprStmt`: Mathcad's
+  implicit return is a block's *last* line only.
 - Unknown/unsupported constructs emit a visible `# TODO unsupported: <note>` so output still
   loads — never silently drop a region. An echo is built through `print_lines`, which lifts such a note
   onto its own line: `print(None  # TODO …)` would close its parenthesis *inside* the comment and stop
@@ -183,12 +191,20 @@ set — see `references/statistics.mcdx`), and so is the **probability distribut
 `weibull`, `unif`, `exp`, `gamma`, `beta`, `F`, `chisq`, `lnorm`, `logis`, `cauchy`, `geom`, `hypergeom`,
 `binom`, `nbinom` and `pois` all have their `d`/`p`/`q`/`r` sets (a four-line `scipy.stats` wrap each),
 plus the Mathcad-15 `cnorm` alias (`pnorm(x, 0, 1)`) — see `references/probability.mcdx`. Only a few
-out-of-scope niche families (finance-adjacent) remain unmapped. Mathcad applies any of these
+out-of-scope niche families (finance-adjacent) remain unmapped.
+**`Seed(n)` reproduces Mathcad's random stream exactly.** Prime's generator is the Microsoft C runtime
+`rand()`; `Seed` is `srand`; `runif` packs two `rand()` calls into 30 bits; `rnorm` is Kinderman-Monahan
+ratio of uniforms with the exact `sqrt(8/e)` constant. Those two helpers are byte-exact against
+`references/seed.mcdx`'s cache (0.0 error, including its 1000-element sample) and deliberately do *not*
+use NumPy. The other 15 `r*` helpers still do; `Seed` reseeds NumPy as well, so they stay repeatable
+run-to-run without being Mathcad's numbers. To crack another one, use the trick the schema note records:
+seed, draw *one* value, then `runif(4,0,1)` — where the stream resumes tells you how many uniforms the
+draw consumed, which identifies the method. Mathcad applies any of these
 **element-wise to a vector with no vectorize arrow** (`dweibull(x, s)` over a column of measurements is
 an ordinary worksheet line), so a `d`/`p`/`q` helper returns SciPy's own result and must never wrap it
 in `float()` — that raises on exactly the array call. Two things there are not byte-reproducible:
-anything downstream of a **random** `r*` draw (`rnorm`/`rweibull`/`rt`/… — includes a Monte Carlo
-simulation's derived `Prob` and a random sample's histogram bin edges), and the four NR p-values, which
+anything downstream of a **random** `r*` draw *other than* `runif`/`rnorm` (`rweibull`/`rt`/… — includes
+a Monte Carlo simulation's derived `Prob` and a random sample's histogram bin edges), and the four NR p-values, which
 use a Chebyshev `erfcc` we deliberately don't reproduce (SciPy's exact `erfc` is the better number; they
 agree to ~1e-7).
 **Difference equations** (seeded iteration) are supported in all three shapes — scalar, a simultaneous

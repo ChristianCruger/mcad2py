@@ -265,6 +265,12 @@ def _parse_math(math_elem: ET.Element) -> ir.Region:
         head = next(iter(inner), None)
         if head is not None and localname(head.tag) == "equal":
             return ir.SymbolicEquation(equation=_to_equation(parse_expr(inner)))
+        # A bare function call with no <ml:eval> around it -- Mathcad runs it
+        # and shows no result. ``Seed(1)`` on its own line is the case: it is
+        # called for its effect on the random stream. Printing it would invent
+        # output the sheet never displays.
+        if head is not None and localname(head.tag) == "id":
+            return ir.Statement(value=parse_expr(inner))
 
     # Other bare expression region -> treat as evaluation.
     return ir.Evaluate(value=parse_expr(inner), display_unit=None)

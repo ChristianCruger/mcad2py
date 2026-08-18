@@ -366,6 +366,12 @@ def _stmt_lines_raw(stmt: ir.Stmt, indent: int) -> list[str]:
                 f"({expr_to_str(target.row)}, {expr_to_str(target.col)}), "
                 f"{expr_to_str(value)})"
             ]
+        if isinstance(target, ir.MatCol):
+            base = expr_to_str(target.base)
+            return [
+                f"{pad}{base} = col_set({base}, {expr_to_str(target.index)}, "
+                f"{expr_to_str(value)})"
+            ]
         return [f"{pad}{expr_to_str(target)} = {expr_to_str(value)}"]
     if isinstance(stmt, ir.ForLoop):
         lines = [f"{pad}for {stmt.var.py} in {expr_to_str(stmt.iterable)}:"]
@@ -381,6 +387,8 @@ def _stmt_lines_raw(stmt: ir.Stmt, indent: int) -> list[str]:
             inner = _block_lines(body, indent + 1)
             lines += inner if inner else [f"{pad}    pass"]
         return lines
+    if isinstance(stmt, ir.ExprStmt):
+        return [f"{pad}{expr_to_str(stmt.value)}"]
     if isinstance(stmt, ir.Return):
         return [f"{pad}return {expr_to_str(stmt.value)}"]
     if isinstance(stmt, ir.TryCatch):
@@ -402,7 +410,7 @@ def _growable_names(block: ir.ProgramBlock) -> list[str]:
     def scan(b: ir.ProgramBlock) -> None:
         for stmt in b.statements:
             if isinstance(stmt, ir.LocalAssign) and isinstance(
-                stmt.target, (ir.Index, ir.Index2D)
+                stmt.target, (ir.Index, ir.Index2D, ir.MatCol)
             ):
                 base = stmt.target.base
                 if isinstance(base, ir.Name) and base.py not in names:

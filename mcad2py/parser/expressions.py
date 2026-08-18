@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import builtins
+import keyword
 import xml.etree.ElementTree as ET
 from dataclasses import replace
 
 from .. import ir
-from ..mapping import GREEK, OPERATOR_CALLS, OPERATOR_TAGS
+from ..mapping import FUNCTIONS, GREEK, OPERATOR_CALLS, OPERATOR_TAGS
 from .namespaces import localname
 
 
@@ -36,8 +38,19 @@ def _collect_identifier(elem: ET.Element, parts: list[str]) -> None:
             parts.append(child.tail)
 
 
-def sanitize(name: str) -> str:
-    """Turn a Mathcad display name into a valid Python identifier."""
+# Names that are legal in Mathcad but would shadow something the generated
+# module needs. ``range`` is the one a real worksheet hits (``range[n] := n``
+# in ``references/seed.mcdx``): unrenamed it shadows the builtin for every
+# line below it.
+_PY_SHADOW = frozenset(dir(builtins)) | frozenset(keyword.kwlist)
+
+
+def sanitize(name: str, deshadow: bool = True) -> str:
+    """Turn a Mathcad display name into a valid Python identifier.
+
+    Pass ``deshadow=False`` for a name that must stay literal for a table
+    lookup -- a builtin call head, which is matched against ``FUNCTIONS``.
+    """
     out: list[str] = []
     for ch in name:
         if ch in GREEK:
@@ -51,6 +64,8 @@ def sanitize(name: str) -> str:
         result = "_"
     if result[0].isdigit():
         result = "_" + result
+    if deshadow and result in _PY_SHADOW:
+        result += "_"
     return result
 
 
@@ -142,7 +157,13 @@ def _parse_apply(elem: ET.Element) -> ir.Expr:
         # Sanitize so a user function called by a Greek/subscripted name
         # (``σ_s`` -> ``sigma_s``) matches its definition. Builtins are ASCII,
         # so sanitize leaves them unchanged for the FUNCTIONS lookup.
-        name = sanitize(read_identifier(head))
+        # A builtin's name must reach the lookups below literally, so the
+        # shadow guard is skipped for one -- Mathcad's ``if`` is a Python
+        # keyword, and ``max``/``min``/``sum`` are builtins that ``FUNCTIONS``
+        # already remaps (to ``mc_max`` and friends).
+        name = sanitize(read_identifier(head), deshadow=False)
+        if name != "if" and name not in FUNCTIONS:
+            name = sanitize(name)
         # Mathcad's inline ``if(cond, then, else)`` (a KEYWORD-labelled head) is
         # a conditional *expression*, not a call -> reuse the Program/ternary IR.
         if name == "if":
@@ -440,10 +461,13 @@ def _program_lines(elem: ET.Element) -> list[ET.Element]:
 
 def _parse_program_block(elem: ET.Element) -> ir.ProgramBlock:
     """Parse an imperative ``<ml:program>`` into a :class:`ir.ProgramBlock`."""
-    return ir.ProgramBlock(statements=[_parse_stmt(c) for c in _program_lines(elem)])
+    lines = _program_lines(elem)
+    return ir.ProgramBlock(
+        statements=[_parse_stmt(c, c is lines[-1]) for c in lines]
+    )
 
 
-def _parse_stmt(child: ET.Element) -> ir.Stmt:
+def _parse_stmt(child: ET.Element, is_last: bool = True) -> ir.Stmt:
     tag = localname(child.tag)
     if tag == "localDefine":
         kids = list(child)
@@ -469,8 +493,12 @@ def _parse_stmt(child: ET.Element) -> ir.Stmt:
             body=_parse_program_block(kids[0]),
             handler=_parse_program_block(kids[1]),
         )
-    # A bare expression as a statement is the program's (or branch's) value --
-    # Mathcad's implicit return.
+    # A bare expression is Mathcad's implicit return -- but only on the block's
+    # *last* line. Anywhere above it the call runs for its effect and the block
+    # carries on (``Seed(1)`` at the top of a loop body in
+    # ``references/seed.mcdx``); returning there would swallow every line below.
+    if not is_last:
+        return ir.ExprStmt(value=parse_expr(child))
     return ir.Return(value=parse_expr(child))
 
 

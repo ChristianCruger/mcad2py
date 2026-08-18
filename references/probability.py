@@ -38,7 +38,7 @@ print(pnorm(q, mu, sigma))
 
 i = arange(0, 1, 1)
 
-range = index_build(i, lambda i: i)
+range_ = index_build(i, lambda i: i)
 
 x_75 = index_build(i, lambda i: qnorm(0.75, mu, sigma))
 
@@ -50,7 +50,7 @@ _domain_x = plot_domain(-4.0, 6.0, 499)
 _fig, _ax = plt.subplots()
 _ax.plot(*plot_trace(plot_axis(_domain_x, None), plot_axis(sample(lambda x: dnorm(x, mu, sigma), _domain_x), None)), label='dnorm(x, mu, sigma)', color='#00008B')
 _ax.plot(*plot_trace(plot_axis(_domain_x, None), plot_axis(sample(lambda x: pnorm(x, mu, sigma), _domain_x), None)), label='pnorm(x, mu, sigma)', color='#000000')
-_ax.plot(*plot_trace(plot_axis(static_axis(x_75, _domain_x), None), plot_axis(static_axis(range, _domain_x), None)), label='range', color='#FF0000')
+_ax.plot(*plot_trace(plot_axis(static_axis(x_75, _domain_x), None), plot_axis(static_axis(range_, _domain_x), None)), label='range_', color='#FF0000')
 _ax.plot(*plot_trace(plot_axis(static_axis(x_90, _domain_x), None), plot_axis(sample(lambda x: dnorm(x, mu, sigma), _domain_x), None)), label='dnorm(x, mu, sigma)', color='#008000')
 _ax.plot(*plot_trace(plot_axis(static_axis(x_95, _domain_x), None), plot_axis(sample(lambda x: dnorm(x, mu, sigma), _domain_x), None)), label='dnorm(x, mu, sigma)', color='#0000FF')
 _ax.axhline(0, color='0.6', linewidth=0.8)
@@ -303,15 +303,15 @@ n_bins = 20
 
 n = arange(0, n_bins, 1)
 
-range = index_build(n, lambda n: n)
+range_ = index_build(n, lambda n: n)
 
 uniform = histogram(n_bins, random_set)
 
 means = index_build(n, lambda n: n_set / n_bins)
 
 _fig, _ax = plt.subplots()
-_ax.plot(*plot_trace(plot_axis(range, None), plot_axis(uniform, None)), label='range', color='#31ADC2')
-_ax.plot(*plot_trace(plot_axis(range, None), plot_axis(means, None)), label='range', color='#ED1D2F')
+_ax.plot(*plot_trace(plot_axis(range_, None), plot_axis(uniform, None)), label='range_', color='#31ADC2')
+_ax.plot(*plot_trace(plot_axis(range_, None), plot_axis(means, None)), label='range_', color='#ED1D2F')
 _ax.axhline(0, color='0.6', linewidth=0.8)
 _ax.axvline(0, color='0.6', linewidth=0.8)
 _ax.grid(True, alpha=0.3)
@@ -340,15 +340,15 @@ x = index_build(n, lambda n: lower + w * n)
 
 x = index_build(n, lambda n: lower + w * n)
 
-int = x + 0.5 * w
+int_ = x + 0.5 * w
 
-F = index_build(n, lambda n: n_set * w * dnorm(int[n], mu, sigma))
+F = index_build(n, lambda n: n_set * w * dnorm(int_[n], mu, sigma))
 
 normal = histogram(x, random_set)
 
 _fig, _ax = plt.subplots()
-_ax.plot(*plot_trace(plot_axis(int, None), plot_axis(normal, None)), label='int', color='#662D91')
-_ax.plot(*plot_trace(plot_axis(int, None), plot_axis(F, None)), label='int', color='#ED1D2F')
+_ax.plot(*plot_trace(plot_axis(int_, None), plot_axis(normal, None)), label='int_', color='#662D91')
+_ax.plot(*plot_trace(plot_axis(int_, None), plot_axis(F, None)), label='int_', color='#ED1D2F')
 _ax.axhline(0, color='0.6', linewidth=0.8)
 _ax.axvline(0, color='0.6', linewidth=0.8)
 _ax.grid(True, alpha=0.3)
@@ -375,15 +375,15 @@ y = index_build(n, lambda n: lower + w * n)
 
 y = index_build(n, lambda n: lower + w * n)
 
-int = y + 0.5 * w
+int_ = y + 0.5 * w
 
-F = index_build(n, lambda n: n_set * w * dexp(int[n], r))
+F = index_build(n, lambda n: n_set * w * dexp(int_[n], r))
 
 exponential = histogram(y, random_set)
 
 _fig, _ax = plt.subplots()
-_ax.plot(*plot_trace(plot_axis(int, None), plot_axis(exponential, None)), label='int', color='#ED1D2F')
-_ax.plot(*plot_trace(plot_axis(int, None), plot_axis(F, None)), label='int', color='#2E3192')
+_ax.plot(*plot_trace(plot_axis(int_, None), plot_axis(exponential, None)), label='int_', color='#ED1D2F')
+_ax.plot(*plot_trace(plot_axis(int_, None), plot_axis(F, None)), label='int_', color='#2E3192')
 _ax.axhline(0, color='0.6', linewidth=0.8)
 _ax.axvline(0, color='0.6', linewidth=0.8)
 _ax.grid(True, alpha=0.3)
@@ -394,14 +394,14 @@ plt.show()
 
 # Call functions pexp and qexp to calculate and plot the cumulative probability distribution for value x and the inverse cumulative probability distribution for value p, respectively.
 
-Fp = index_build(n, lambda n: n_set * w * pexp(int[n], r))
+Fp = index_build(n, lambda n: n_set * w * pexp(int_[n], r))
 
-Fq = index_build(n, lambda n: n_set * w * qexp(int[n] / 100, r))
+Fq = index_build(n, lambda n: n_set * w * qexp(int_[n] / 100, r))
 
 _fig, _ax = plt.subplots()
-_ax.plot(*plot_trace(plot_axis(int, None), plot_axis(F, None)), label='int', color='#2E3192')
-_ax.plot(*plot_trace(plot_axis(int, None), plot_axis(Fp, None)), label='int', color='#ED1D2F')
-_ax.plot(*plot_trace(plot_axis(int, None), plot_axis(Fq, None)), label='int', color='#068149')
+_ax.plot(*plot_trace(plot_axis(int_, None), plot_axis(F, None)), label='int_', color='#2E3192')
+_ax.plot(*plot_trace(plot_axis(int_, None), plot_axis(Fp, None)), label='int_', color='#ED1D2F')
+_ax.plot(*plot_trace(plot_axis(int_, None), plot_axis(Fq, None)), label='int_', color='#068149')
 _ax.axhline(0, color='0.6', linewidth=0.8)
 _ax.axvline(0, color='0.6', linewidth=0.8)
 _ax.grid(True, alpha=0.3)

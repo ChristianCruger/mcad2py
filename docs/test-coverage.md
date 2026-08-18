@@ -455,3 +455,35 @@ The parametrization walks the *committed artifacts* rather
 than the worksheets, because not every sheet ships both (`shrinkage.mcdx` has only a notebook) —
 `test_every_artifact_has_a_worksheet` covers the reverse, since an artifact whose `.mcdx` was renamed
 would otherwise sit here with no test running against it at all.
+
+## `tests/test_seed.py` — `references/seed.mcdx`
+
+Pins Mathcad's own random number generator, which mcad2py now reproduces exactly. See the
+`seed.mcdx` entry in [mcdx-schema-notes.md](mcdx-schema-notes.md) for the algorithm and for how the
+method was identified.
+
+The comparisons here use `abs=0.0` — not a tolerance, deliberately. `runif` and `rnorm` are bit-for-bit
+Mathcad, so any drift at all is a real change and should fail.
+
+| Test | Pins |
+|------|------|
+| `test_generated_source_shape` | The three constructs this fixture is first to reach: a bare `Seed(1)` region that must not print, a bare call in a program body that must not become a return, and `M^<i> :=` as a `col_set`. Plus `range` renamed to `range_`. |
+| `test_runif_matches_mathcad` | `Seed(1)`, then 20 uniforms, against the cache |
+| `test_seed_returns_one` | `Seed(n) =` echoes `1`, a status code |
+| `test_rnorm_matches_mathcad` | One normal draw, and that the four uniforms after it are `U[4..7]` — the stream continuing, not restarting |
+| `test_program_reseeds_each_pass` | The sheet's point: three passes of `Seed(1)` + `rnorm` give three identical columns, and that column is Mathcad's |
+| `test_histogram_of_the_repeated_set` | `hist` over the seeded sample |
+
+**What the worksheet does not reach**, covered by direct unit tests below the fixture ones: the sheet
+seeds on a bare integer, draws only on 0..1, and writes only a dimensionless column. So `Seed` on a
+Pint quantity, `Seed` on an *unreduced* ratio (`7000 mm / 1 m`, where a bare `float()` would read
+7000), `runif` on an arbitrary interval, `rnorm`'s `mu`/`sigma` applied to one shared stream, and
+`col_set` with units and with growth are each tested separately.
+
+**This changed two existing fixtures' artifacts.** `probability.py` and `statistics.py` both name a
+variable `range`, and `probability.py` also names one `int`; both now emit `range_`/`int_`. Those
+artifacts were regenerated in the same commit.
+
+**Not covered:** the other 15 `r*` functions. Their consumption patterns are unknown, so they stay on
+NumPy — repeatable run to run (`Seed` reseeds NumPy too) but not Mathcad's numbers. The default seed
+Mathcad uses when a sheet never calls `Seed` is also unknown, so such a sheet cannot be reproduced.

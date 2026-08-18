@@ -787,3 +787,52 @@ need the sheet-wide defined-name set to tell a unit from a variable that shadows
   emitting a visible TODO instead of dropping the region. `print_lines`
   ([emit/codegen.py](../mcad2py/emit/codegen.py)) lifts the note onto its own line first. The notebook
   backend echoes as a bare last line and was never affected.
+
+## `seed.mcdx` — Mathcad's random number generator
+
+`Seed(n)` restarts Mathcad's random stream. Reproducing that stream exactly is possible: Prime's
+generator is the **Microsoft C runtime `rand()`**, and `Seed(n)` is `srand(n)`.
+
+```
+state = seed                                  # Seed(n) -> srand(n)
+rand():  state = (state * 214013 + 2531011) mod 2**32
+         return (state >> 16) & 0x7FFF        # 15 bits
+runif:   u = (rand() * 32768 + rand()) / 2**30
+rnorm:   Kinderman-Monahan ratio of uniforms --
+             u = runif(); v = sqrt(8/e) * (runif() - 0.5); x = v / u
+             accept when x**2 <= -4 * ln(u)
+         and rnorm(m, mu, sigma) returns mu + sigma * x
+```
+
+Confirmed against every cached value in the fixture at **0.0 absolute error**: the 20-element
+`runif`, the single `rnorm` draw, the four uniforms that follow it, and the 1000-element sample the
+sheet's program builds. The constant is `sqrt(8/e)` exactly, **not** Numerical Recipes' rounded
+`1.7156` (they differ at the fifth decimal, which the cached values resolve).
+
+How the method was identified is worth recording, because the same trick works on any other `r*`
+function. `Seed(1)`, then `rnorm(1,0,1)`, then `runif(4,0,1)` — the four trailing uniforms came back
+as `U[4..7]` of the seeded stream, so one normal draw had consumed exactly **four** uniforms. That
+count is the fingerprint: inverse-CDF would take one, Box-Muller two, sum-of-12 twelve. Four means two
+ratio-of-uniforms attempts, the first rejected.
+
+Three region/statement shapes appear here for the first time.
+
+- **A bare call region.** `Seed(1)` on its own line is an `<ml:apply>` directly under `<math>` — no
+  `<ml:define>`, no `<ml:eval>`. Mathcad runs it and displays nothing, so it becomes `ir.Statement`
+  and emits a plain call. Wrapping it in `print` would invent output the sheet never shows. The same
+  call *with* `=` (an `<ml:eval>`) is an ordinary evaluation and echoes.
+- **`Seed(n)` returns `1`, not `n`.** A status code: `Seed(3)` also caches `1`.
+- **A bare call above the last line of a program body is a statement, not a return.** Mathcad's
+  implicit return is a block's *final* line only. `Seed(1)` at the top of a `for` body previously
+  became `return Seed(1)` and swallowed the two lines below it. `ir.ExprStmt` is that line.
+- **`M^<i> := v` inside a program** writes a whole column. Prime writes it as an ordinary `matcol`
+  target, so it reaches the IR as `ir.MatCol` (not an index node) and emits `col_set` — the column
+  form of `vec_set`, sharing its growth, zero-fill and consolidation rules.
+
+One more thing this sheet is the first to hit: it names a variable **`range`** (`range[n] := n`),
+which shadows the Python builtin for every line below it. `sanitize()` now suffixes `_` on any name
+that collides with a Python keyword or builtin. Two existing fixtures were already affected —
+`probability.mcdx` was emitting both `range = …` and `int = …`.
+
+The file is a **Prime 12** worksheet and still declares `worksheet50`/`math50`, like every other
+fixture, so nothing in the parser needed a version check.

@@ -165,7 +165,7 @@ def _visit_region(region: ir.Region, env: dict[str, str]) -> None:
         region.values = [_rewrite(v, env, vectorized=False) for v in region.values]
         for target in region.targets:
             env[target.py] = SCALAR
-    elif isinstance(region, ir.Evaluate):
+    elif isinstance(region, (ir.Evaluate, ir.Statement)):
         region.value = _rewrite(region.value, env, vectorized=False)
     elif isinstance(region, ir.StatusControl):
         region.value = _rewrite(region.value, env, vectorized=False)

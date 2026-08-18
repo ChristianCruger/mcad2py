@@ -197,6 +197,8 @@ FUNCTIONS = {
     "kendltau": "kendltau",
     "kendltau2": "kendltau2",
     "contingtbl": "contingtbl",
+    # Random number stream: Seed(n) restarts it (Prime's own generator)
+    "Seed": "Seed",
     # Distributions: d = density, p = cumulative, q = quantile, r = random draws
     "dnorm": "dnorm",
     "pnorm": "pnorm",
