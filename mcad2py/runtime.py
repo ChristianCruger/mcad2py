@@ -2648,6 +2648,26 @@ def total(v):
     return tot
 
 
+def range_sum(domain, func):
+    """Mathcad's ``Σ`` over a **range variable**: sum ``func(i)`` over ``domain``.
+
+    Prime writes this with an index but no bounds -- the index is a range
+    variable defined elsewhere on the sheet, and the sum runs over every value
+    it holds. The domain elements are passed through unchanged (an index stays
+    an index, a dimensioned range keeps its unit), and the results accumulate
+    with :func:`total`'s rule so per-element Pint scalars add correctly.
+    """
+    values = np.atleast_1d(getattr(domain, "magnitude", domain)).reshape(-1)
+    if hasattr(domain, "units"):
+        values = [domain._REGISTRY.Quantity(v, domain.units) for v in values]
+    if len(values) == 0:
+        return 0
+    running = func(values[0])
+    for value in values[1:]:
+        running = running + func(value)
+    return running
+
+
 def _coarse_presearch(wrapped, x0, n_samples=15, seed=0):
     """Find a better `fsolve` seed by sampling broadly around ``x0``.
 

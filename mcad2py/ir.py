@@ -305,6 +305,23 @@ class VectorSum(Expr):
 
 
 @dataclass
+class RangeSum(Expr):
+    """Mathcad's ``Σ`` over a **range variable** (``<ml:summation>``, no bounds).
+
+    The XML has a ``<ml:lambda>`` with a bound variable but an empty
+    ``<upperBound>`` and no ``<lowerBound>`` at all. Mathcad reads the bound
+    variable as a range already defined on the sheet and sums the body over
+    every value in it -- so the domain is the variable's own name, not a pair of
+    bounds. Emitted as ``range_sum(<var>, lambda <var>: <body>)``.
+
+    Distinct from :class:`VectorSum`, where the bound variable is *also* empty
+    and the body is already a vector.
+    """
+
+    func: Lambda
+
+
+@dataclass
 class MatCol(Expr):
     """Mathcad column extraction ``A^<i>`` (``<ml:matcol>``).
 

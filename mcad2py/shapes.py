@@ -274,6 +274,7 @@ _EXPR_FIELDS: dict[type, tuple[str, ...]] = {
     ir.Lambda: ("body",),
     ir.Integral: ("func", "lower", "upper"),
     ir.Summation: ("func", "lower", "upper"),
+    ir.RangeSum: ("func",),
 }
 
 

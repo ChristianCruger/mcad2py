@@ -788,6 +788,39 @@ need the sheet-wide defined-name set to tell a unit from a variable that shadows
   ([emit/codegen.py](../mcad2py/emit/codegen.py)) lifts the note onto its own line first. The notebook
   backend echoes as a bare last line and was never affected.
 
+## `Σ` over a range variable (`<ml:summation>` with no bounds)
+
+Prime writes three different things with the same `<ml:summation>` head, told apart by the lambda's
+bound variables and the bounds:
+
+| bound var | bounds | meaning | IR |
+|---|---|---|---|
+| named | `<lowerBound>` + `<upperBound>` | indexed sum `Σ_{i=a}^{b}` | `ir.Summation` → `summation(f, a, b)` |
+| none | `<upperBound><placeholder/></upperBound>` | bare `Σ` over an already-built vector | `ir.VectorSum` → `total(v)` |
+| named | `<upperBound><placeholder/></upperBound>`, no `<lowerBound>` at all | **range summation** — the index is a range variable defined elsewhere on the sheet, summed over every value in it | `ir.RangeSum` → `range_sum(i, lambda i: …)` |
+
+The third form emits `range_sum(<var>, lambda <var>: <body>)`: the first argument reads the range
+variable from the enclosing scope, and the lambda's parameter shadows it for the body — the same name
+doing the same two jobs Mathcad gives it.
+
+**Not verified against a cached number.** The worksheet that surfaced it
+(`interpolation_prediction.mcdx`, not committed) calls several functions it never defines, so it
+cannot be executed end to end. What *is* established: Prime marks the region `Synchronized` with no
+`engineError`, so the empty bound is deliberate rather than an unfinished slot.
+
+## A note nested inside an expression
+
+`ir.Placeholder` and `ir.Unsupported` render as `None` plus a `# …` comment. A comment swallows the
+rest of its line, which is harmless when the note *is* the whole expression and fatal one level down —
+`summation(f, None  # placeholder, None  # placeholder)` puts the closing parenthesis inside the
+comment and the module stops parsing, the one outcome the "output still loads" convention exists to
+prevent.
+
+So a note node now renders as a bare `None` and pushes its text to a collector; the outermost
+`expr_to_str` appends the collected notes once, at the end of the line. A top-level note comes out
+byte-identical to before; a nested one becomes `foo(None, 2)  # TODO unsupported: apply/derivative`.
+`print_lines` still lifts a trailing note onto its own line, unchanged.
+
 ## `seed.mcdx` — Mathcad's random number generator
 
 `Seed(n)` restarts Mathcad's random stream. Reproducing that stream exactly is possible: Prime's

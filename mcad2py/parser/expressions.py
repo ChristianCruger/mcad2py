@@ -369,6 +369,15 @@ def _parse_integral_like(head_tag: str, rest: list[ET.Element]) -> ir.Expr:
     # every element of an already-built vector -> a VectorSum, not an indexed sum.
     if head_tag == "summation" and not func.params:
         return ir.VectorSum(operand=func.body)
+    # A ``Σ`` that *does* name an index but leaves both bounds empty is Mathcad's
+    # range summation: the index is a range variable defined elsewhere on the
+    # sheet, and the operator sums over every value in it.
+    if (
+        head_tag == "summation"
+        and isinstance(lower, ir.Placeholder)
+        and isinstance(upper, ir.Placeholder)
+    ):
+        return ir.RangeSum(func=func)
     cls = ir.Integral if head_tag == "integral" else ir.Summation
     return cls(func=func, lower=lower, upper=upper)
 
