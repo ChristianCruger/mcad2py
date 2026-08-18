@@ -1633,6 +1633,9 @@ class _MathcadRNG:
         return (self.rand() * 32768 + self.rand()) / 1073741824.0
 
 
+# Prime opens a new worksheet at state 1, the same place ``Seed(1)`` puts it --
+# confirmed by typing ``runif(4,0,1)`` as the first region of a fresh sheet.  A
+# worksheet that never calls ``Seed`` is therefore reproducible as well.
 _RNG = _MathcadRNG(1)
 
 # sqrt(8/e), the Kinderman-Monahan ratio-of-uniforms constant.  Mathcad uses

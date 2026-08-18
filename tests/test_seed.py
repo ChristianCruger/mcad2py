@@ -447,3 +447,24 @@ def test_rcauchy_and_rlogis_are_centred_and_scaled():
     Seed(16)
     moved = rlogis(5, 3, 2)
     assert moved.tolist() == pytest.approx((3 + 2 * base).tolist())
+
+
+def test_a_fresh_worksheet_starts_at_state_one():
+    """Prime opens a new sheet at state 1, so the generator is built there.
+
+    Confirmed in Prime by typing ``runif(4, 0, 1)`` as the first region of a
+    fresh worksheet: it gives the same four numbers as ``Seed(1)`` then the
+    same call, and a first-region ``Seed(1)`` echoes ``1`` -- its own previous
+    state. A sheet that never calls ``Seed`` is therefore reproducible too.
+    """
+    from mcad2py.runtime import _MathcadRNG, Seed, runif
+
+    fresh = _MathcadRNG()
+    assert fresh.state == 1
+    untouched = [fresh.unif() for _ in range(4)]
+
+    Seed(1)
+    # The echo agrees: with no draw in between, Seed reports state 1 as the
+    # previous one -- which is what a first-region Seed(1) echoes in Prime.
+    assert Seed(1) == 1
+    assert runif(4, 0, 1).tolist() == untouched

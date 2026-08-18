@@ -494,5 +494,8 @@ of `rcauchy` and `rlogis`, which the sheet only calls at 0 and 1.
 the block consumed seven — the seventh is unexplained, and guessing would silently negate half of all
 draws. `rhypergeom`'s only block is degenerate (zero white balls, no uniform drawn). Both are
 repeatable run to run because `Seed` reseeds NumPy too, but neither is Mathcad's number, and a sheet
-that calls either desynchronises the stream for everything after it. The default seed Mathcad uses
-when a sheet never calls `Seed` is also still unknown, so such a sheet cannot be reproduced.
+that calls either desynchronises the stream for everything after it.
+
+A sheet that never calls `Seed` **is** reproducible: Prime opens a new worksheet at state 1, the same
+as `Seed(1)`. `test_a_fresh_worksheet_starts_at_state_one` pins that the module-level generator starts
+there too.

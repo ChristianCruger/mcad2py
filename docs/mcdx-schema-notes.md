@@ -873,6 +873,10 @@ Three region/statement shapes appear here for the first time.
   `<ml:define>`, no `<ml:eval>`. Mathcad runs it and displays nothing, so it becomes `ir.Statement`
   and emits a plain call. Wrapping it in `print` would invent output the sheet never shows. The same
   call *with* `=` (an `<ml:eval>`) is an ordinary evaluation and echoes.
+- **A new worksheet starts at state 1**, the same place `Seed(1)` puts it. Typing `runif(4,0,1)` as
+  the first region of a fresh sheet gives the same four numbers as `Seed(1)` then `runif(4,0,1)`, and
+  `Seed(1)` as the first region of a fresh sheet echoes `1` — its previous state. So a worksheet that
+  never calls `Seed` is reproducible too, and the module-level generator is constructed at 1.
 - **`Seed(n)` returns the generator's *previous* 32-bit state**, not `n` and not a status code.
   Six consecutive `Seed` regions on the sheet make it unambiguous: after a `Seed(1)` the next
   `Seed(1)` echoes `1`, and after a `Seed(2)` the next echoes `2`, while a `Seed(1)` placed after a
