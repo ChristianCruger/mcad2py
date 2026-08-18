@@ -110,6 +110,35 @@ Legend: ✅ done · 🟡 partial · ⬜ not started · ⛔ out of scope (unlikel
 
 ---
 
+## New in Mathcad Prime 12 (r12.0, April 2026)
+
+Prime 12's release notes group the changes as **Application**, **Engine** and **Usability**
+enhancements. Only some of it reaches a converter; the table below is the triage. PTC's help portal
+(`support.ptc.com/help/mathcad/r12.0/en/PTC_Mathcad_Help/whatsNewMathcadPrime.html`) blocks scripted
+fetches with a 403, so the detail here comes from PTC's release blog, the PTC Community release post
+and third-party write-ups — **signatures and XML spellings are unverified**; confirm against a real
+r12 worksheet before mapping anything.
+
+| Prime 12 item | Group | Relevance | Status here |
+|---------------|-------|-----------|-------------|
+| **Function-analysis class** — `isContinuous`, `discontPoints`, `localExtrema` / `globalExtrema`, `localMinima` / `globalMinima`, `localMaxima` / `globalMaxima` | Engine | ⬜ new builtins. Symbolic: PTC says to evaluate them with `→`, so they belong with `SYMBOLIC_COMMANDS` and SymPy (`continuous_domain`, `singularities`, `solve(diff(f))`), not with the numeric path | not mapped |
+| **Expression-type class** — `hasVariables`, `getVariables` | Engine | ⬜ new builtins, also symbolic (`expr.free_symbols`). Cheap to add | not mapped |
+| **MultiStart** for solver functions | Engine | 🟡 a global-search option on `find` / `minerr` / `maximize` / `minimize`. Our `solve_block` already does a bounded random-restart search when `fsolve` converges without reducing the residual — the same idea. A sheet that sets MultiStart carries an extra flag we would have to read and honour | flag not parsed |
+| **Optimized / non-optimized solver options** | Engine | 🟡 same shape: a per-solve-block setting in the XML | flag not parsed |
+| **King Rule** for definite integrals (symbolic) | Engine | ⛔ symbolic-engine internals. Changes which closed forms Prime prints, not the worksheet XML | no action |
+| **Calculus-operator improvements** — more cases for `limit`, range-summation, indefinite integral | Engine | ⬜ the *operators* are what matters: we emit `summation` and `integral`, but an indefinite integral and a `limit` operator have no IR node yet | limit and indefinite integral unsupported |
+| **2D native plot** titles, axis titles, gridlines, legend | Application | 🟡 formatting attributes on an xy plot region. We render the traces; a legend and a title are a small `matplotlib` addition once the attributes are read | attributes not parsed |
+| Header / footer customization, hide solve-block labels | Usability | ⛔ document presentation | no action |
+| Find and replace identifiers with subscripts | Usability | ⛔ authoring only | no action |
+| Performance work; back end moved from .NET Framework to .NET | — | ⛔ runtime only | no action |
+
+Open question for the schema: whether r12 bumps the `worksheet50` / `math50` namespace version.
+[`parser/namespaces.py`](../mcad2py/parser/namespaces.py) matches on **local name**, so a bump alone
+should not break parsing — but nothing here has been tested against an r12 file, and there is no r12
+fixture in [`references/`](../references/).
+
+---
+
 ## Prioritized TODO (for structural-engineering worksheets)
 
 Ranked by expected payoff × frequency in the kind of sheets this repo converts, and roughly by effort.
@@ -129,6 +158,10 @@ Ranked by expected payoff × frequency in the kind of sheets this repo converts,
 6. **Differential equations** (`odesolve`, `rkfixed`, …) — a larger effort (a solve-block-like block
    construct over `scipy.integrate.solve_ivp`). Do only when a sample needs it.
 7. **Fourier** (`fft`/`ifft`) — low priority for structural work; `scipy.fft` wraps if needed.
+8. **Prime 12 symbolic classes** — `hasVariables` / `getVariables`, then the function-analysis set
+   (`isContinuous`, `discontPoints`, `localExtrema`…). Thin SymPy wraps on the existing `→` path, but
+   worth only what a real r12 worksheet needs — see the Prime 12 section above. Do the two
+   expression-type functions first; they are a few lines each.
 
 Explicitly **not** planned: finance, image processing, file I/O, wavelets/signal — out of scope for a
 structural worksheet converter.
