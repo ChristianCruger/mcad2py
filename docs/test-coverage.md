@@ -499,3 +499,42 @@ that calls either desynchronises the stream for everything after it.
 A sheet that never calls `Seed` **is** reproducible: Prime opens a new worksheet at state 1, the same
 as `Seed(1)`. `test_a_fresh_worksheet_starts_at_state_one` pins that the module-level generator starts
 there too.
+
+
+## `tests/test_range_sum.py` — `references/range_sum.mcdx`
+
+Mathcad writes three different sums with one `<ml:summation>` head, told apart by the lambda's bound
+variable and the bounds. The sheet puts one of each over the same data, so confusing two of them
+shows up as a wrong number rather than as a parse failure.
+
+| Test | Pins |
+|------|------|
+| `test_generated_source_shape` | Each `Σ` reaches a different helper — `total`, `range_sum`, `summation` |
+| `test_the_indexed_vector_matches` | `X[i] := mod(2i, 7)` over `i := 0..10` |
+| `test_a_bare_sigma_totals_the_vector` | The bare `Σ` over an already-built vector |
+| `test_a_range_sum_covers_the_whole_range_variable` | The point of the sheet: `Σ_i X[i]` with no bounds is 33, the same as `total(X)` — an empty bound is the whole range variable, not an unfinished slot |
+| `test_an_indexed_sum_still_honours_its_bounds` | `Σ_{j=1}^{4} X[j]` is 13, so the bounded form did not quietly become a range sum |
+| `test_an_indexed_sum_over_a_function` | The bounded form over `f(j)` |
+| `test_a_range_sum_over_an_expression_in_the_index` | `Σ_i f(2i) = 1551`, so the body sees each index value, not the range as a whole |
+| three parser-shape tests | That each XML shape is *told apart* in the first place. A value check cannot do this alone: `total` and `range_sum` agree on this data by design |
+
+**What the worksheet does not reach.** It sums dimensionless integers over a dimensionless range and
+calls `mod` only on non-negative values. Direct unit tests below the fixture ones cover a dimensioned
+domain, a dimensioned result, `mod`'s sign rule (C's `fmod`, not Python's `%`), `mod` with a divisor
+in a *different* unit (`2.5 m` against `300 mm`), `mod` on an unreduced `mm/m` ratio, and `mod`
+applied element-wise to a vector.
+
+`mod`'s sign rule is PTC's documented one, not a cached number. One negative `mod` region on the
+sheet would upgrade it.
+
+## `tests/test_emit_notes.py` — no fixture
+
+A `# TODO`/`# placeholder` note is a comment, so it swallows the rest of its line. Harmless when the
+note *is* the whole expression, fatal one level down: `summation(f, None  # placeholder, None  #
+placeholder)` puts the closing parenthesis inside the comment and the module stops parsing — the one
+outcome the "output still loads" convention exists to prevent.
+
+These build the IR by hand: a nested placeholder, a nested unsupported node, two notes in one
+expression, a top-level note (which must stay byte-identical to before the fix), and that the
+collector does not leak between expressions. No fixture, because the worksheet that surfaced it calls
+several functions it never defines and cannot be executed.

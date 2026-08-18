@@ -116,6 +116,8 @@ FUNCTIONS = {
     "ceil": "ceil",
     "floor": "floor",
     "round": "mround",
+    # ``mod`` carries the sign of x (C ``fmod``), which Python's ``%`` does not.
+    "mod": "mod",
     # Element-wise (2-arg) min/max so they broadcast over arrays under a
     # vectorize 'arrow'; ``np.minimum``/``np.maximum`` also work on scalars.
     "min": "np.minimum",

@@ -803,10 +803,11 @@ The third form emits `range_sum(<var>, lambda <var>: <body>)`: the first argumen
 variable from the enclosing scope, and the lambda's parameter shadows it for the body — the same name
 doing the same two jobs Mathcad gives it.
 
-**Not verified against a cached number.** The worksheet that surfaced it
-(`interpolation_prediction.mcdx`, not committed) calls several functions it never defines, so it
-cannot be executed end to end. What *is* established: Prime marks the region `Synchronized` with no
-`engineError`, so the empty bound is deliberate rather than an unfinished slot.
+`references/range_sum.mcdx` puts all three forms over the same data and settles it: with
+`i := 0..10` and `X[i] := mod(2i, 7)`, both the bare `Σ` and the range sum cache **33**, while the
+indexed `Σ_{j=1}^{4}` caches 13. So an empty bound means the *whole* range variable — not an
+unfinished slot, and not a zero-length sum. A second region, `Σ_i f(2i) = 1551`, pins that the body
+sees each index value rather than the range as a whole.
 
 ## A note nested inside an expression
 

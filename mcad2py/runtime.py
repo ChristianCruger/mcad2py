@@ -392,6 +392,34 @@ def floor(x):
     return math.floor(x)
 
 
+def mod(x, y):
+    """Mathcad ``mod``: the remainder of ``x / y``, carrying the sign of ``x``.
+
+    That is ``math.fmod``'s rule, **not** Python's ``%`` -- the two differ for a
+    negative argument (``mod(-5, 3)`` is ``-2`` in Mathcad, ``1`` in Python), so
+    ``%`` here would be a plausible wrong number rather than an error.
+
+    Dimensioned arguments are allowed as long as they share a dimension: ``y``
+    is converted into ``x``'s unit first, because taking the remainder of
+    millimetres against metres without converting is exactly the failure this
+    seam exists to catch. The result keeps ``x``'s unit.
+    """
+    x, y = _reduce_dimensionless(x), _reduce_dimensionless(y)
+    if hasattr(x, "units"):
+        divisor = y.to(x.units).magnitude if hasattr(y, "units") else y
+        return x._REGISTRY.Quantity(_fmod(x.magnitude, divisor), x.units)
+    if hasattr(y, "units"):
+        raise ValueError("mod: a dimensionless x cannot take a dimensioned y")
+    return _fmod(x, y)
+
+
+def _fmod(x, y):
+    """``math.fmod`` that also accepts arrays (Mathcad applies ``mod`` per element)."""
+    if _is_arraylike(x) or _is_arraylike(y):
+        return np.fmod(x, y)
+    return math.fmod(x, y)
+
+
 def mround(x):
     """Mathcad ``round`` (dimensionless-aware; keeps a unit if dimensioned)."""
     x = _reduce_dimensionless(x)
