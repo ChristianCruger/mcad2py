@@ -392,6 +392,34 @@ def floor(x):
     return math.floor(x)
 
 
+def mod(x, y):
+    """Mathcad ``mod``: the remainder of ``x / y``, carrying the sign of ``x``.
+
+    That is ``math.fmod``'s rule, **not** Python's ``%`` -- the two differ for a
+    negative argument (``mod(-5, 3)`` is ``-2`` in Mathcad, ``1`` in Python), so
+    ``%`` here would be a plausible wrong number rather than an error.
+
+    Dimensioned arguments are allowed as long as they share a dimension: ``y``
+    is converted into ``x``'s unit first, because taking the remainder of
+    millimetres against metres without converting is exactly the failure this
+    seam exists to catch. The result keeps ``x``'s unit.
+    """
+    x, y = _reduce_dimensionless(x), _reduce_dimensionless(y)
+    if hasattr(x, "units"):
+        divisor = y.to(x.units).magnitude if hasattr(y, "units") else y
+        return x._REGISTRY.Quantity(_fmod(x.magnitude, divisor), x.units)
+    if hasattr(y, "units"):
+        raise ValueError("mod: a dimensionless x cannot take a dimensioned y")
+    return _fmod(x, y)
+
+
+def _fmod(x, y):
+    """``math.fmod`` that also accepts arrays (Mathcad applies ``mod`` per element)."""
+    if _is_arraylike(x) or _is_arraylike(y):
+        return np.fmod(x, y)
+    return math.fmod(x, y)
+
+
 def mround(x):
     """Mathcad ``round`` (dimensionless-aware; keeps a unit if dimensioned)."""
     x = _reduce_dimensionless(x)
@@ -2646,6 +2674,26 @@ def total(v):
     for x in arr[1:]:
         tot = tot + x
     return tot
+
+
+def range_sum(domain, func):
+    """Mathcad's ``Σ`` over a **range variable**: sum ``func(i)`` over ``domain``.
+
+    Prime writes this with an index but no bounds -- the index is a range
+    variable defined elsewhere on the sheet, and the sum runs over every value
+    it holds. The domain elements are passed through unchanged (an index stays
+    an index, a dimensioned range keeps its unit), and the results accumulate
+    with :func:`total`'s rule so per-element Pint scalars add correctly.
+    """
+    values = np.atleast_1d(getattr(domain, "magnitude", domain)).reshape(-1)
+    if hasattr(domain, "units"):
+        values = [domain._REGISTRY.Quantity(v, domain.units) for v in values]
+    if len(values) == 0:
+        return 0
+    running = func(values[0])
+    for value in values[1:]:
+        running = running + func(value)
+    return running
 
 
 def _coarse_presearch(wrapped, x0, n_samples=15, seed=0):
