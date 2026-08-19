@@ -1100,13 +1100,33 @@ behind. `Spline2` now returns the whole packed vector, with nothing left as `nan
 That sheet also pins a hard limit: `Spline2(x, y, 4, …)` is the one region **Mathcad itself** will not
 compute, returning an `order_too_big` engine error whose argument is 3. The family is capped at cubic.
 
-**The stopping rule is still not pinned**, even with the p-value exact. Running the phase-one sweep
-over `spline2A` gives upper-bound p-values of 0.00007, 0.0031, 0.308, 0.457, 0.437, 0.930 at one
-through six intervals -- the third and sixth reproducing the cached `b3` and `b` values exactly -- so
-`level = 0.001` ought to stop at two intervals under a plain "stop when p > level", where Mathcad
-stopped at three. The same off-by-one shows on the 13-point sheet. So `level` enters somewhere other
-than a direct comparison against the upper bound, and the lower bound (which Mathcad also stores) is
-the obvious suspect.
+**The stopping rule is the classical three-way bounds test**, and `level` is its significance. The
+upper bound is the wrong one to compare -- it is the **lower** bound that decides:
+
+```
+lower > level          ->  accept: no positive autocorrelation. Stop.
+upper < level          ->  reject: definitely autocorrelated. Move the knots (phase two).
+otherwise              ->  inconclusive. Add an interval and try again.
+```
+
+**The default `level` is 0.05.** Sweeping phase one and stopping the first time the lower bound
+exceeds `level` reproduces **five of the six** cached adaptive fits exactly -- all three calls on the
+13-point sheet and two of the three on `spline2A`, across interval counts 2, 3 and 6. The sixth is
+`spline2A`'s `level = 0.5` call, which is precisely the phase-two case: phase one never gets the lower
+bound above 0.19 there, so the "reject" arm fires and the knots move.
+
+That three-way reading also explains why phase two does *not* steal the default answer. At four
+intervals `spline2A`'s phase-two fit reaches a lower bound of 0.0638, which is above the default 0.05
+-- so if phase two ran on the default path it would have stopped at four intervals rather than the
+cached six. It does not run, because at four intervals the upper bound is 0.457, far above 0.05: the
+test is *inconclusive*, not a rejection, and the loop simply adds an interval. Phase two fires only on
+a definite rejection. The 536-row sheet is the other side of that coin -- its uniform-in-index fits
+are so poor that the upper bound is 0 out to 55 intervals, so every step rejects, phase two runs
+every time, and the cached answer of 34 intervals is a phase-two result.
+
+After phase two the acceptance is the weaker one: `spline2A`'s `level = 0.5` call stops with a lower
+bound of 0.0638 -- below 0.5 -- but an upper bound of 0.731, above it. So a moved knot set is kept as
+soon as it is no longer a definite rejection.
 
 **One more side finding.** `spline2A`'s cached `y` is **our own `rnorm` stream at offset 45**, exactly
 one whole `rnorm(45, …)` call further on: Prime drew the vector twice across the saves that produced
