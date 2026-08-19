@@ -946,14 +946,53 @@ already defined above) and both backends emit it as a `# shown, not computed:` c
 
 **`Spline2` / `Binterp` / `DWS`, and `GrubbsClassic` / `trim`** are genuine Prime built-ins — the
 worksheet has no include region and no add-in reference, and Prime labels them `FUNCTION` exactly like
-`cspline`. `Spline2(x, y, n[, w][, level | knots])` returns one packed vector: `[order, knot count,
-<count+1> knots, <n> B-spline coefficients, 0, Durbin-Watson statistic, 0.99934, 0.44954]`. The sheet
-proves `DWS(b)` is just `b[last(b) - 2]` by echoing both. The knots are placed **adaptively** — for the
-536-row example they run 309.4, 445.9, 539.7, 592.5 … dense in the middle and sparse at the ends,
-matching neither a uniform spacing nor the data's quantiles — and passing `level := 0.001` moves the
-count from 34 to 32, so the placement is driven by a fit criterion PTC does not document. Reproducing
-it is a research task, not a mapping entry, so the five names sit in `mapping.UNIMPLEMENTED` and the
-converter suppresses their regions instead of inventing numbers.
+`cspline`. `Spline2(x, y, n[, w][, level | knots])` returns one packed vector, and the sheet caches the
+whole 79-element example (`b`, region 8), which pins the layout exactly:
+
+| Slice | Meaning | Example |
+|-------|---------|---------|
+| `b[0]` | spline **order** (`n + 1`) | `4` |
+| `b[1]` | knot **interval** count `m` | `34` |
+| `b[2 : 3+m]` | the `m+1` knots, first = `min(x)`, last = `max(x)` | 309.4 … 1999.7 |
+| `b[3+m : 6+2m]` | the `m+3` B-spline coefficients | 3726.71 … 749.31 |
+| `b[6+2m:]` | four trailing statistics: `0`, the **Durbin-Watson statistic**, 0.99934, 0.44954 | — |
+
+`i := 0 .. b[1]` / `knots[i] := b[i+2]` in the sheet confirms the knot slice, and `DWS(b)` echoing
+`b[last(b) - 2]` confirms where the statistic sits.
+
+**Two of the three halves are solved.** Given the knots, the rest is not proprietary at all:
+
+* `Binterp(u, b)` is an ordinary **clamped cubic B-spline evaluation** — knot vector
+  `[k0]*(n+1) + interior + [ke]*(n+1)`, i.e. `scipy.interpolate.BSpline(t, b[3+m:6+2m], n)`. It
+  reproduces the plotted trace of `Binterp(range, b)` to 1.5e-11 absolute on values near 6e4, which is
+  the last bit.
+* The coefficients are a **plain unweighted least-squares fit** on those knots — `lstsq` on the
+  B-spline design matrix returns `b[3+m:6+2m]` to 1.5e-14 relative. Weighting by `w`, `1/w`, `1/w²`,
+  `w²` or `√w` all move it off by 1–5%, so the `w` argument does **not** enter the fit as a weight.
+  (It is echoed as unused in another way too: `DWS(Spline2(x, y, n, w))` and `DWS(Spline2(x, y, n))`
+  agree to all 17 digits.)
+
+**The knot placement is the unsolved half**, and it is not a closed form. For the 536-row example the
+34 intervals are dense in the middle and sparse at both ends, at continuous-valued positions that lie
+on no grid. Tested and rejected, each against the cached knots:
+
+* uniform spacing, and the data's own quantiles (5 to 48 points per interval — the *fewest* points sit
+  where the knots are *densest*, the opposite of a quantile rule);
+* equidistributing the cumulative of `|f'''|^(1/4)`, `^(1/3)`, `^(1/2)`, `^1`, `^(1/5)` of the fitted
+  spline (de Boor's `NEWNOT`), and the same for `|f''|` — best relative spread across intervals was
+  still 17%, where equidistribution means 0%;
+* equidistributing arc length, total variation `Σ|Δy|`, `Σy·Δx`, `Σw`, `Σ1/w`, `√y` and `log x`
+  (best 34%);
+* FITPACK (`scipy.interpolate.splrep`) at the smoothing factor that yields the same knot count — its
+  first interior knot lands at 535 where Mathcad's is at 445.9.
+
+Passing `level := 0.001` moves the interval count from 34 to 32, and `level := 0.5` changes the
+statistic again, so `level` is the significance of a **Durbin-Watson test on the residuals** used as
+the stopping rule: knots are added while the residuals stay autocorrelated. An explicit `knots`
+argument does not simply supply the knots either — refitting on the given 102-point grid misses the
+cached trace by 390 out of 6e4 — so it reads as a *candidate* set the same search selects from. What
+remains is that search, which is a research task rather than a mapping entry, so the five names sit in
+`mapping.UNIMPLEMENTED` and the converter suppresses their regions instead of inventing numbers.
 
 **The algorithms, identified from the cache** (all exact, 0.0 error unless noted):
 

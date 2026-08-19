@@ -191,7 +191,7 @@ cache: `polyiter` stops on the change between two successive interpolations (not
 estimate) taking points in the order given, `Thielecoeff` divides by **1e-65** rather than raising on a
 zero reciprocal difference, and `predict` is Burg's maximum-entropy method. What's *not* done there is
 the least-squares spline set (`Spline2`/`Binterp`/`DWS`, with the `GrubbsClassic`/`trim` outlier pair):
-its knot placement is adaptive and undocumented, so the names sit in `mapping.UNIMPLEMENTED` and their
+its knot placement is adaptive and undocumented (the packed vector layout, `Binterp` and the least-squares half *are* solved — see the schema note), so the names sit in `mapping.UNIMPLEMENTED` and their
 regions become visible `# TODO unsupported region` comments — see the schema note.
 
 `find` solve blocks and `lsolve` work; `minerr`/`maximize`/`minimize`/`root`/`polyroots` don't yet.
