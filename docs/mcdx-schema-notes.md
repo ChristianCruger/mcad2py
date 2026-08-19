@@ -960,39 +960,46 @@ whole 79-element example (`b`, region 8), which pins the layout exactly:
 `i := 0 .. b[1]` / `knots[i] := b[i+2]` in the sheet confirms the knot slice, and `DWS(b)` echoing
 `b[last(b) - 2]` confirms where the statistic sits.
 
-**Two of the three halves are solved.** Given the knots, the rest is not proprietary at all:
+**Everything except the knot placement is solved**, and exactly. The sheet's two `Spline2` calls
+that pass an explicit knot vector (`SplineW`, `SplineNW`) are reproduced to the last bit:
 
-* `Binterp(u, b)` is an ordinary **clamped cubic B-spline evaluation** — knot vector
-  `[k0]*(n+1) + interior + [ke]*(n+1)`, i.e. `scipy.interpolate.BSpline(t, b[3+m:6+2m], n)`. It
-  reproduces the plotted trace of `Binterp(range, b)` to 1.5e-11 absolute on values near 6e4, which is
-  the last bit.
-* The coefficients are a **plain unweighted least-squares fit** on those knots — `lstsq` on the
-  B-spline design matrix returns `b[3+m:6+2m]` to 1.5e-14 relative. Weighting by `w`, `1/w`, `1/w²`,
-  `w²` or `√w` all move it off by 1–5%, so the `w` argument does **not** enter the fit as a weight.
-  (It is echoed as unused in another way too: `DWS(Spline2(x, y, n, w))` and `DWS(Spline2(x, y, n))`
-  agree to all 17 digits.)
+* `Binterp(u, b)` is an ordinary **clamped B-spline evaluation** — knot vector
+  `[k0]*(n+1) + interior + [ke]*(n+1)`, i.e. `scipy.interpolate.BSpline(t, b[3+m:6+2m], n)`. It returns
+  **four** columns: the value and the first three derivatives. Matches the cached trace to 1.5e-11 on
+  values near 6e4.
+* Given knots, the coefficients are a **least-squares fit**, and `w` is a vector of **standard
+  deviations**: the weight is `1/w²`. Weighting by `w`, `1/w`, `w²` or `√w` all miss.
+* **Data points outside the knot range are dropped.** This is the detail that hides the rest: the
+  sheet's `Knots := range` stops at 1982.96 while `x` reaches 1999.7, so five points fall outside.
+  Keeping them moves every later check off by ~0.2% and makes the fit look wrong. Dropping them makes
+  `DWS(SplineNW)` come out at 2.3915925499477533 against a cached 2.3915925499477493, and the whole
+  `SplineW` trace match to 2.4e-10 out of 6e4.
+* `DWS` is the plain **Durbin-Watson statistic** of the residuals — *weighted* residuals `r/w` when a
+  `w` was given. Weighted: 2.32173216795681 against a cached 2.3217321679568084.
+* The four trailing numbers are `[residual standard error, 0, DWS, ?, ?]`. The first is
+  `sqrt(SSE/(N-p))` with `p` the coefficient count: 749.3112471272 against a cached 749.3112471272.
+  The last two (0.999340554, 0.449535631) are still unidentified — neither is R² (0.99787) nor
+  adjusted R² (0.99772).
+* Argument reading, from the six cached calls: a **scalar** 4th argument is `level`; a **vector** 4th
+  argument is the knots; with **five** arguments the 4th is `w` and the 5th is the knots. Passing an
+  unsorted vector as the 4th (the sheet's `Spline2(x, y, n, w)`) is evidently rejected as a knot
+  vector and the call falls back to the default adaptive fit — which is why
+  `DWS(Spline2(x, y, n, w))` and `DWS(Spline2(x, y, n))` agree to all 17 digits.
 
-**The knot placement is the unsolved half**, and it is not a closed form. For the 536-row example the
-34 intervals are dense in the middle and sparse at both ends, at continuous-valued positions that lie
-on no grid. Tested and rejected, each against the cached knots:
+**The knot placement is the one unsolved piece**, but its family is now identified. Regressing
+`log(1/Δknot)` on `log|f'''|` over the cached knots gives a slope of **0.264** with R² 0.80 — that is
+de Boor's `NEWNOT` equidistribution of `|D^k f|^(1/k)` with `k = 4`, the exponent 1/4. Growing the
+knot set one interval at a time from `[min(x), max(x)]`, refitting and redistributing at each step,
+lands within 2–8 units over the first third of the sheet's knots (intervals are ~25 wide) and then
+drifts to ~70. So the scheme is right and the *variant* is not: de Boor's own routine builds `|D⁴f|`
+from the **jumps** of `D³f` as a piecewise-linear function and damps the move toward the new knots,
+and the outer loop stops on a Durbin-Watson test at `level`. Reproducing that exactly is still a
+research task, so the five names stay in `mapping.UNIMPLEMENTED`.
 
-* uniform spacing, and the data's own quantiles (5 to 48 points per interval — the *fewest* points sit
-  where the knots are *densest*, the opposite of a quantile rule);
-* equidistributing the cumulative of `|f'''|^(1/4)`, `^(1/3)`, `^(1/2)`, `^1`, `^(1/5)` of the fitted
-  spline (de Boor's `NEWNOT`), and the same for `|f''|` — best relative spread across intervals was
-  still 17%, where equidistribution means 0%;
-* equidistributing arc length, total variation `Σ|Δy|`, `Σy·Δx`, `Σw`, `Σ1/w`, `√y` and `log x`
-  (best 34%);
-* FITPACK (`scipy.interpolate.splrep`) at the smoothing factor that yields the same knot count — its
-  first interior knot lands at 535 where Mathcad's is at 445.9.
-
-Passing `level := 0.001` moves the interval count from 34 to 32, and `level := 0.5` changes the
-statistic again, so `level` is the significance of a **Durbin-Watson test on the residuals** used as
-the stopping rule: knots are added while the residuals stay autocorrelated. An explicit `knots`
-argument does not simply supply the knots either — refitting on the given 102-point grid misses the
-cached trace by 390 out of 6e4 — so it reads as a *candidate* set the same search selects from. What
-remains is that search, which is a research task rather than a mapping entry, so the five names sit in
-`mapping.UNIMPLEMENTED` and the converter suppresses their regions instead of inventing numbers.
+Tested against the cached knots and rejected: uniform spacing; the data's quantiles (5 to 48 points
+per interval, with the *fewest* points where the knots are *densest*); equidistributing arc length,
+`Σ|Δy|`, `Σy·Δx`, `Σw`, `Σ1/w`, `√y`, `log x`; and FITPACK (`splrep`) at the matching knot count,
+whose first interior knot lands at 535 where Mathcad's is at 445.9.
 
 **The algorithms, identified from the cache** (all exact, 0.0 error unless noted):
 
