@@ -998,8 +998,19 @@ research task, so the five names stay in `mapping.UNIMPLEMENTED`.
 
 Tested against the cached knots and rejected: uniform spacing; the data's quantiles (5 to 48 points
 per interval, with the *fewest* points where the knots are *densest*); equidistributing arc length,
-`Σ|Δy|`, `Σy·Δx`, `Σw`, `Σ1/w`, `√y`, `log x`; and FITPACK (`splrep`) at the matching knot count,
-whose first interior knot lands at 535 where Mathcad's is at 445.9.
+`Σ|Δy|`, `Σy·Δx`, `Σw`, `Σ1/w`, `√y`, `log x`; FITPACK (`splrep`) at the matching knot count, whose
+first interior knot lands at 535 where Mathcad's is at 445.9; equal **SSE**, equal `Σ|residual|`,
+equal residual sign-run count and equal local `Σ(Δresidual)²` per interval (spreads 0.45 to 0.78,
+where "equal" means 0); and a 720-point scan of de Boor `NEWNOT` variants — the `|D⁴f|` estimate taken
+from the jump of `D³f` over the average interval, over the two-interval span, raw, and as `|D³f|`
+itself; exponents 1/5, 1/4, 1/3, 1/2; one to three redistribution passes per step; and knot counts
+grown by 1, by 2, or in one jump from a 1-, 2-, 3-, 4- or 34-interval start. The best of those lands
+35 units from Mathcad's knots at worst and 12.6 on average, against interval widths of about 25 — the
+right neighbourhood, the wrong rule.
+
+**What would settle it:** a worksheet with 10-20 data points that echoes the whole `Spline2` vector at
+two or three `level` values. At 536 points the search has too many degrees of freedom to invert; at 15
+the iteration can be reconstructed by brute force.
 
 **The algorithms, identified from the cache** (all exact, 0.0 error unless noted):
 
