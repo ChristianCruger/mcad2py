@@ -257,3 +257,100 @@ def test_the_small_sheets_knots_are_uniform():
     cached = np.array(cached_results(SMALL_SHEET)[SMALL_B])
     assert cached[1] == 2  # two intervals
     assert cached[2:5] == pytest.approx([0.0, 6.0, 12.0], rel=0, abs=0)
+
+
+# ---------------------------------------------------------------------------
+# ``references/spline2A.mcdx`` -- 45 points on **non-uniformly spaced** x, with
+# two kinks placed in the sparse half. It calls ``Spline2(x, y, 3)`` at the
+# default ``level``, at 0.5 and at 0.001, and the three results have 6, 4 and 3
+# intervals. That spread is what makes the sheet worth its place: it exposes the
+# starting knot set, which the two earlier sheets could not.
+
+WIGGLY_SHEET = reference("spline2A")
+WIGGLY_DEFAULT = "7"  # b  := Spline2(x, y, 3)         -> 6 intervals
+WIGGLY_HALF = "8"  # b2 := Spline2(x, y, 3, 0.5)    -> 4 intervals
+WIGGLY_TINY = "9"  # b3 := Spline2(x, y, 3, 0.001)  -> 3 intervals
+WIGGLY_X = "2"
+WIGGLY_Y = "6"
+
+
+@pytest.fixture(scope="module")
+def wiggly() -> tuple[np.ndarray, np.ndarray, dict[str, list[float]]]:
+    cache = cached_results(WIGGLY_SHEET)
+    return np.array(cache[WIGGLY_X]), np.array(cache[WIGGLY_Y]), cache
+
+
+def _uniform_in_index(x: np.ndarray, intervals: int) -> np.ndarray:
+    """Knots at equally spaced **data indices**, linearly interpolated in x."""
+    last = len(x) - 1
+    return np.interp(np.arange(intervals + 1) * last / intervals,
+                     np.arange(last + 1), x)
+
+
+@pytest.mark.parametrize("ref", [WIGGLY_DEFAULT, WIGGLY_TINY])
+def test_the_starting_knots_are_uniform_in_data_index(wiggly, ref):
+    """Mathcad's first knot set for each interval count puts an **equal number
+    of data points** in each interval, not an equal width.
+
+    Exactly, to the last bit, on x whose spacing varies by a factor of four --
+    so this is not a coincidence of near-uniform data. The knot lands between
+    two data points and is linearly interpolated there, which is where the
+    non-round values like 0.834022 come from.
+    """
+    x, _, cache = wiggly
+    packed = np.array(cache[ref])
+    intervals = int(packed[1])
+    knots = packed[2:3 + intervals]
+    assert knots == pytest.approx(_uniform_in_index(x, intervals),
+                                  rel=0, abs=0)
+
+
+def test_a_stricter_level_can_return_a_redistributed_knot_set(wiggly):
+    """``level = 0.5`` stops on a knot set that is **not** uniform in index.
+
+    Mathcad tries the uniform-in-index set at each interval count first and,
+    when the Durbin-Watson test still fails, moves the knots before adding
+    another. This is the one cached example of that second step on small data:
+    it drags the interior knots from 1.375/3.5/6.375 out to 3.54/6.93/8.91,
+    towards the two kinks. The rule behind that move is the piece of the family
+    that is still unsolved -- see the schema note.
+    """
+    x, _, cache = wiggly
+    packed = np.array(cache[WIGGLY_HALF])
+    knots = packed[2:7]
+    assert int(packed[1]) == 4
+    assert np.abs(knots - _uniform_in_index(x, 4)).max() > 3.0
+
+
+@pytest.mark.parametrize("ref", [WIGGLY_DEFAULT, WIGGLY_HALF, WIGGLY_TINY])
+def test_every_cached_vector_is_reproduced_from_its_own_knots(wiggly, ref):
+    """Given the knots, the coefficients, the residual standard error and the
+    statistic all come back exactly -- on three different interval counts."""
+    x, y, cache = wiggly
+    packed = np.array(cache[ref])
+    intervals = int(packed[1])
+    through = 6 + 2 * intervals  # knots, coefficients, rse, 0, DWS
+    fit = np.asarray(Spline2(x, y, 3, packed[2:3 + intervals]))
+    assert fit[:through] == pytest.approx(packed[:through], rel=1e-12,
+                                          abs=1e-12)
+
+
+def test_the_sheets_noise_is_our_random_stream_one_call_later(wiggly):
+    """A documented divergence, and *not* a generator bug.
+
+    The sheet does ``Seed(1)`` then ``nz := rnorm(45, 0, 0.85)``, so executing
+    the generated module gives a different ``y`` from the cached one. The cached
+    values are our stream at offset **45** -- exactly one whole ``rnorm(45, …)``
+    call further on -- so Prime drew the vector twice across the saves that
+    produced this file. Pinning the offset says the generator is right and the
+    worksheet state is what moved.
+    """
+    from mcad2py.runtime import Seed, rnorm
+
+    x, y, _ = wiggly
+    kinked = np.where(x <= 5, 1 + 0.2 * x,
+                      np.where(x <= 8, 2 + (x - 5) ** 2, 11 - 1.5 * (x - 8)))
+    cached_noise = (y - kinked) / 0.85
+    Seed(1)
+    stream = np.asarray(rnorm(90, 0, 1)).reshape(-1)
+    assert stream[45:] == pytest.approx(cached_noise, rel=1e-12, abs=1e-12)

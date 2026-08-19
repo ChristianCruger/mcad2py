@@ -608,3 +608,28 @@ symmetric. Three tests pin what that proves:
 
 The sheet deliberately cannot discriminate between knot-placement rules — its `x` is uniform and it
 stops before the redistribution step ever runs. It settles the loop around that step instead.
+
+### `references/spline2A.mcdx` (in the same module)
+
+45 points on **non-uniformly spaced** `x` — its spacing varies by a factor of four — with two kinks
+placed deliberately in the sparse half, so that a placement rule which equidistributes in `x` and one
+that equidistributes over data points cannot agree. Three calls at the default `level`, at 0.5 and at
+0.001 return 6, 4 and 3 intervals.
+
+* `test_the_starting_knots_are_uniform_in_data_index` — the headline. Two of the three cached knot
+  vectors are `interp(j·(len(x)-1)/m, 0..len(x)-1, x)` **exactly**, zero difference. Mathcad's first
+  try at every interval count puts an equal number of *data points* in each interval, not an equal
+  width, and interpolates the knot between the two neighbouring points (which is where values like
+  0.834022 come from).
+* `test_a_stricter_level_can_return_a_redistributed_knot_set` — the `level = 0.5` call does **not**
+  return that set. It is the one cached example of the second phase on small data, and the rule
+  behind it is the last unsolved piece.
+* `test_every_cached_vector_is_reproduced_from_its_own_knots` — given the knots, all three vectors
+  come back to 1e-12, at three different interval counts.
+
+**A documented divergence.** The sheet does `Seed(1)` then `nz := rnorm(45, 0, 0.85)`, so executing
+the generated module gives a different `y` from the cached one. The cached values are our stream at
+offset **45** — exactly one whole `rnorm(45, …)` call further on — so Prime drew the vector twice
+across the saves that produced the file.
+`test_the_sheets_noise_is_our_random_stream_one_call_later` pins that offset, which says the generator
+is right and the worksheet state is what moved.

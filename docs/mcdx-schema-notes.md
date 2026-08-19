@@ -1039,10 +1039,51 @@ in the trailer -- 0.4561 against 0.4495 on the big sheet, 0.7925 against 0.7690 
 the fifth trailing statistic **is** this p-value, and only its exact convention is still open. The
 exact (Imhof) distribution is no closer, so the difference is a modelling detail, not a quadrature one.
 
-**What would settle the placement:** a worksheet with **non-uniformly spaced** `x`, 30 to 60 points, on
-data wiggly enough to stop at 5 to 8 intervals. Uniform `x` cannot separate a placement that
-equidistributes in `x` from one that equidistributes over data points, and a sheet that stops at 2
-intervals never runs the redistribution step at all.
+**The starting knot set is solved**, by `references/spline2A.mcdx` -- 45 points on `x` whose spacing
+varies by a factor of four, with two kinks placed in the sparse half. Its three calls stop at 6, 4 and
+3 intervals, and two of them return knots that are **uniform in the data index**, exactly:
+
+```
+knots[j] = interp(j * (len(x) - 1) / m,  0..len(x)-1,  x)      # equal points per interval
+```
+
+Zero difference on both -- and the interpolation between two data points is where the non-round
+values come from (`0.834022` is `x[7] + (1/3)(x[8] - x[7])`). So Mathcad's first try at every interval
+count puts an **equal number of data points** in each interval, not an equal width. The 13-point
+sheet's `[0, 6, 12]` is the same rule on uniformly spaced data.
+
+That makes the loop two-phase:
+
+```
+for m = 1, 2, 3, ...:
+    knots = uniform in data index
+    fit;  if p > level:  stop            # b and b3 stop here
+    knots = <redistribute>               # the one step still unsolved
+    fit;  if p > level:  stop            # b2 stops here
+```
+
+`spline2A`'s middle call is the one cached example of the second phase on small data: at four
+intervals it drags the interior knots from `1.375 / 3.5 / 6.375` out to `3.538 / 6.926 / 8.908`,
+towards the kinks. The three calls are mutually consistent with `stop when p > level` and a **default
+`level` between 0.73 and 0.93** -- `level = 0.5` accepts the redistributed four-interval set at
+p = 0.731 while the default rejects it and runs on to the uniform six-interval set at p = 0.930.
+The big sheet's 34-interval answer and the 536-row `p = 0.9993` sit on the same rule.
+
+Against that one cached example, a single redistribution step from the uniform-in-index fit was
+scanned over `|D¹f|`, `|D²f|`, `|D³f|` and arc length, exponents 1/5 to 1, integrated in `x` and summed
+over data points, plus residual-weighted variants, plus the equidistribution fixed point, plus a
+Nelder-Mead free-knot search on both the sum of squares and the statistic itself. The best lands 0.58
+out of an interval width of about 2. The target is **not** the least-squares optimum (its SSE is 27.18
+against an attainable 22.06), so the second phase is neither a plain optimiser nor any plain
+equidistribution tried so far.
+
+**Two side findings worth keeping.** The fourth trailing statistic is the test's p-value: across the
+five cached fits it rises monotonically with the statistic (`DW` 1.60 → 0.308, 1.87 → 0.731,
+2.00 → 0.930, 2.13 → 0.9993, 3.11 → 0.99999). A Beta approximation on `[0, 4]` matched to the exact
+null mean and variance is the right *shape* but not Mathcad's convention -- it gives 0.79 where
+Mathcad stores 0.99999 -- so the exact form is still open. And `spline2A`'s cached `y` is **our own
+`rnorm` stream at offset 45**, exactly one whole `rnorm(45, …)` call further on: Prime drew the vector
+twice across the saves that produced the file. The generator is right; the worksheet state moved.
 
 **The algorithms, identified from the cache** (all exact, 0.0 error unless noted):
 
