@@ -590,3 +590,21 @@ against the difference quotient of Mathcad's cached second derivative instead.
 millimetres, and checks that the derivative rows come back in `kg/m`, `kg/m²`, `kg/m³` — the four rows
 cannot share one unit, which is why `Binterp` returns an object array in that case. The two
 unidentified trailing statistics come back `nan` rather than a guess, pinned by its own test.
+
+### `references/spline2.mcdx` (in the same module)
+
+13 points, calling `Spline2(x, y, 3)` at the default `level`, at 0.5 and at 0.001. Its value is that
+all three echoes are **identical** — knots `[0, 6, 12]`, the midpoint exactly, on data that is not
+symmetric. Three tests pin what that proves:
+
+* `test_a_small_sheet_reproduces_its_whole_packed_vector` — every element to 4e-15, on data with
+  nothing in common with the 536-row sheet.
+* `test_the_level_argument_changes_nothing_on_the_small_sheet` — the stopping rule is a
+  Durbin-Watson p-value against `level`. One interval gives p = 0.00069, below every level tried; two
+  gives 0.79, above all of them. So all three calls stop in the same place.
+* `test_the_small_sheets_knots_are_uniform` — the search **starts at one interval**. With one
+  interval the fit is a single cubic, `|D³f|` is constant, and any curvature-based redistribution
+  returns uniform knots, which is why the interior knot is exactly 6.0.
+
+The sheet deliberately cannot discriminate between knot-placement rules — its `x` is uniform and it
+stops before the redistribution step ever runs. It settles the loop around that step instead.

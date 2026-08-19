@@ -207,3 +207,53 @@ def test_the_two_unidentified_trailing_statistics_are_not_invented(data, knots):
     """They come back ``nan``, not a plausible wrong number."""
     fit = np.asarray(Spline2(*data[:2], 3, knots))
     assert np.isnan(fit[-2]) and np.isnan(fit[-1])
+
+
+# ---------------------------------------------------------------------------
+# ``references/spline2.mcdx`` -- 13 points, small enough to reason about.
+#
+# It calls ``Spline2(x, y, 3)`` at the default ``level``, at 0.5 and at 0.001,
+# and all three echo the **same** 15-element vector: knots ``[0, 6, 12]``. That
+# is not a coincidence and it is the sheet's whole value -- see the two tests
+# below, which pin the stopping rule and the starting knot set that the big
+# sheet alone could not separate.
+
+SMALL_SHEET = reference("spline2")
+SMALL_X = np.arange(13.0)
+SMALL_Y = np.array([3, 2.5, 2, 1.5, 1.5, 2, 4, 6, 10, 14, 18, 22, 26.0])
+SMALL_B = "5"  # b := Spline2(x, y, 3); b2 and b3 are result-ids 6 and 7
+
+
+def test_a_small_sheet_reproduces_its_whole_packed_vector():
+    """Every element Mathcad computes, to 4e-15 -- an independent check of the
+    fit on data with nothing in common with the 536-row sheet."""
+    cached = np.array(cached_results(SMALL_SHEET)[SMALL_B])
+    fit = np.asarray(Spline2(SMALL_X, SMALL_Y, 3, cached[2:5]))
+    assert fit[:13] == pytest.approx(cached[:13], rel=1e-13, abs=1e-13)
+
+
+def test_the_level_argument_changes_nothing_on_the_small_sheet():
+    """``level`` 0.5, 0.001 and the default all give the identical vector.
+
+    Mathcad grows the knot set until a Durbin-Watson test on the residuals
+    passes at ``level``. Here the *first* candidate that passes does so at
+    p = 0.79, far above every level tried, so all three stop at the same place.
+    The three cached vectors being byte-identical is what pins that.
+    """
+    cache = cached_results(SMALL_SHEET)
+    assert cache["6"] == cache[SMALL_B]
+    assert cache["7"] == cache[SMALL_B]
+
+
+def test_the_small_sheets_knots_are_uniform():
+    """``[0, 6, 12]`` -- the midpoint exactly, on visibly asymmetric data.
+
+    With one interval the fit is a single cubic, so ``|D³f|`` is constant and
+    *any* curvature-based knot redistribution returns uniform knots. That is
+    why this sheet cannot discriminate between the placement rules, and why it
+    still settles the starting point: Mathcad begins at one interval spanning
+    ``[min(x), max(x)]``.
+    """
+    cached = np.array(cached_results(SMALL_SHEET)[SMALL_B])
+    assert cached[1] == 2  # two intervals
+    assert cached[2:5] == pytest.approx([0.0, 6.0, 12.0], rel=0, abs=0)

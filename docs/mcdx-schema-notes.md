@@ -1008,9 +1008,41 @@ grown by 1, by 2, or in one jump from a 1-, 2-, 3-, 4- or 34-interval start. The
 35 units from Mathcad's knots at worst and 12.6 on average, against interval widths of about 25 — the
 right neighbourhood, the wrong rule.
 
-**What would settle it:** a worksheet with 10-20 data points that echoes the whole `Spline2` vector at
-two or three `level` values. At 536 points the search has too many degrees of freedom to invert; at 15
-the iteration can be reconstructed by brute force.
+**The outer loop, on the other hand, is pinned** -- by `references/spline2.mcdx`, 13 points calling
+`Spline2(x, y, 3)` at the default `level`, at 0.5 and at 0.001. All three echo the *identical* vector,
+with knots `[0, 6, 12]`:
+
+```
+knots = [min(x), max(x)]                  # one interval
+loop:
+    fit least squares on knots
+    d = Durbin-Watson statistic of the residuals
+    if P(DW < d) > level:  stop
+    m += 1
+    knots = redistribute over m intervals   # the one unsolved step
+```
+
+Three things fall out of that sheet. **The search starts at one interval**: with a single interval the
+fit is one cubic, so `|D³f|` is constant and any curvature-based redistribution returns uniform knots
+-- which is exactly why the interior knot lands on 6.0 on visibly asymmetric data. **The stopping rule
+is a Durbin-Watson p-value against `level`**: one interval gives `DW = 1.063`, `P(DW < d) = 0.00069`,
+below every level the sheet tries, and two intervals give 0.79, above all of them -- so all three
+calls stop in the same place, which is what the identical vectors prove. And **the rule reproduces the
+big sheet's count**: run the same loop over the 536-row data and the first `m` with `P(DW < d) > 0.05`
+is **34**, the cached number exactly (at `level = 0.001` it gives 30 against a cached 32, the gap
+being the approximate redistribution).
+
+The p-value is a Beta approximation on `[0, 4]` matched to the exact mean and variance of the
+statistic under the null (`P = tr(MA)`, `Q = tr(MAMA)`, `M` the residual-maker of the B-spline design,
+`A` the usual difference form with 1 in both corners). It lands within 3% of the number Mathcad stores
+in the trailer -- 0.4561 against 0.4495 on the big sheet, 0.7925 against 0.7690 on the small one -- so
+the fifth trailing statistic **is** this p-value, and only its exact convention is still open. The
+exact (Imhof) distribution is no closer, so the difference is a modelling detail, not a quadrature one.
+
+**What would settle the placement:** a worksheet with **non-uniformly spaced** `x`, 30 to 60 points, on
+data wiggly enough to stop at 5 to 8 intervals. Uniform `x` cannot separate a placement that
+equidistributes in `x` from one that equidistributes over data points, and a sheet that stops at 2
+intervals never runs the redistribution step at all.
 
 **The algorithms, identified from the cache** (all exact, 0.0 error unless noted):
 
