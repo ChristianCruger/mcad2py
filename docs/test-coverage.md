@@ -553,3 +553,40 @@ how the sheet's plots call it but which no echo checks; the three splines' end c
 their coefficients; `rationalint` on a pole and on an exact hit; a `Thielecoeff` → `Thiele` round trip;
 the derivative operator on a **dimensioned** argument (m/s² differentiated twice against s); and
 `range_sum` over a stepped range and over a unit-bearing summand.
+
+## `tests/test_least_squares_spline.py` — `references/interpolation_prediction.mcdx`
+
+`Spline2` / `Binterp` / `DWS`, the **reproducible half** of Mathcad's least-squares B-spline family.
+The knot *placement* is still Mathcad's own undocumented rule, so the names stay in
+`mapping.UNIMPLEMENTED` and the sheet's regions still convert to visible comments; this module tests
+the runtime helpers directly. A call that has to place its own knots raises rather than fitting a
+plausible wrong curve, and `test_placing_its_own_knots_raises_rather_than_guessing` pins that for all
+three shapes Mathcad also declines (no fourth argument, a scalar `level`, and an unsorted vector).
+
+The sheet never echoes `SplineW` or `SplineNW`, so the anchors are indirect and worth naming:
+
+| Anchor | What it pins |
+|--------|--------------|
+| `DWS(SplineNW)` = 2.3915925499477493 | an **unweighted** fit on a given knot vector |
+| `DWS(SplineW)` = 2.3217321679568084 | `w` is a **standard deviation** — the weight is `1/w²`, and `DWS` runs on the *weighted* residuals |
+| the cached plot trace of `Binterp(range, SplineW)` | `Binterp`'s four rows (value + three derivatives) at 101 points — the only direct check of it that exists |
+| the cached 79-element `b` | the packed layout, and that a refit on Mathcad's own knots returns Mathcad's own coefficients |
+
+**The detail that hides the rest: `Spline2` drops data outside the knot range.** The sheet's
+`Knots := range` stops at 1982.96 while `x` reaches 1999.7, so five of the 536 points fall out.
+Keeping them shifts every number here by about 0.2% — close enough to read as a rounding difference,
+which is why `test_points_outside_the_knot_range_are_dropped` asserts it rather than leaving it to be
+caught downstream.
+
+**One documented divergence.** `Binterp`'s **third** derivative is not compared against the cached
+trace. It is piecewise constant, the trace samples it exactly *at* the knots, and Mathcad picks the
+left or the right interval there inconsistently — its own values repeat at samples 1, 4, 8, 16, 32, 64
+and 100, a bisection artifact in Mathcad's interval search. Pinning against it would encode that bug.
+`test_the_third_derivative_differentiates_mathcads_own_second` checks it at interval *midpoints*
+against the difference quotient of Mathcad's cached second derivative instead.
+
+**What the worksheet does not reach.** Every `Spline2` call on the sheet is dimensionless, so
+`test_a_query_is_converted_into_the_abscissae_unit` builds a fit in metres and queries it in
+millimetres, and checks that the derivative rows come back in `kg/m`, `kg/m²`, `kg/m³` — the four rows
+cannot share one unit, which is why `Binterp` returns an object array in that case. The two
+unidentified trailing statistics come back `nan` rather than a guess, pinned by its own test.

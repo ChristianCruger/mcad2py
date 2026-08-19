@@ -44,7 +44,7 @@ When adding features, respect this boundary — parsers produce IR, backends con
 | [mapping.py](mcad2py/mapping.py) | Data tables: operators, builtins, constants, Greek, unit aliases |
 | [units.py](mcad2py/units.py) | The one Pint registry generated modules and `const.py` share |
 | [const.py](mcad2py/const.py) | Mathcad's built-in physical constants as importable Pint quantities |
-| [runtime.py](mcad2py/runtime.py) | Helpers imported by generated code: the full angle-aware trig + hyperbolic families, the full vector/matrix family (`rows`/`identity`/`det`/`lsolve`/the norm & condition sets/the eigen set/`sort`…), the full statistics family (`median`/`mode`/`var`/`Var`/`percentile`/`histogram`/`corr`/`slope`/`Spear`…), the full probability-distribution family (`d`/`p`/`q`/`r` sets for `norm`/`t`/`weibull`/`unif`/`exp`/`gamma`/`beta`/`F`/`chisq`/`lnorm`/`logis`/`cauchy`/`geom`/`hypergeom`/`binom`/`nbinom`, plus `cnorm`), `col`/`arange`/`index_build`/`vec_set`/`vectorize`/`transpose`, `linterp` (unit-aware linear interp), the interpolation & prediction family (`lspline`/`pspline`/`cspline` + `interp`, `polyint`/`polyiter`/`polycoeff`, `rationalint`, `Thiele`/`Thielecoeff`, `predict`), `derivative` (Ridders) and `range_sum`, `integral` (scipy `quad`), `summation`, `solve_block` (scipy `fsolve`), `sample`/`plot_domain`/`plot_axis`/`plot_trace` (matplotlib plots) |
+| [runtime.py](mcad2py/runtime.py) | Helpers imported by generated code: the full angle-aware trig + hyperbolic families, the full vector/matrix family (`rows`/`identity`/`det`/`lsolve`/the norm & condition sets/the eigen set/`sort`…), the full statistics family (`median`/`mode`/`var`/`Var`/`percentile`/`histogram`/`corr`/`slope`/`Spear`…), the full probability-distribution family (`d`/`p`/`q`/`r` sets for `norm`/`t`/`weibull`/`unif`/`exp`/`gamma`/`beta`/`F`/`chisq`/`lnorm`/`logis`/`cauchy`/`geom`/`hypergeom`/`binom`/`nbinom`, plus `cnorm`), `col`/`arange`/`index_build`/`vec_set`/`vectorize`/`transpose`, `linterp` (unit-aware linear interp), the interpolation & prediction family (`lspline`/`pspline`/`cspline` + `interp`, `polyint`/`polyiter`/`polycoeff`, `rationalint`, `Thiele`/`Thielecoeff`, `predict`, and the least-squares B-spline trio `Spline2`/`Binterp`/`DWS` for a given knot vector), `derivative` (Ridders) and `range_sum`, `integral` (scipy `quad`), `summation`, `solve_block` (scipy `fsolve`), `sample`/`plot_domain`/`plot_axis`/`plot_trace` (matplotlib plots) |
 | [emit/codegen.py](mcad2py/emit/codegen.py) | Precedence-aware expression printer; shared by both backends. `header_lines(ws, source)` reads the generated module's imports **off the rendered body** — hence both backends build the body first |
 | [emit/notebook_backend.py](mcad2py/emit/notebook_backend.py) | IR→`.ipynb`; region→cell; bare last line echoes result |
 | [emit/py_backend.py](mcad2py/emit/py_backend.py) | IR→`.py`; evaluations become `print(...)` |
@@ -190,9 +190,18 @@ all exact against `references/interpolation_prediction.mcdx`. Three of them were
 cache: `polyiter` stops on the change between two successive interpolations (not on the error
 estimate) taking points in the order given, `Thielecoeff` divides by **1e-65** rather than raising on a
 zero reciprocal difference, and `predict` is Burg's maximum-entropy method. What's *not* done there is
-the least-squares spline set (`Spline2`/`Binterp`/`DWS`, with the `GrubbsClassic`/`trim` outlier pair):
-its knot placement is adaptive and undocumented (the packed vector layout, `Binterp` and the least-squares half *are* solved — see the schema note), so the names sit in `mapping.UNIMPLEMENTED` and their
-regions become visible `# TODO unsupported region` comments — see the schema note.
+the least-squares spline set (`Spline2`/`Binterp`/`DWS`, with the `GrubbsClassic`/`trim` outlier pair).
+Everything there **except the knot placement** is solved and implemented exactly — the packed vector
+layout, `Binterp` (a clamped B-spline returning value + three derivatives), the weighted least-squares
+fit (`w` is a *standard deviation*, so the weight is `1/w²`), the drop-data-outside-the-knot-range
+rule, and `DWS` — see the schema note and
+[tests/test_least_squares_spline.py](tests/test_least_squares_spline.py). `Spline2` **raises** when it
+would have to place its own knots. The names stay in `mapping.UNIMPLEMENTED` all the same, because
+whether a vector fourth argument is `w` or the knots is only knowable at *runtime* (Mathcad reads a
+sorted vector as knots and falls back to its own placement otherwise), and the suppression pass is
+static — so those regions still become visible `# TODO unsupported region` comments. Wiring the
+solved path through emission needs either the knot placement cracked (which makes the question moot)
+or a runtime-aware suppression.
 
 `find` solve blocks and `lsolve` work; `minerr`/`maximize`/`minimize`/`root`/`polyroots` don't yet.
 `solve_block` (runtime) falls back

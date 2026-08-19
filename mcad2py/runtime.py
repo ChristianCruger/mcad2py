@@ -2867,6 +2867,213 @@ def predict(v, m, n):
     return _join(np.array(out), unit)
 
 
+# -- Least-squares B-splines: Spline2 / Binterp / DWS -----------------------
+#
+# ``Spline2`` returns one packed vector, whose layout the reference sheet's
+# cached 79-element example pins exactly (see the schema note):
+#
+#     [order, m, <m+1 knots>, <m+3 coefficients>, rse, 0, DWS, ?, ?]
+#
+# where ``m`` is the interval count and ``rse`` is ``sqrt(SSE/(N-p))``. Only
+# the knot *placement* is Mathcad's own; everything else is reproducible, and
+# is reproduced here to the last bit. A call that has to place its own knots
+# raises rather than guessing -- see ``mapping.UNIMPLEMENTED``.
+
+_SPLINE2_ADAPTIVE = (
+    "Spline2 chooses its own knots here, and Mathcad's placement rule is not "
+    "reproduced; pass an explicit knot vector as the last argument"
+)
+
+
+class _PackedSpline(np.ndarray):
+    """The vector ``Spline2`` returns, carrying the units it was built from.
+
+    It *is* an ``ndarray`` -- a worksheet indexes it (``b[1]``), measures it
+    (``last(b)``) and echoes it exactly as Mathcad does. The packed layout
+    mixes abscissa units (the knots) with ordinate units (the coefficients),
+    so no single Pint unit can be attached to the vector itself; the two are
+    carried alongside instead, and :func:`Binterp` puts them back on its
+    result.
+    """
+
+    def __new__(cls, values, x_unit=None, y_unit=None):
+        obj = np.asarray(values, dtype=float).view(cls)
+        obj.x_unit = x_unit
+        obj.y_unit = y_unit
+        return obj
+
+    def __array_finalize__(self, obj):
+        if obj is None:
+            return
+        self.x_unit = getattr(obj, "x_unit", None)
+        self.y_unit = getattr(obj, "y_unit", None)
+
+
+def _clamped_knots(knots, degree):
+    """Mathcad's knot vector: the breakpoints with both ends repeated."""
+    return np.concatenate([
+        np.full(degree + 1, knots[0]),
+        np.asarray(knots[1:-1], dtype=float),
+        np.full(degree + 1, knots[-1]),
+    ])
+
+
+def _bspline_design(t, degree, xq):
+    """The B-spline design matrix of the basis ``t`` evaluated at ``xq``."""
+    from scipy.interpolate import BSpline
+
+    count = len(t) - degree - 1
+    design = np.empty((len(xq), count))
+    for j in range(count):
+        unit_coef = np.zeros(count)
+        unit_coef[j] = 1.0
+        design[:, j] = BSpline(t, unit_coef, degree, extrapolate=True)(xq)
+    return design
+
+
+def _durbin_watson(residuals):
+    """The Durbin-Watson statistic of a residual sequence."""
+    return float((np.diff(residuals) ** 2).sum() / (residuals ** 2).sum())
+
+
+def _spline2_knots(candidate):
+    """``candidate`` read as a knot vector, or None if it is not one.
+
+    Mathcad takes a vector fourth argument as the knots and a vector fifth
+    argument always as the knots. An *unsorted* fourth argument is no knot
+    vector, and Prime falls back to placing its own -- which is what the
+    reference sheet's ``Spline2(x, y, n, w)`` does, echoing the same statistic
+    as the three-argument ``Spline2(x, y, n)`` to all 17 digits.
+    """
+    if candidate is None:
+        return None
+    values = np.asarray(_magnitudes(candidate), dtype=float).reshape(-1)
+    if values.size < 2 or np.any(np.diff(values) <= 0):
+        return None
+    return values
+
+
+def Spline2(vx, vy, n, *rest):
+    """Mathcad's least-squares B-spline fit, ``Spline2(vx, vy, n[, w][, knots])``.
+
+    ``n`` is the spline's degree, ``w`` a vector of the ordinates' **standard
+    deviations** (so the fit weight is ``1/w**2``, not ``w``), and ``knots`` the
+    breakpoints. Data points that fall outside the knot range are **dropped** --
+    the detail that makes every downstream number match; the reference sheet's
+    knot vector stops short of ``max(x)`` by five points, and keeping them moves
+    the fit by 0.2%.
+
+    Raises when no knot vector is given: placing knots is Mathcad's own adaptive
+    rule and is not reproduced here, so a fitted-looking answer would be a wrong
+    one.
+    """
+    degree = _count(n)
+    x_unit = getattr(vx, "units", None)
+    y_unit = getattr(vy, "units", None)
+    xs = _magnitudes(vx).reshape(-1)
+    ys = _magnitudes(vy).reshape(-1)
+
+    sigma, knots = None, None
+    if len(rest) >= 2:
+        sigma, knots = rest[0], _spline2_knots(rest[1])
+    elif len(rest) == 1:
+        knots = _spline2_knots(rest[0])
+        if knots is None:
+            sigma = rest[0]
+    if knots is None:
+        raise NotImplementedError(_SPLINE2_ADAPTIVE)
+    if x_unit is not None and hasattr(rest[-1], "to"):
+        knots = np.asarray(rest[-1].to(x_unit).magnitude, dtype=float).reshape(-1)
+
+    inside = (xs >= knots[0]) & (xs <= knots[-1])
+    xf, yf = xs[inside], ys[inside]
+    if sigma is None:
+        scale = np.ones_like(xf)
+    else:
+        deviation = _magnitudes(sigma).reshape(-1)[inside]
+        scale = 1.0 / deviation
+
+    t = _clamped_knots(knots, degree)
+    design = _bspline_design(t, degree, xf)
+    coef, *_ = np.linalg.lstsq(design * scale[:, None], yf * scale, rcond=None)
+
+    residuals = yf - design @ coef
+    freedom = max(len(xf) - len(coef), 1)
+    packed = np.concatenate([
+        [degree + 1.0, float(len(knots) - 1)],
+        knots,
+        coef,
+        [float(np.sqrt((residuals ** 2).sum() / freedom)),
+         0.0,
+         _durbin_watson(residuals * scale),
+         # Mathcad reports two more statistics here whose definition the cache
+         # does not give away (neither is R² nor adjusted R²). Inventing them
+         # would put plausible wrong numbers into a sheet that echoed them.
+         float("nan"),
+         float("nan")],
+    ])
+    return _PackedSpline(packed, x_unit, y_unit)
+
+
+def _unpack_spline(b):
+    """``(knot vector, coefficients, degree)`` out of a ``Spline2`` result."""
+    values = np.asarray(_magnitudes(b), dtype=float).reshape(-1)
+    degree = int(round(values[0])) - 1
+    intervals = int(round(values[1]))
+    knots = values[2:3 + intervals]
+    coef = values[3 + intervals:6 + 2 * intervals]
+    return _clamped_knots(knots, degree), coef, degree
+
+
+def Binterp(u, b):
+    """Evaluate a ``Spline2`` result at ``u``: the value and three derivatives.
+
+    Mathcad returns four rows -- ``f``, ``f'``, ``f''``, ``f'''`` -- so the
+    worksheet idiom ``Binterp(range, b)ᵀ`` gives one column per order. Outside
+    the knot range the end polynomial is extended, as Mathcad does.
+    """
+    from scipy.interpolate import BSpline
+
+    t, coef, degree = _unpack_spline(b)
+    x_unit = getattr(b, "x_unit", None)
+    y_unit = getattr(b, "y_unit", None)
+    if x_unit is not None and hasattr(u, "to"):
+        xq = np.asarray(u.to(x_unit).magnitude, dtype=float)
+    else:
+        xq = np.asarray(_magnitudes(_reduce_dimensionless(u)), dtype=float)
+
+    spline = BSpline(t, coef, degree, extrapolate=True)
+    rows = [spline(xq)]
+    for order in (1, 2, 3):
+        rows.append(spline.derivative(order)(xq))
+    if y_unit is None:
+        return np.array(rows)
+    # Each successive derivative divides the ordinate unit by one more
+    # abscissa unit; with no abscissa unit the whole block keeps ``y``'s.
+    if x_unit is None:
+        return _join(np.array(rows), y_unit)
+    # Each successive derivative divides the ordinate unit by one more abscissa
+    # unit, so the four rows cannot share one unit. Filling an object array
+    # element by element keeps each row a Quantity; ``np.array([...])`` would
+    # downcast and strip them.
+    block = np.empty(len(rows), dtype=object)
+    for order, row in enumerate(rows):
+        block[order] = _join(row, y_unit / x_unit ** order)
+    return block
+
+
+def DWS(b):
+    """The Durbin-Watson statistic Mathcad stored in a ``Spline2`` result.
+
+    It is the third element from the end of the packed vector -- the reference
+    sheet proves it by echoing ``DWS(b)`` and ``b[last(b) - 2]`` side by side.
+    A statistic below 2 means the residuals are positively autocorrelated, i.e.
+    the fit still has structure left in it.
+    """
+    values = np.asarray(_magnitudes(b), dtype=float).reshape(-1)
+    return float(values[-3])
+
+
 def index_build(idx, fn):
     """Build a 0-based Mathcad vector by iterating an index range.
 
