@@ -122,6 +122,10 @@ def _render_region(region: ir.Region) -> nbformat.NotebookNode | None:
 
     if isinstance(region, ir.SymbolicEquation):
         # Bare Eq(...) last line -> the notebook renders the typeset equation.
+        if region.display_only:
+            return nbformat.v4.new_code_cell(
+                f"# shown, not computed: {expr_to_str(region.equation)}"
+            )
         return nbformat.v4.new_code_cell(expr_to_str(region.equation))
 
     if isinstance(region, ir.SymbolicEval):

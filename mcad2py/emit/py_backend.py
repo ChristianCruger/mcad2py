@@ -106,6 +106,8 @@ def _render_region(region: ir.Region) -> list[str]:
 
     if isinstance(region, ir.SymbolicEquation):
         # A step shown for context; assigned to nothing, like the Mathcad sheet.
+        if region.display_only:
+            return ["", f"# shown, not computed: {expr_to_str(region.equation)}"]
         return ["", expr_to_str(region.equation)]
 
     if isinstance(region, ir.SymbolicEval):

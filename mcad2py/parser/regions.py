@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import base64
+import dataclasses
 import re
 import xml.etree.ElementTree as ET
 from typing import Callable
 
-from .. import ir
+from .. import ir, mapping
 from ..mapping import CONSTANTS, SYMBOLIC_COMMANDS
 from ..shapes import annotate_products
 from .expressions import (
@@ -97,6 +98,9 @@ def parse_worksheet(
     # Mathcad spells scalar, matrix and dot products all as ``·``; deciding
     # which is which needs the whole sheet's shapes, so it runs as a pass.
     annotate_products(ws)
+    # Last: a builtin we know about but don't implement has to take out its own
+    # region (and whatever depended on it) rather than the whole module.
+    _mark_unimplemented_builtins(ws)
     return ws
 
 
@@ -1041,6 +1045,83 @@ def _parse_text(
     return ir.TextRegion(text=text)
 
 
+def _mark_unimplemented_builtins(ws: ir.Worksheet) -> None:
+    """Turn a region that leans on a known-but-unimplemented builtin into a
+    visible :class:`ir.UnsupportedRegion`, and carry the taint downstream.
+
+    Without this the call emits as a bare name and the generated module dies on
+    a ``NameError`` at import -- taking the rest of the sheet, which may be
+    perfectly convertible, with it. ``mapping.UNIMPLEMENTED`` names the builtins
+    this applies to and why (see the table there); a worksheet that defines the
+    name itself keeps its own definition, since Mathcad would too.
+
+    The taint spreads because a suppressed ``b := Spline2(…)`` leaves ``b``
+    undefined, so every later region reading ``b`` would raise in turn. Each one
+    still emits its own comment, so nothing disappears silently.
+    """
+    own = {
+        r.target.py for r in ws.regions
+        if isinstance(r, ir.Define) and isinstance(r.target, ir.Name)
+    }
+    blocked = {n: why for n, why in mapping.UNIMPLEMENTED.items() if n not in own}
+    if not blocked:
+        return
+
+    missing: set[str] = set()
+    for index, region in enumerate(ws.regions):
+        names = _referenced_names(region)
+        culprit = next((n for n in names if n in blocked), None)
+        if culprit is not None:
+            note = f"{culprit} -- {blocked[culprit]}"
+        elif names & missing:
+            note = (f"needs {', '.join(sorted(names & missing))}, left "
+                    f"undefined above")
+        else:
+            # A later region that rebinds the name puts it back in play -- the
+            # sheet reuses ``i`` for a fresh range straight after the one it
+            # built from a suppressed spline.
+            missing -= _defined_names(region)
+            continue
+        missing |= _defined_names(region)
+        ws.regions[index] = ir.UnsupportedRegion(
+            note=note, source=getattr(region, "source", None)
+        )
+
+
+def _defined_names(region: ir.Region) -> set[str]:
+    """The names a region binds -- one ``target``, or a list of ``targets``."""
+    found: set[str] = set()
+    for attr in ("target", "targets"):
+        value = getattr(region, attr, None)
+        for name in value if isinstance(value, list) else [value]:
+            if isinstance(name, ir.Name):
+                found.add(name.py)
+    return found
+
+
+def _referenced_names(region: ir.Region) -> set[str]:
+    """Every variable and called-function name a region mentions."""
+    found: set[str] = set()
+
+    def walk(node: object) -> None:
+        if isinstance(node, ir.Name):
+            found.add(node.py)
+        elif isinstance(node, ir.Call):
+            found.add(node.func)
+        if dataclasses.is_dataclass(node) and not isinstance(node, type):
+            for field in dataclasses.fields(node):
+                walk(getattr(node, field.name))
+        elif isinstance(node, (list, tuple)):
+            for item in node:
+                walk(item)
+
+    for field in dataclasses.fields(region):
+        # The region's own target is what it *defines*, not what it reads.
+        if field.name not in ("target", "targets"):
+            walk(getattr(region, field.name))
+    return found
+
+
 def _inject_symbol_declarations(ws: ir.Worksheet) -> None:
     """Declare free identifiers as SymPy Symbols ahead of the first symbolic region.
 
@@ -1063,7 +1144,17 @@ def _inject_symbol_declarations(ws: ir.Worksheet) -> None:
     names: list[str] = []
     for region in ws.regions:
         if isinstance(region, ir.SymbolicEquation):
-            _collect_var_names(region.equation, names)
+            own: list[str] = []
+            _collect_var_names(region.equation, own)
+            # Every name already carries a number: nothing here is a free
+            # symbol, so the region is a written-out relation Mathcad shows and
+            # does not compute. See ir.SymbolicEquation.display_only.
+            region.display_only = bool(own) and all(
+                n in defined_before for n in own
+            )
+            # ``_collect_var_names`` de-duplicates against the list it is
+            # given, so merge by hand to keep one declaration per name.
+            names.extend(n for n in own if n not in names)
         elif isinstance(region, ir.SymbolicEval):
             _collect_var_names(region.expr, names)
             for arg in region.args:

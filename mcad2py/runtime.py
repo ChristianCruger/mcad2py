@@ -2460,6 +2460,413 @@ def linterp(vx, vy, x):
     return (float(y) * y_unit) if y_unit is not None else float(y)
 
 
+# ---------------------------------------------------------------------------
+# Interpolation & prediction
+#
+# Mathcad's "Interpolation and Prediction" family, in the order the PTC help
+# tutorial (``references/interpolation_prediction.mcdx``) walks through it.
+# Everything below is exact against that sheet's cached ``result.xml``: the
+# polynomial set is Numerical Recipes' ``polint``/``polcoe``/``ratint``, the
+# Thiele set is the classic reciprocal-difference recursion, and ``predict``
+# is Burg's maximum-entropy method (NR ``memcof`` + ``predic``).
+#
+# Every entry point takes its data as Pint quantities or plain numbers alike:
+# the abscissae, the ordinates and the query point are split into magnitudes,
+# the query is converted into the abscissae's unit, and the ordinates' unit is
+# put back on the answer.
+# ---------------------------------------------------------------------------
+
+
+def _xy_query(vx, vy, x):
+    """``(xs, ys, xq, y_unit)`` for an interpolator called as ``f(vx, vy, x)``.
+
+    ``x`` is converted into ``vx``'s unit before its magnitude is taken -- an
+    ``x`` in mm against knots in m would otherwise interpolate at a point a
+    thousand times too small, which is a plausible wrong answer rather than an
+    error. ``xq`` keeps ``x``'s shape, so a whole vector of query points (which
+    Mathcad applies element-wise, with no vectorize arrow) passes straight
+    through.
+    """
+    x_unit = getattr(vx, "units", None)
+    y_unit = getattr(vy, "units", None)
+    xs = _magnitudes(vx).reshape(-1)
+    ys = _magnitudes(vy).reshape(-1)
+    if x_unit is not None and hasattr(x, "to"):
+        xq = np.asarray(x.to(x_unit).magnitude, dtype=float)
+    else:
+        xq = np.asarray(_magnitudes(_reduce_dimensionless(x)), dtype=float)
+    return xs, ys, xq, y_unit
+
+
+def _elementwise_query(xq, fn):
+    """Apply a scalar-query interpolator over ``xq``, keeping its shape."""
+    if xq.ndim == 0:
+        return fn(float(xq))
+    return np.array([fn(float(v)) for v in xq.reshape(-1)]).reshape(xq.shape)
+
+
+# -- Cubic splines ----------------------------------------------------------
+
+
+class _Spline:
+    """The coefficient vector ``cspline``/``lspline``/``pspline`` hands to
+    :func:`interp`. Private: the generated module never names it, and a public
+    name here would be picked up as an import by any sheet whose prose says
+    "spline".
+
+    Mathcad returns this as a numeric vector whose first three elements are
+    documented only as "internal"; the rest are the spline's second derivatives
+    at the knots. Nothing but ``interp`` reads them, and inventing values for
+    that header would put plausible wrong numbers into any sheet that echoed the
+    vector -- so this is an opaque object instead, and prints as one.
+    """
+
+    __slots__ = ("kind", "xs", "ys", "y2", "x_unit", "y_unit")
+
+    def __init__(self, kind, xs, ys, y2, x_unit, y_unit):
+        self.kind = kind
+        self.xs = xs
+        self.ys = ys
+        self.y2 = y2
+        self.x_unit = x_unit
+        self.y_unit = y_unit
+
+    def __repr__(self):
+        return f"<{self.kind} spline over {len(self.xs)} knots>"
+
+
+def _spline_second_derivatives(xs, ys, kind):
+    """The spline's second derivatives at the knots, for Mathcad's three end
+    conditions.
+
+    ``lspline`` makes the curve approach a **straight line** at each end (the
+    second derivative there is zero -- the natural cubic spline), ``pspline`` a
+    **parabola** (the end piece has no cubic term, so the second derivative is
+    constant across it), and ``cspline`` a **cubic** (the third derivative runs
+    on through the first and last interior knot -- the not-a-knot condition).
+    """
+    n = len(xs)
+    if n < 3:
+        return np.zeros(n)
+    h = np.diff(xs)
+    slope = np.diff(ys) / h
+
+    a = np.zeros((n, n))
+    rhs = np.zeros(n)
+    for i in range(1, n - 1):
+        a[i, i - 1] = h[i - 1]
+        a[i, i] = 2.0 * (h[i - 1] + h[i])
+        a[i, i + 1] = h[i]
+        rhs[i] = 6.0 * (slope[i] - slope[i - 1])
+
+    if kind == "linear":            # lspline: y'' = 0 at both ends
+        a[0, 0] = a[n - 1, n - 1] = 1.0
+    elif kind == "parabolic":       # pspline: y'' constant over the end pieces
+        a[0, 0], a[0, 1] = 1.0, -1.0
+        a[n - 1, n - 1], a[n - 1, n - 2] = 1.0, -1.0
+    elif n == 3:                    # cspline: not-a-knot needs an interior knot
+        a[0, 0] = a[n - 1, n - 1] = 1.0
+    else:
+        a[0, 0], a[0, 1], a[0, 2] = h[1], -(h[0] + h[1]), h[0]
+        a[n - 1, n - 3] = h[n - 2]
+        a[n - 1, n - 2] = -(h[n - 3] + h[n - 2])
+        a[n - 1, n - 1] = h[n - 3]
+    return np.linalg.solve(a, rhs)
+
+
+def _spline(vx, vy, kind):
+    x_unit = getattr(vx, "units", None)
+    y_unit = getattr(vy, "units", None)
+    xs = _magnitudes(vx).reshape(-1)
+    ys = _magnitudes(vy).reshape(-1)
+    if len(xs) != len(ys):
+        raise ValueError("spline: vx and vy must have the same length")
+    order = np.argsort(xs, kind="stable")
+    xs, ys = xs[order], ys[order]
+    return _Spline(kind, xs, ys, _spline_second_derivatives(xs, ys, kind),
+                  x_unit, y_unit)
+
+
+def lspline(vx, vy):
+    """Mathcad ``lspline(vx, vy)``: spline coefficients with **linear** ends."""
+    return _spline(vx, vy, "linear")
+
+
+def pspline(vx, vy):
+    """Mathcad ``pspline(vx, vy)``: spline coefficients, **parabolic** ends."""
+    return _spline(vx, vy, "parabolic")
+
+
+def cspline(vx, vy):
+    """Mathcad ``cspline(vx, vy)``: spline coefficients with **cubic** ends."""
+    return _spline(vx, vy, "cubic")
+
+
+def interp(vs, vx, vy, x):
+    """Mathcad ``interp(vs, vx, vy, x)``: the spline ``vs`` evaluated at ``x``.
+
+    ``x`` may be a whole vector -- Mathcad applies ``interp`` element-wise with
+    no vectorize arrow, and the tutorial sheet plots ``fit(x)`` over a range
+    that way. Outside the knots the end cubic is continued, as Mathcad does.
+    """
+    if not isinstance(vs, _Spline):
+        raise TypeError("interp: the first argument must come from "
+                        "cspline/lspline/pspline")
+    xs, ys, y2 = vs.xs, vs.ys, vs.y2
+    _, _, xq, y_unit = _xy_query(vx, vy, x)
+
+    def at(xv):
+        i = int(np.clip(np.searchsorted(xs, xv) - 1, 0, len(xs) - 2))
+        h = xs[i + 1] - xs[i]
+        a = (xs[i + 1] - xv) / h
+        b = (xv - xs[i]) / h
+        return (a * ys[i] + b * ys[i + 1]
+                + ((a ** 3 - a) * y2[i] + (b ** 3 - b) * y2[i + 1])
+                * h * h / 6.0)
+
+    return _join(_elementwise_query(xq, at), y_unit)
+
+
+# -- Polynomial interpolation ------------------------------------------------
+
+
+def _polint(xa, ya, x):
+    """Neville's algorithm (Numerical Recipes ``polint``) -> ``(y, dy)``.
+
+    ``dy`` is the last correction applied, which is Mathcad's error estimate.
+    """
+    n = len(xa)
+    c = np.array(ya, dtype=float)
+    d = c.copy()
+    ns, dif = 0, abs(x - xa[0])
+    for i in range(n):
+        dift = abs(x - xa[i])
+        if dift < dif:
+            ns, dif = i, dift
+    y, dy = float(ya[ns]), 0.0
+    ns -= 1
+    for m in range(1, n):
+        for i in range(n - m):
+            ho, hp = xa[i] - x, xa[i + m] - x
+            den = (c[i + 1] - d[i]) / (ho - hp)
+            d[i], c[i] = hp * den, ho * den
+        if 2 * (ns + 1) < n - m:
+            dy = c[ns + 1]
+        else:
+            dy = d[ns]
+            ns -= 1
+        y = y + dy
+    return float(y), float(dy)
+
+
+def polyint(vx, vy, x):
+    """Mathcad ``polyint(vx, vy, x)``: the polynomial through **all** the data,
+    as a 2-vector ``[value, error estimate]``.
+
+    Both elements carry ``vy``'s unit -- that is how Mathcad caches the result.
+    """
+    xs, ys, xq, y_unit = _xy_query(vx, vy, x)
+    value, error = _polint(xs, ys, float(xq))
+    return _join(np.array([value, error]), y_unit)
+
+
+def polyiter(vx, vy, x, n, eps):
+    """Mathcad ``polyiter(vx, vy, x, n, ε)``: polynomial interpolation of
+    **rising order**, as a 3-vector ``[converged, order, value]``.
+
+    The order climbs from 1 to ``n``, each step taking one more of the data
+    points in the order given, and stops as soon as two successive
+    interpolations differ by less than ``ε``. ``converged`` is 1 if it stopped
+    that way and 0 if it ran out of order first. Every element carries ``vy``'s
+    unit, matching Mathcad's own cached result.
+    """
+    xs, ys, xq, y_unit = _xy_query(vx, vy, x)
+    xq = float(xq)
+    limit = min(_count(n), len(xs) - 1)
+    if y_unit is not None and hasattr(eps, "to"):
+        tol = abs(float(eps.to(y_unit).magnitude))
+    else:
+        tol = abs(_num(eps))
+    previous, value, order = None, float(ys[0]), 1
+    for order in range(1, limit + 1):
+        value, _ = _polint(xs[:order + 1], ys[:order + 1], xq)
+        if previous is not None and abs(value - previous) < tol:
+            return _join(np.array([1.0, float(order), value]), y_unit)
+        previous = value
+    return _join(np.array([0.0, float(order), value]), y_unit)
+
+
+def polycoeff(vx, vy):
+    """Mathcad ``polycoeff(vx, vy)``: the coefficients of the interpolating
+    polynomial, **lowest power first** (Numerical Recipes ``polcoe``)."""
+    if getattr(vx, "units", None) is not None:
+        raise ValueError("polycoeff: the abscissae must be dimensionless -- "
+                         "each coefficient would otherwise carry its own unit")
+    xs = _magnitudes(vx).reshape(-1)
+    ys = _magnitudes(vy).reshape(-1)
+    n = len(xs)
+    s = np.zeros(n)
+    cof = np.zeros(n)
+    s[n - 1] = -xs[0]
+    for i in range(1, n):
+        for j in range(n - 1 - i, n - 1):
+            s[j] -= xs[i] * s[j + 1]
+        s[n - 1] -= xs[i]
+    for j in range(n):
+        phi = float(n)
+        for k in range(n - 1, 0, -1):
+            phi = k * s[k] + xs[j] * phi
+        ff = ys[j] / phi
+        b = 1.0
+        for k in range(n - 1, -1, -1):
+            cof[k] += b * ff
+            b = s[k] + xs[j] * b
+    return _join(cof, getattr(vy, "units", None))
+
+
+def rationalint(vx, vy, x):
+    """Mathcad ``rationalint(vx, vy, x)``: diagonal rational-function
+    interpolation through all the data, as ``[value, error estimate]``
+    (Numerical Recipes ``ratint``, the Bulirsch-Stoer algorithm)."""
+    xs, ys, xq, y_unit = _xy_query(vx, vy, x)
+    xq = float(xq)
+    n = len(xs)
+    c = np.array(ys, dtype=float)
+    d = c + 1e-25
+    ns, hh = 0, abs(xq - xs[0])
+    for i in range(n):
+        h = abs(xq - xs[i])
+        if h == 0.0:
+            return _join(np.array([float(ys[i]), 0.0]), y_unit)
+        if h < hh:
+            ns, hh = i, h
+    y, dy = float(ys[ns]), 0.0
+    ns -= 1
+    for m in range(1, n):
+        for i in range(n - m):
+            w = c[i + 1] - d[i]
+            h = xs[i + m] - xq
+            t = (xs[i] - xq) * d[i] / h
+            dd = t - c[i + 1]
+            if dd == 0.0:
+                raise ValueError("rationalint: the interpolating function has "
+                                 "a pole at this point")
+            dd = w / dd
+            d[i] = c[i + 1] * dd
+            c[i] = t * dd
+        if 2 * (ns + 1) < n - m:
+            dy = c[ns + 1]
+        else:
+            dy = d[ns]
+            ns -= 1
+        y += dy
+    return _join(np.array([y, dy]), y_unit)
+
+
+# -- Thiele continued-fraction interpolation ---------------------------------
+
+# Mathcad substitutes this for a zero denominator in the reciprocal-difference
+# recursion rather than raising: two equal ordinates give a coefficient of 1e65
+# where the mathematics says infinity. Reproducing the substitution -- and then
+# letting ordinary floating point run on from it -- is what makes
+# ``Thielecoeff`` byte-exact on the tutorial sheet's degenerate second example,
+# whose last coefficient (-4.2764235361e-50) is a pure rounding artefact of it.
+_THIELE_TINY = 1e-65
+
+
+def Thielecoeff(vx, vy):  # noqa: N802 -- Mathcad's own spelling
+    """Mathcad ``Thielecoeff(vx, vy)``: the continued-fraction coefficients of
+    the Thiele interpolant, by reciprocal differences."""
+    xs = _magnitudes(vx).reshape(-1)
+    ys = _magnitudes(vy).reshape(-1)
+    n = len(xs)
+    coeff = np.zeros(n)
+    coeff[0] = ys[0]
+    level = np.array(ys, dtype=float)
+    for k in range(1, n):
+        nxt = np.zeros(n)
+        for i in range(k, n):
+            den = level[i] - level[k - 1]
+            nxt[i] = (xs[i] - xs[k - 1]) / (den if den != 0.0 else _THIELE_TINY)
+        coeff[k] = nxt[k]
+        level = nxt
+    return coeff
+
+
+def Thiele(vx, c, x):  # noqa: N802 -- Mathcad's own spelling
+    """Mathcad ``Thiele(vx, c, x)``: the Thiele continued fraction with
+    coefficients ``c`` (from :func:`Thielecoeff`) evaluated at ``x``."""
+    xs = _magnitudes(vx).reshape(-1)
+    cs = _magnitudes(c).reshape(-1)
+    xq = np.asarray(_magnitudes(_reduce_dimensionless(x)), dtype=float)
+
+    def at(xv):
+        value = cs[-1]
+        for k in range(len(cs) - 2, -1, -1):
+            value = cs[k] + (xv - xs[k]) / value
+        return value
+
+    return _elementwise_query(xq, at)
+
+
+# -- Linear prediction -------------------------------------------------------
+
+
+def _memcof(data, m):
+    """Burg's maximum-entropy coefficients (Numerical Recipes ``memcof``).
+
+    Returns ``d`` with ``x_k = Σ d[j]·x_{k-1-j}`` -- ``d[0]`` weights the most
+    recent sample, so Mathcad's own display of the coefficients (oldest first)
+    is this vector reversed.
+    """
+    n = len(data)
+    wk1 = data[:n - 1].copy()
+    wk2 = data[1:].copy()
+    d = np.zeros(m)
+    wkm = np.zeros(m)
+    for k in range(1, m + 1):
+        num = float(np.dot(wk1[:n - k], wk2[:n - k]))
+        den = float(np.dot(wk1[:n - k], wk1[:n - k])
+                    + np.dot(wk2[:n - k], wk2[:n - k]))
+        d[k - 1] = 2.0 * num / den
+        for i in range(1, k):
+            d[i - 1] = wkm[i - 1] - d[k - 1] * wkm[k - i - 1]
+        if k == m:
+            return d
+        wkm[:k] = d[:k]
+        for j in range(n - k - 1):
+            wk1[j] = wk1[j] - wkm[k - 1] * wk2[j]
+            wk2[j] = wk2[j + 1] - wkm[k - 1] * wk1[j + 1]
+    return d
+
+
+def predict(v, m, n):
+    """Mathcad ``predict(v, m, n)``: ``n`` values continuing the evenly-spaced
+    series ``v``, from a linear predictor fitted to ``m`` of its terms.
+
+    The predictor is Burg's maximum-entropy method, and each predicted value
+    feeds back in as data for the next -- so the run extrapolates rather than
+    repeating the last window. Mathcad rejects ``m >= rows(v)``: the predicted
+    values cannot be a linear function of *all* the data points.
+    """
+    unit = getattr(v, "units", None)
+    data = _magnitudes(v).reshape(-1)
+    m, n = _count(m), _count(n)
+    if m >= len(data):
+        raise ValueError("This value must be less than the number of data "
+                         "points.")
+    if m < 1 or n < 1:
+        raise ValueError("predict: both counts must be at least 1")
+    d = _memcof(data, m)
+    window = list(data[-m:][::-1])
+    out = []
+    for _ in range(n):
+        nxt = float(np.dot(d, window))
+        window = [nxt] + window[:-1]
+        out.append(nxt)
+    return _join(np.array(out), unit)
+
+
 def index_build(idx, fn):
     """Build a 0-based Mathcad vector by iterating an index range.
 
@@ -2627,6 +3034,99 @@ def summation(func, lower, upper):
     for i in range(lower + 1, upper + 1):
         total = total + func(i)
     return total
+
+
+def range_sum(idx, func):
+    """Mathcad's ``Σ`` over a **range variable**: ``func`` summed at every value
+    of ``idx``.
+
+    Unlike :func:`summation` (which reads written-out integer bounds) the limits
+    come from the range itself, so a range with a step other than 1 -- or one
+    that counts down -- sums exactly the terms Mathcad shows. Accumulates from
+    the first term so a unit-bearing summand never has to be added to a bare 0.
+    """
+    values = np.atleast_1d(getattr(idx, "magnitude", idx)).reshape(-1)
+    if len(values) == 0:
+        return 0
+    total_ = func(values[0])
+    for value in values[1:]:
+        total_ = total_ + func(value)
+    return total_
+
+
+# Ridders' step-shrinking ratio and table size, as in Numerical Recipes'
+# ``dfridr``: each column of the Richardson tableau cancels the next order of
+# the central difference's h² error series, and the extrapolation is stopped as
+# soon as the estimated error starts to grow (round-off overtaking truncation).
+_RIDDERS_RATIO = 1.4
+_RIDDERS_STEPS = 10
+
+
+def _central_difference(func, x, n, h):
+    """The order-``n`` central difference of ``func`` at ``x`` with step ``h``.
+
+    Built from the binomial form, so odd orders land on half-integer offsets and
+    every order keeps the O(h²) error the Richardson extrapolation below assumes.
+    """
+    total_ = None
+    for k in range(n + 1):
+        weight = (-1) ** k * math.comb(n, k)
+        term = weight * func(x + (n / 2.0 - k) * h)
+        total_ = term if total_ is None else total_ + term
+    return total_ / h ** n
+
+
+def derivative(func, x, degree=1):
+    """Mathcad's numeric derivative ``dⁿ/dxⁿ func(x)``, evaluated at ``x``.
+
+    Ridders' method: a central difference at a shrinking step, Richardson-
+    extrapolated to h -> 0, stopping when the error estimate starts to grow.
+    Unit-aware -- the step is a fraction of ``x`` and carries its unit, so the
+    answer comes back in ``func``'s unit divided by ``x``'s to the ``degree``.
+
+    Being a numeric method, this agrees with Mathcad to about 1e-6 relative
+    rather than to the ~1e-14 the closed-form helpers hit; the two use different
+    step schedules and neither is the exact value.
+    """
+    n = _count(degree)
+    if n == 0:
+        return func(x)
+    x_mag, x_unit = _split(x)
+    x_mag = float(x_mag)
+    scale = abs(x_mag) if x_mag != 0.0 else 1.0
+    step = 0.01 * scale
+
+    def at(value):
+        return func(_join(value, x_unit))
+
+    table = [[_central_difference(at, x_mag, n, step)]]
+    best, best_error = table[0][0], math.inf
+    for i in range(1, _RIDDERS_STEPS):
+        step /= _RIDDERS_RATIO
+        row = [_central_difference(at, x_mag, n, step)]
+        factor = _RIDDERS_RATIO ** 2
+        for j in range(1, i + 1):
+            row.append((row[j - 1] * factor - table[i - 1][j - 1])
+                       / (factor - 1.0))
+            factor *= _RIDDERS_RATIO ** 2
+            error = max(_error_size(row[j] - row[j - 1]),
+                        _error_size(row[j] - table[i - 1][j - 1]))
+            if error < best_error:
+                best, best_error = row[j], error
+        table.append(row)
+        # Round-off has overtaken truncation: shrinking the step further only
+        # makes it worse, so stop where the tableau was best.
+        if _error_size(row[i] - table[i - 1][i - 1]) >= 2.0 * best_error:
+            break
+    # The step was differenced as a bare magnitude, so ``x``'s unit still has to
+    # come off the answer -- once per order taken.
+    return best if x_unit is None else best / x_unit ** n
+
+
+def _error_size(difference):
+    """The magnitude of a Richardson-tableau difference, as a plain float."""
+    value = getattr(difference, "magnitude", difference)
+    return float(abs(np.asarray(value, dtype=float).reshape(-1)[0]))
 
 
 def total(v):

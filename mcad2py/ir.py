@@ -293,6 +293,38 @@ class Summation(Expr):
 
 
 @dataclass
+class RangeSum(Expr):
+    """Mathcad's ``Σ`` over a **range variable** (no bounds written).
+
+    The XML is a ``<ml:summation>`` that *does* name a bound variable but leaves
+    its ``<upperBound>`` an empty placeholder: the index is a range variable
+    already defined on the sheet (``i := 0 .. rows(x) - 1``), and the operator
+    runs over every value in it. Emitted as ``range_sum(<index>, <func>)``,
+    where the index is that same range variable by name.
+    """
+
+    func: Lambda
+    index: str
+
+
+@dataclass
+class Derivative(Expr):
+    """Mathcad's numeric derivative operator ``d^n/dx^n f(x)``.
+
+    The XML is ``<ml:apply><ml:derivative /><ml:lambda>…<ml:degree>``; the
+    lambda's bound variable is the one differentiated against, and an empty
+    ``<ml:degree>`` means first order. Emitted as
+    ``derivative(<func>, <var>, <degree>)`` -- evaluated *at* the variable, which
+    is in scope because the operator only ever appears inside a definition of a
+    function of it.
+    """
+
+    func: Lambda
+    var: str
+    degree: Expr
+
+
+@dataclass
 class VectorSum(Expr):
     """Mathcad's bare ``Σ`` over a whole vector (no index bounds).
 
@@ -589,10 +621,18 @@ class SymbolDeclarations(Region):
 
 @dataclass
 class SymbolicEquation(Region):
-    """A standalone symbolic equation shown as a step (assigned to nothing)."""
+    """A standalone symbolic equation shown as a step (assigned to nothing).
+
+    ``display_only`` marks one whose names the sheet has *already* given numeric
+    values -- a tutorial writing out the recurrence ``X[k] = c[0]·X[k-3] + …``
+    beside the data it applies to. Mathcad computes nothing for such a region,
+    and evaluating it in Python would index a real array with a real range
+    variable and raise, so it is emitted as a comment instead of as ``Eq(...)``.
+    """
 
     equation: Equation
     source: SourceRef | None = None
+    display_only: bool = False
 
 
 @dataclass

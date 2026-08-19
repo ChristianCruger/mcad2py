@@ -88,6 +88,16 @@ _CALL_KINDS = {
     "rF": VECTOR,
     "rlnorm": VECTOR,
     "rpois": VECTOR,
+    # Interpolation & prediction. ``interp`` and ``Thiele`` are deliberately
+    # absent -- they follow the shape of the query point, which is a scalar in
+    # a fit function and a whole vector when a plot samples the fit. The four
+    # below always return an array whatever they were asked at.
+    "polyint": VECTOR,
+    "polyiter": VECTOR,
+    "polycoeff": VECTOR,
+    "rationalint": VECTOR,
+    "Thielecoeff": VECTOR,
+    "predict": VECTOR,
     # ``histogram`` is intentionally *not* listed: it returns an ``n x 2``
     # matrix for ``histogram(n, A)`` but a bare count vector for
     # ``histogram(intvls, A)``, and which one depends on the argument's shape.
@@ -274,6 +284,8 @@ _EXPR_FIELDS: dict[type, tuple[str, ...]] = {
     ir.Lambda: ("body",),
     ir.Integral: ("func", "lower", "upper"),
     ir.Summation: ("func", "lower", "upper"),
+    ir.RangeSum: ("func",),
+    ir.Derivative: ("func", "degree"),
 }
 
 

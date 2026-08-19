@@ -34,7 +34,7 @@ sample worksheet will hit an unsupported builtin.
 | Rounding / truncation | `ceil`, `floor`, `round` (→ `mround`) | dimensionless-aware; keep a unit if dimensioned |
 | Min / max | `min` `max` (element-wise `np.minimum/maximum`), `mc_min` `mc_max` (flattening reductions) | Mathcad `max/min` flatten *all* args to a scalar; the element-wise form only appears under a vectorize arrow |
 | Absolute value / size | `abs`, `length` (→ `len`) | |
-| Interpolation | `linterp` | unit-aware, **extrapolates** past the knots (unlike `np.interp`); arg order reversed vs. numpy |
+| Interpolation | `linterp`, `lspline` `pspline` `cspline` + `interp`, `polyint` `polyiter` `polycoeff`, `rationalint`, `Thiele` `Thielecoeff`, `predict` | `linterp` is unit-aware and **extrapolates** past the knots (unlike `np.interp`; arg order reversed vs. numpy). The splines differ only in their end condition (natural / parabolic / not-a-knot) and `interp` applies element-wise to a whole query vector. `polyint`/`rationalint` return `[value, error]` and `polyiter` `[converged, order, value]`, the whole vector carrying the ordinates' unit. `predict` is Burg's maximum-entropy method. See `references/interpolation_prediction.mcdx` |
 | Vector & matrix | `rows` `cols` `last` `length`, `identity` `diag` `augment` `stack` `submatrix` `matrix(m,n,f)`, `det` `tr` `lsolve` `geninv` `rank` `rref`, `norm` `norm1` `norm2` `norme` `normi`, `cond1` `cond2` `conde` `condi`, `eigenvals` `eigenvec` `eigenvecs` `genvals` `genvecs` `svds`, `sort` `reverse` `csort` `rsort`, `mean`, `IsArray` `IsScalar` | plus the operators: `\|x\|` (determinant *or* magnitude), row extraction, `×` cross product. Linear algebra runs on magnitudes; shape/ordering helpers keep units. Eigen ordering and eigenvector signs are LAPACK's — see [mcdx-schema-notes.md](mcdx-schema-notes.md) |
 
 ### Vector / matrix & reduction helpers (runtime)
@@ -89,7 +89,7 @@ Legend: ✅ done · 🟡 partial · ⬜ not started · ⛔ out of scope (unlikel
 | **Truncation & round-off** | 🟡 | ceil floor round | `trunc`, `Ceil/Floor/Round/Trunc(x, y)` (round-to-multiple), `mantissa` |
 | **Vector & matrix** | ✅ | the full list above (see `references/matrices.mcdx`), plus the table searches `match` `lookup` `vlookup` `hlookup` `vhlookup` (see `references/stack_augment_lookup.mcdx`) | — |
 | **Solving & optimization** | 🟡 | `find` (numeric), `solve` (symbolic), `lsolve` (linear systems) | `root`, `polyroots`, `minerr`, `maximize` `minimize`, `Isolve` |
-| **Interpolation & prediction** | 🟡 | `linterp` | `cspline`/`pspline`/`lspline` + `interp`, `bicubic`/`bilinear`, `predict`, `sinterp` |
+| **Interpolation & prediction** | ✅ | `linterp`, `lspline` `pspline` `cspline` + `interp`, `polyint` `polyiter` `polycoeff`, `rationalint`, `Thiele` `Thielecoeff`, `predict` | `bicubic`/`bilinear`/`sinterp` (2-D); and the least-squares spline set `Spline2`/`Binterp`/`DWS`, whose adaptive knot placement PTC does not document — listed in `mapping.UNIMPLEMENTED` rather than guessed at (see `references/interpolation_prediction.mcdx`) |
 | **Statistics** | ✅ | mean median mode gmean hmean, var Var stdev Stdev, skew kurt, percentile Rank histogram, corr cvar, Ftest Spear kendltau kendltau2 contingtbl | — (see `references/statistics.mcdx`). Lower-case `var`/`stdev` are the *population* forms, capitalised `Var`/`Stdev` the *sample* forms |
 | **Probability distributions** | ✅ | the `d/p/q/r` families for `norm` `t` `weibull` `unif` `exp` `gamma` `beta` `F` `chisq` `lnorm` `logis` `cauchy` `geom` `hypergeom` `binom` `nbinom` `pois`, plus `cnorm` (Mathcad-15's `pnorm(x,0,1)` alias). All apply element-wise to a vector argument | the remaining niche families, finance-adjacent (see `references/probability.mcdx`) |
 | **Regression & smoothing** | 🟡 | `slope` `intercept` (least-squares line) | `line`, `regress` `loess`, `linfit` `genfit` `expfit` `logfit` `pwrfit` `sinfit`, `medsmooth` `ksmooth` `supsmooth` |
@@ -143,10 +143,11 @@ fixture in [`references/`](../references/).
 
 Ranked by expected payoff × frequency in the kind of sheets this repo converts, and roughly by effort.
 
-1. **Cubic-spline interpolation** — `cspline`/`lspline`/`pspline` + `interp`, extending the existing
-   `linterp`. Maps onto `scipy.interpolate`. Common for material curves. *(The distribution-family batch
-   that used to head this item is done — see `references/probability.mcdx`; only out-of-scope niche
-   families remain.)*
+1. **Solving** — see item 2; the interpolation batch that used to head this list is done (see
+   `references/interpolation_prediction.mcdx`). What remains of it is 2-D interpolation
+   (`bicubic`/`bilinear`/`sinterp`) and the least-squares spline set (`Spline2`/`Binterp`/`DWS`),
+   which needs Mathcad's undocumented adaptive knot-placement rule reverse-engineered before it can
+   be written without inventing numbers.
 2. **More solving** — `root` (scalar) and `polyroots`, then `minerr`/`maximize`/`minimize` (extend the
    `solve_block` machinery: `minerr` = least-squares residual, the optimizers = `scipy.optimize`).
 3. **Complex-number accessors** — `Im`, `arg`, conjugate. Trivial; occasionally needed. (The imaginary

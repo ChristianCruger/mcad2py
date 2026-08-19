@@ -170,6 +170,25 @@ FUNCTIONS = {
     "vlookup": "vlookup",
     "hlookup": "hlookup",
     "vhlookup": "vhlookup",
+    # --- Interpolation & prediction (all runtime helpers; see runtime.py) ---
+    # ``linterp`` is the piecewise-linear one; the three splines differ only in
+    # how the curve ends (linear / parabolic / cubic) and all feed ``interp``.
+    "linterp": "linterp",
+    "lspline": "lspline",
+    "pspline": "pspline",
+    "cspline": "cspline",
+    "interp": "interp",
+    # The polynomial set. ``polyint``/``rationalint`` each return
+    # ``[value, error estimate]`` and ``polyiter`` ``[converged, order, value]``
+    # -- Mathcad's own result shape, not a bare number.
+    "polyint": "polyint",
+    "polyiter": "polyiter",
+    "polycoeff": "polycoeff",
+    "rationalint": "rationalint",
+    "Thiele": "Thiele",
+    "Thielecoeff": "Thielecoeff",
+    # Linear prediction (Burg's maximum-entropy method).
+    "predict": "predict",
     # --- Statistics (all runtime helpers; see runtime.py) -------------------
     # Note the capitalisation: Mathcad's ``var``/``stdev`` divide by n (the
     # population forms) and ``Var``/``Stdev`` by n-1 (the sample forms).
@@ -270,6 +289,22 @@ FUNCTIONS = {
     "ppois": "ppois",
     "qpois": "qpois",
     "rpois": "rpois",
+}
+
+# Mathcad builtins we know of but do not implement -> why, for the
+# ``# TODO unsupported region`` comment the converter leaves in their place.
+# Naming them here is what keeps a sheet that uses one loadable: the call would
+# otherwise emit as a bare name and raise ``NameError`` at import, taking every
+# later region with it (see ``_mark_unimplemented_builtins``). A worksheet that
+# defines the name itself is untouched.
+UNIMPLEMENTED = {
+    "Spline2": "least-squares B-spline with adaptive knot placement; Mathcad's "
+               "knot-choosing rule is undocumented and not reproducible here",
+    "Binterp": "evaluates a Spline2 B-spline vector, whose layout Spline2 "
+               "would have to define",
+    "DWS": "reads the Durbin-Watson statistic out of a Spline2 vector",
+    "GrubbsClassic": "Grubbs outlier test returning Mathcad's own result table",
+    "trim": "drops the rows a GrubbsClassic test flagged",
 }
 
 # Mathcad symbolic command keyword (first id of a <ml:command> sequence) ->

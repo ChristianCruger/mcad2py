@@ -499,3 +499,57 @@ that calls either desynchronises the stream for everything after it.
 A sheet that never calls `Seed` **is** reproducible: Prime opens a new worksheet at state 1, the same
 as `Seed(1)`. `test_a_fresh_worksheet_starts_at_state_one` pins that the module-level generator starts
 there too.
+
+## `tests/test_interpolation.py` — `references/interpolation_prediction.mcdx`
+
+PTC's own "Interpolation and Prediction" tutorial. 28 evaluated regions covering the three cubic
+splines and `interp`, the polynomial set (`polyint` / `polyiter` / `polycoeff`), the rational and
+Thiele continued-fraction interpolants, and `predict`. Echoes are paired with regions by `region-id`
+via the shared `cached_results` / `result_refs` helpers, as in `test_statistics.py`.
+
+What the sheet pinned that no reading of the documentation would have given:
+
+| Test | Pins |
+|------|------|
+| `test_sheet_matches_cached_results` | All 27 computable echoes against `result.xml` |
+| `test_polyiter_stops_on_the_change_not_the_error_estimate` | The convergence rule. The same data and query converge at **order 3** when allowed 5, and report failure at **order 2** when capped there — and `polyint`'s error estimate for that query is exactly 0. So `polyiter` compares two *successive interpolations*, not the error estimate, and it takes the data points **in the order given**, not nearest-first |
+| `test_thielecoeff_substitutes_a_tiny_denominator_for_zero` | Mathcad divides by **1e-65** where a reciprocal difference is infinite. The sheet's degenerate example caches `1e65`, `-1e-65`, `-1e65` and then `-4.2764235361e-50` — that last one is pure floating-point noise from the substitution, and reproducing the substitution reproduces it to the last digit |
+| `test_predict_matches_the_sheets_hand_written_recurrence` | `predict` is Burg's maximum-entropy method (NR `memcof` + `predic`). The sheet writes the predictor out term by term beside the builtin call, which is what identified the method and the coefficient order (`memcof`'s `d[0]` weights the *most recent* sample; Mathcad displays them oldest-first) |
+| `test_predict_refuses_to_use_every_data_point` | `m >= rows(v)` is an `<engineError>` in Mathcad, wording included |
+| `test_polyint_family_carries_the_ordinates_unit` | Mathcad tags the **whole** returned vector with `vy`'s unit — `polyiter`'s converged flag and order arrive in seconds too. Cached as a `<unitedValue>` wrapping the matrix, so this is the cache's own reading |
+| `test_the_three_splines_differ_only_at_the_ends` | `lspline` = natural (y'' = 0), `pspline` = parabolic ends (y'' constant over the end piece), `cspline` = not-a-knot |
+| `test_unimplemented_builtins_do_not_break_the_module` | The `Spline2` section degrades to comments and the rest of the sheet still runs |
+
+**Documented divergences.**
+
+*The least-squares spline section is not implemented.* `Spline2`, `Binterp` and `DWS` (with the
+`GrubbsClassic` / `trim` outlier pair) drive the sheet's first 14 echoes. `Spline2` returns a packed
+vector — `[order, knot count, 35 knots, 38 B-spline coefficients, 0, Durbin-Watson, 0.99934, 0.4495]`
+— whose knots are placed **adaptively**: they are neither uniform nor quantiles of the data, and PTC
+documents no rule. Guessing one would return plausible wrong numbers from a green-looking sheet,
+which is the failure this repo's conventions exist to prevent, so the five names are listed in
+`mapping.UNIMPLEMENTED` and their regions convert to visible `# TODO unsupported region` comments
+instead. `DWS` is trivially `b[last(b) - 2]` (the sheet proves it, echoing both) and `trim` just drops
+a row — but neither is reachable without `Spline2`, so they wait with it.
+
+*The second derivative at an interior knot* — `sd_p(vx[1])` and `sd_p(vx[last-1])`, taken with the
+numeric derivative operator — agrees to ~1e-3 and ~1e-5, not 1e-14. A spline's third derivative jumps
+at a knot, so any finite difference straddling one is wrong in its last digits; Mathcad's own two
+values for what is provably the *same* number (a parabolic end piece has constant y'') disagree at the
+7th digit. The values at the **ends**, where the end piece continues smoothly and Mathcad extrapolates
+along it, match to 1e-13 — that is the real check on the spline coefficients, and it is exact enough to
+confirm the end conditions above.
+
+*`polycoeff`* agrees to 1e-11 rather than 1e-14: a 5th-degree fit over x ≈ 300…333 has a leading
+coefficient of 1.8e4 against a trailing one of 2.4e-6, and the cancellation between them is the whole
+computation.
+
+**What the worksheet does not reach.** Every interpolator on the sheet is called on dimensionless data
+except the `polyint`/`polyiter` block, and no spline there is ever asked for a *dimensioned* query
+point or handed a query in a different unit from its knots. The direct unit tests below the fixture
+ones cover: a query in mm against knots in m (through `linterp`, `interp` and `polyint` alike, plus a
+tolerance in ms against ordinates in s); `interp` over a whole **vector** of query points, which is
+how the sheet's plots call it but which no echo checks; the three splines' end conditions read off
+their coefficients; `rationalint` on a pole and on an exact hit; a `Thielecoeff` → `Thiele` round trip;
+the derivative operator on a **dimensioned** argument (m/s² differentiated twice against s); and
+`range_sum` over a stepped range and over a unit-bearing summand.

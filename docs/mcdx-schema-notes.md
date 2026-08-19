@@ -913,3 +913,66 @@ acceptance rate, and our `rnorm` lands on the same state to the bit.
 
 The file is a **Prime 12** worksheet and still declares `worksheet50`/`math50`, like every other
 fixture, so nothing in the parser needed a version check.
+
+## Interpolation & prediction (`interpolation_prediction.mcdx`)
+
+PTC's own tutorial sheet for the family. Three XML constructs it is the first fixture to reach, then
+the algorithms the cache identified.
+
+**The numeric derivative operator.** `<ml:apply><ml:derivative /><ml:lambda>…<ml:degree>`. The
+lambda's single bound variable is the one differentiated against, and `<ml:degree>` holds the order —
+an empty `<ml:placeholder />` there means first order, not "no derivative". Parsed to `ir.Derivative`
+and emitted as `derivative(<lambda>, <var>, <degree>)`; the variable is in scope because the operator
+only ever appears inside a definition of a function of it (`sd_p(x) := d²/dx² fitp(x)`). The runtime
+helper is Ridders' method — a central difference at a shrinking step, Richardson-extrapolated — and it
+divides `x`'s unit off the answer once per order.
+
+**Σ over a range variable.** A `<ml:summation>` that *names* a bound variable but leaves both bounds
+as empty placeholders is Mathcad's **range sum**: the index is a range variable already defined on the
+sheet and the operator runs over every value in it. That is a third reading of the same element — the
+existing two being the bounded sum (`ir.Summation`) and the bare `Σ` over a vector, which has *no*
+bound variable (`ir.VectorSum`). Emitted as `range_sum(<index>, <lambda>)`, reading its limits off the
+range itself so a step other than 1 sums the terms Mathcad shows. Without this the bounds emitted as
+`None  # placeholder` and the trailing comment swallowed the closing parenthesis, so the module would
+not even parse — the same hazard `print_lines` exists to avoid.
+
+**A displayed equation whose names are already numbers.** A bare `<ml:apply><ml:equal />` region is
+normally a symbolic step: its identifiers carry no `labels` attribute, and the converter declares them
+as SymPy `Symbol`s. This sheet writes the linear-prediction recurrence `X[k] = c[0]·X[k-3] + …` out
+beside the very data it applies to, so `X`, `c` and `k` all *do* have numeric values. Mathcad computes
+nothing for the region either way, but evaluating it in Python indexes a real 7-element array with a
+real range variable and raises. `ir.SymbolicEquation.display_only` marks the case (every free name
+already defined above) and both backends emit it as a `# shown, not computed:` comment.
+
+**`Spline2` / `Binterp` / `DWS`, and `GrubbsClassic` / `trim`** are genuine Prime built-ins — the
+worksheet has no include region and no add-in reference, and Prime labels them `FUNCTION` exactly like
+`cspline`. `Spline2(x, y, n[, w][, level | knots])` returns one packed vector: `[order, knot count,
+<count+1> knots, <n> B-spline coefficients, 0, Durbin-Watson statistic, 0.99934, 0.44954]`. The sheet
+proves `DWS(b)` is just `b[last(b) - 2]` by echoing both. The knots are placed **adaptively** — for the
+536-row example they run 309.4, 445.9, 539.7, 592.5 … dense in the middle and sparse at the ends,
+matching neither a uniform spacing nor the data's quantiles — and passing `level := 0.001` moves the
+count from 34 to 32, so the placement is driven by a fit criterion PTC does not document. Reproducing
+it is a research task, not a mapping entry, so the five names sit in `mapping.UNIMPLEMENTED` and the
+converter suppresses their regions instead of inventing numbers.
+
+**The algorithms, identified from the cache** (all exact, 0.0 error unless noted):
+
+| Function | Method | How the cache identified it |
+|----------|--------|------------------------------|
+| `polyint` | Numerical Recipes `polint` (Neville) | `[value, error]`, error being the last correction added — the second cached element |
+| `polycoeff` | NR `polcoe` | Lowest power first; agrees to 1e-11, the fit being ill-conditioned |
+| `polyiter` | Rising order over the **first** k+1 points, stopping when two successive interpolations differ by < ε | Three cached calls: order 3 when allowed 5, order 2 and *not* converged when capped there — while `polyint`'s error estimate for that query is exactly 0 |
+| `rationalint` | NR `ratint` (Bulirsch-Stoer) | Only plotted on the sheet, never echoed |
+| `Thielecoeff` | Reciprocal differences, dividing by **1e-65** where the denominator is 0 | The degenerate example caches `1e65`, `-1e-65`, `-1e65`, `-4.2764235361e-50`; that last one is floating-point noise from the substitution and comes out to the last digit |
+| `Thiele` | The continued fraction those coefficients define | The sheet writes `Q(a)` out by hand next to it |
+| `predict` | Burg's maximum entropy (NR `memcof` + `predic`), each prediction fed back as data | The sheet writes the recurrence out term by term, with the coefficients cached: `memcof`'s `d[0]` weights the most recent sample, so Mathcad's display order is this vector reversed |
+| `lspline` / `pspline` / `cspline` | Natural / parabolic-end / not-a-knot cubic spline | The cached second derivatives of the fits at the end knots: 0 for `lspline`, and `-0.0114488208` for `pspline` — which is exactly the y'' our tridiagonal solve puts at *both* of the first two knots, the parabolic condition |
+
+Two cache readings worth keeping:
+
+* **The whole returned vector carries the ordinates' unit.** `polyint(X, Y, U)` with `Y` in seconds
+  caches as a `<unitedValue>` wrapping the 2×1 matrix — and so does `polyiter`, whose converged flag
+  and order therefore arrive in seconds as well. Mathcad tags the result, not the elements.
+* **`interp` extrapolates along the end piece.** `sd_p(vx[0])` — a second derivative taken *at* the
+  first knot, so its finite difference reaches outside the data — caches the exact y'' of the end
+  polynomial, which only happens if Mathcad continues that polynomial rather than clamping.
