@@ -279,9 +279,9 @@ def test_the_small_sheets_knots_are_uniform():
 # starting knot set, which the two earlier sheets could not.
 
 WIGGLY_SHEET = reference("spline2A")
-WIGGLY_DEFAULT = "7"  # b  := Spline2(x, y, 3)         -> 6 intervals
-WIGGLY_HALF = "8"  # b2 := Spline2(x, y, 3, 0.5)    -> 4 intervals
-WIGGLY_TINY = "9"  # b3 := Spline2(x, y, 3, 0.001)  -> 3 intervals
+WIGGLY_DEFAULT = "7"  # b  := Spline2(x, y, 3)         -> 6 intervals, moved
+WIGGLY_HALF = "8"  # b2 := Spline2(x, y, 3, 0.5)    -> 29 intervals, moved
+WIGGLY_TINY = "9"  # b3 := Spline2(x, y, 3, 0.001)  -> 6 intervals, uniform
 WIGGLY_X = "2"
 WIGGLY_Y = "6"
 
@@ -299,73 +299,66 @@ def _uniform_in_index(x: np.ndarray, intervals: int) -> np.ndarray:
                      np.arange(last + 1), x)
 
 
-@pytest.mark.parametrize("ref", [WIGGLY_DEFAULT, WIGGLY_TINY])
-def test_the_starting_knots_are_uniform_in_data_index(wiggly, ref):
-    """Mathcad's first knot set for each interval count puts an **equal number
+def test_the_starting_knots_are_uniform_in_data_index(wiggly):
+    """Mathcad's first knot set at each interval count puts an **equal number
     of data points** in each interval, not an equal width.
 
     Exactly, to the last bit, on x whose spacing varies by a factor of four --
     so this is not a coincidence of near-uniform data. The knot lands between
     two data points and is linearly interpolated there, which is where the
-    non-round values like 0.834022 come from.
+    non-round values come from. The ``level = 0.001`` call is the one that
+    stops on this set; the other two go on to move the knots.
+    """
+    x, _, cache = wiggly
+    packed = np.array(cache[WIGGLY_TINY])
+    intervals = int(packed[1])
+    assert packed[2:3 + intervals] == pytest.approx(
+        _uniform_in_index(x, intervals), rel=0, abs=0)
+
+
+@pytest.mark.parametrize("ref", [WIGGLY_DEFAULT, WIGGLY_HALF])
+def test_a_harder_level_moves_the_knots_off_that_set(wiggly, ref):
+    """When the uniform-in-index fit is still rejected, Mathcad moves the knots
+    before adding another interval. Both of these calls stop on a moved set --
+    the default one at the *same* six intervals the ``level = 0.001`` call
+    accepted, which is what shows the move is a separate step rather than more
+    knots. The rule behind the move is the last unsolved piece of this family.
     """
     x, _, cache = wiggly
     packed = np.array(cache[ref])
     intervals = int(packed[1])
-    knots = packed[2:3 + intervals]
-    assert knots == pytest.approx(_uniform_in_index(x, intervals),
-                                  rel=0, abs=0)
-
-
-def test_a_stricter_level_can_return_a_redistributed_knot_set(wiggly):
-    """``level = 0.5`` stops on a knot set that is **not** uniform in index.
-
-    Mathcad tries the uniform-in-index set at each interval count first and,
-    when the Durbin-Watson test still fails, moves the knots before adding
-    another. This is the one cached example of that second step on small data:
-    it drags the interior knots from 1.375/3.5/6.375 out to 3.54/6.93/8.91,
-    towards the two kinks. The rule behind that move is the piece of the family
-    that is still unsolved -- see the schema note.
-    """
-    x, _, cache = wiggly
-    packed = np.array(cache[WIGGLY_HALF])
-    knots = packed[2:7]
-    assert int(packed[1]) == 4
-    assert np.abs(knots - _uniform_in_index(x, 4)).max() > 3.0
+    assert np.abs(packed[2:3 + intervals]
+                  - _uniform_in_index(x, intervals)).max() > 0.1
 
 
 @pytest.mark.parametrize("ref", [WIGGLY_DEFAULT, WIGGLY_HALF, WIGGLY_TINY])
 def test_every_cached_vector_is_reproduced_from_its_own_knots(wiggly, ref):
-    """Given the knots, the coefficients, the residual standard error and the
-    statistic all come back exactly -- on three different interval counts."""
+    """Given the knots, everything else comes back -- at 6 and at 29
+    intervals, where 29 leaves only 13 residual degrees of freedom."""
     x, y, cache = wiggly
     packed = np.array(cache[ref])
     intervals = int(packed[1])
-    through = 6 + 2 * intervals  # knots, coefficients, rse, 0, DWS
     fit = np.asarray(Spline2(x, y, 3, packed[2:3 + intervals]))
-    assert fit[:through] == pytest.approx(packed[:through], rel=1e-12,
-                                          abs=1e-12)
+    assert fit == pytest.approx(packed, rel=0, abs=1e-8)
 
 
-def test_the_sheets_noise_is_our_random_stream_one_call_later(wiggly):
-    """A documented divergence, and *not* a generator bug.
+def test_the_sheets_noise_is_our_own_random_stream(wiggly):
+    """``Seed(1)`` then ``rnorm(45, 0, 0.85)``, reproduced exactly.
 
-    The sheet does ``Seed(1)`` then ``nz := rnorm(45, 0, 0.85)``, so executing
-    the generated module gives a different ``y`` from the cached one. The cached
-    values are our stream at offset **45** -- exactly one whole ``rnorm(45, …)``
-    call further on -- so Prime drew the vector twice across the saves that
-    produced this file. Pinning the offset says the generator is right and the
-    worksheet state is what moved.
+    An earlier save of this sheet had drawn the vector twice, so its cached
+    noise was our stream at offset 45; the sheet was re-saved and it now starts
+    where it should. Keeping the check is worth it either way -- it is the only
+    place a fixture pins the generator against data that was *used* for
+    something rather than just echoed.
     """
     from mcad2py.runtime import Seed, rnorm
 
     x, y, _ = wiggly
     kinked = np.where(x <= 5, 1 + 0.2 * x,
                       np.where(x <= 8, 2 + (x - 5) ** 2, 11 - 1.5 * (x - 8)))
-    cached_noise = (y - kinked) / 0.85
     Seed(1)
-    stream = np.asarray(rnorm(90, 0, 1)).reshape(-1)
-    assert stream[45:] == pytest.approx(cached_noise, rel=1e-12, abs=1e-12)
+    stream = np.asarray(rnorm(45, 0, 0.85)).reshape(-1)
+    assert kinked + stream == pytest.approx(y, rel=1e-12, abs=1e-12)
 
 
 # ---------------------------------------------------------------------------
@@ -416,3 +409,110 @@ def test_a_higher_degree_is_refused_the_way_mathcad_refuses_it():
     assert "order_too_big" in codes
     with pytest.raises(ValueError, match="no greater than 3"):
         Spline2(np.arange(31.0), np.arange(31.0), 4, np.array([0.0, 15.0, 30.0]))
+
+
+# ---------------------------------------------------------------------------
+# ``references/spline2C.mcdx`` -- the same 45 points as ``spline2A``, fitted at
+# eight values of ``level``. It is what turned the knot-count loop from a guess
+# into a rule, because the interval counts it returns are sharply **non**
+# monotone in ``level``: 6, 6, 15, 15, 29, 5, 5, 7.
+
+LADDER_SHEET = reference("spline2C")
+# result-id -> (level, interval count)
+LADDER = {"7": (0.1, 6), "8": (0.2, 6), "9": (0.3, 15), "10": (0.4, 15),
+          "11": (0.5, 29), "12": (0.6, 5), "13": (0.7, 5), "14": (0.8, 7)}
+
+
+@pytest.fixture(scope="module")
+def ladder() -> tuple[np.ndarray, np.ndarray, dict[str, list[float]]]:
+    cache = cached_results(LADDER_SHEET)
+    return np.array(cache["2"]), np.array(cache["6"]), cache
+
+
+def _phase_one(x, y, intervals, degree=3):
+    """``(knots, upper, lower)`` for the uniform-in-index fit at that count."""
+    from mcad2py.runtime import (_bspline_design, _clamped_knots,
+                                 _durbin_watson, _durbin_watson_bounds)
+
+    knots = _uniform_in_index(x, intervals)
+    design = _bspline_design(_clamped_knots(knots, degree), degree, x)
+    coef, *_ = np.linalg.lstsq(design, y, rcond=None)
+    statistic = _durbin_watson(y - design @ coef)
+    return (knots,) + _durbin_watson_bounds(len(x), design.shape[1], statistic)
+
+
+@pytest.mark.parametrize("ref", sorted(LADDER, key=int))
+def test_every_rung_is_reproduced_from_its_own_knots(ladder, ref):
+    x, y, cache = ladder
+    packed = np.array(cache[ref])
+    intervals = int(packed[1])
+    assert intervals == LADDER[ref][1]
+    fit = np.asarray(Spline2(x, y, 3, packed[2:3 + intervals]))
+    assert fit == pytest.approx(packed, rel=0, abs=1e-8)
+
+
+@pytest.mark.parametrize("first,second", [("7", "8"), ("9", "10"), ("12", "13")])
+def test_the_moved_knot_set_does_not_depend_on_level(ladder, first, second):
+    """Two levels that stop at the same interval count return the *identical*
+    vector. So the moved set is a function of the data and the count alone --
+    ``level`` chooses when to stop, never where the knots go.
+    """
+    _, _, cache = ladder
+    assert cache[first] == cache[second]
+
+
+def test_the_loop_accepts_the_first_fit_whose_lower_bound_beats_level(ladder):
+    """The rungs from 0.1 to 0.5 form a ladder, and each one is the first fit
+    that clears its own level.
+
+    The moved fits reach lower bounds of 0.034 (5 intervals), 0.203 (6), 0.065
+    (7), 0.461 (15) and 0.520 (29). Read against the levels: 0.1 and 0.2 stop
+    at 6 because 0.203 is the first value above them; 0.3 and 0.4 pass 6 and 15
+    is the next above; 0.5 needs 29. Each cached fit clears its level, and the
+    largest lower bound of any *smaller* cached count does not -- which is what
+    this asserts.
+    """
+    _, _, cache = ladder
+    rungs = sorted(((LADDER[ref][0], int(np.array(cache[ref])[1]),
+                     float(np.array(cache[ref])[-1]))
+                    for ref in LADDER if LADDER[ref][0] <= 0.5),
+                   key=lambda row: row[0])
+    for level, intervals, lower in rungs:
+        assert lower > level
+        smaller = [low for _, count, low in rungs if count < intervals]
+        assert all(low <= level for low in smaller)
+
+
+def test_the_level_0_001_rung_is_predicted_from_scratch(wiggly):
+    """The one cached fit the loop reproduces end to end, with no unsolved step.
+
+    ``spline2A``'s ``level = 0.001`` call stops on a uniform-in-index set, so
+    sweeping interval counts and taking the first whose *lower* bound clears
+    0.001 must land on exactly Mathcad's knots -- count included.
+    """
+    x, y, cache = wiggly
+    packed = np.array(cache[WIGGLY_TINY])
+    for intervals in range(1, 20):
+        knots, _upper, lower = _phase_one(x, y, intervals)
+        if lower > 0.001:
+            break
+    assert intervals == int(packed[1])
+    assert knots == pytest.approx(packed[2:3 + intervals], rel=0, abs=0)
+    assert lower == pytest.approx(packed[-1], rel=0, abs=1e-9)
+
+
+def test_the_three_highest_levels_are_accepted_on_the_upper_bound(ladder):
+    """0.6, 0.7 and 0.8 stop at 5, 5 and 7 intervals -- *fewer* than 0.5's 29.
+
+    Their lower bounds (0.034, 0.034, 0.065) are far below their levels, so the
+    ladder above cannot explain them; their **upper** bounds (0.768, 0.768,
+    0.972) do clear. Whatever the loop does when it cannot satisfy a level, it
+    falls back to the weaker half of the bounds test and to a knot count it had
+    already passed. That fallback is not reproduced, and this test records the
+    evidence rather than a rule.
+    """
+    _, _, cache = ladder
+    for ref in ("12", "13", "14"):
+        level = LADDER[ref][0]
+        packed = np.array(cache[ref])
+        assert packed[-1] < level < packed[-2]

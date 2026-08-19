@@ -14,9 +14,10 @@ print(disp(x[i]))
 
 q = lambda t: 5 + sin(t / 2)
 
-Seed(2)
+print(Seed(2))
 
 nz = rnorm(N + 1, 0, 0.4)
+print(nz)
 
 y = index_build(i, lambda i: q(x[i]) + nz[i])
 print(y[i])

@@ -1100,37 +1100,49 @@ behind. `Spline2` now returns the whole packed vector, with nothing left as `nan
 That sheet also pins a hard limit: `Spline2(x, y, 4, …)` is the one region **Mathcad itself** will not
 compute, returning an `order_too_big` engine error whose argument is 3. The family is capped at cubic.
 
-**The stopping rule is the classical three-way bounds test**, and `level` is its significance. The
-upper bound is the wrong one to compare -- it is the **lower** bound that decides:
+**The loop is solved except for one step.** `references/spline2C.mcdx` fits the same 45 points at
+eight values of `level`, and the interval counts come back sharply **non**-monotone -- 6, 6, 15, 15,
+29, 5, 5, 7 -- which is what turned the loop from a guess into a rule:
 
 ```
-lower > level          ->  accept: no positive autocorrelation. Stop.
-upper < level          ->  reject: definitely autocorrelated. Move the knots (phase two).
-otherwise              ->  inconclusive. Add an interval and try again.
+for m = 1, 2, 3, ...:
+    knots = uniform in data index
+    fit;  if lower > level:  stop            # spline2A's level = 0.001 stops here
+    knots = <move them>                      # THE ONE UNSOLVED STEP
+    fit;  if lower > level:  stop            # every other cached adaptive fit stops here
 ```
 
-**The default `level` is 0.05.** Sweeping phase one and stopping the first time the lower bound
-exceeds `level` reproduces **five of the six** cached adaptive fits exactly -- all three calls on the
-13-point sheet and two of the three on `spline2A`, across interval counts 2, 3 and 6. The sixth is
-`spline2A`'s `level = 0.5` call, which is precisely the phase-two case: phase one never gets the lower
-bound above 0.19 there, so the "reject" arm fires and the knots move.
+`lower` is the **lower** Durbin-Watson bound, and the **default `level` is 0.05**. The moved sets
+reach lower bounds of 0.034 (5 intervals), 0.203 (6), 0.065 (7), 0.461 (15) and 0.520 (29), and read
+against the levels those explain every rung from 0.05 to 0.5: 0.05, 0.1 and 0.2 stop at 6 because
+0.203 is the first value above them; 0.3 and 0.4 pass 6 and take 15; 0.5 needs 29. The move is a
+separate step from adding a knot -- `level = 0.001` and the default both stop at **six** intervals,
+one on the uniform set and one on the moved one. And the moved set is a function of the data and the
+count alone: two levels that stop at the same count return byte-identical vectors.
 
-That three-way reading also explains why phase two does *not* steal the default answer. At four
-intervals `spline2A`'s phase-two fit reaches a lower bound of 0.0638, which is above the default 0.05
--- so if phase two ran on the default path it would have stopped at four intervals rather than the
-cached six. It does not run, because at four intervals the upper bound is 0.457, far above 0.05: the
-test is *inconclusive*, not a rejection, and the loop simply adds an interval. Phase two fires only on
-a definite rejection. The 536-row sheet is the other side of that coin -- its uniform-in-index fits
-are so poor that the upper bound is 0 out to 55 intervals, so every step rejects, phase two runs
-every time, and the cached answer of 34 intervals is a phase-two result.
+The three highest levels (0.6, 0.7, 0.8) stop at 5, 5 and 7 intervals -- *fewer* than 0.5's 29 -- with
+lower bounds far below their levels but **upper** bounds (0.768, 0.768, 0.972) that clear. So when the
+loop cannot satisfy a level it falls back to the weaker half of the bounds test and to a count it had
+already passed. The fallback is not reproduced.
 
-After phase two the acceptance is the weaker one: `spline2A`'s `level = 0.5` call stops with a lower
-bound of 0.0638 -- below 0.5 -- but an upper bound of 0.731, above it. So a moved knot set is kept as
-soon as it is no longer a definite rejection.
+**The move itself is still unsolved, and the search space is now well covered.** With five cached
+moved sets on one dataset (5, 6, 7, 15 and 29 intervals) plus the 536-row sheet's 34, these were
+scanned and rejected: equidistributing `|D¹f|`, `|D²f|` or `|D³f|` to any exponent from 0.05 to 1.5,
+integrated in `x` or summed over data points, one to three passes, seeded from the uniform-in-index
+fit at the same count *or* chained from the previous cached moved set (best mean error 0.6 of an
+interval width, and the best exponent tends to 0, meaning the density is contributing nothing);
+equidistributing the residuals as `r²`, `|r|`, `Σ(Δr)²`, `|r_i·r_{i+1}|` and `1 + r²`; uniform in `x`
+and every blend of uniform-in-x with uniform-in-index; FITPACK's `splrep` at matching counts (its
+knots sit *on* data points, Mathcad's do not); a free-knot Nelder-Mead search on both the sum of
+squares and the statistic (the cached set is not the least-squares optimum -- 27.18 against an
+attainable 22.06); and a fixed warp `W(j/m)` of the index, which the five sets do not collapse onto.
 
-**One more side finding.** `spline2A`'s cached `y` is **our own `rnorm` stream at offset 45**, exactly
-one whole `rnorm(45, …)` call further on: Prime drew the vector twice across the saves that produced
-the file. The generator is right; the worksheet state moved.
+**One more side finding, now closed.** An earlier save of `spline2A` had cached a `y` that was our own
+`rnorm` stream at offset 45 -- exactly one whole `rnorm(45, …)` call further on, because Prime had
+drawn the vector twice across the saves. The sheet was re-saved and the stream now starts where it
+should, so the fixture reproduces `y` element for element. Worth remembering as a diagnosis: a
+worksheet whose random data will not reproduce is far more likely to have been recalculated than to
+have caught a generator bug, and the offset says which.
 
 **The algorithms, identified from the cache** (all exact, 0.0 error unless noted):
 

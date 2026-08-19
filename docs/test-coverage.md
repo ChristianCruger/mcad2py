@@ -652,3 +652,24 @@ The two statistics are the classical **bounds** of the Durbin-Watson test — th
 distribution depends on the design matrix, so Durbin and Watson published two design-free bounds
 instead. Mathcad stores the upper first (the probability of no positive autocorrelation, which is what
 the fit is judged by) then the lower.
+
+### `references/spline2C.mcdx` (in the same module)
+
+The same 45 points as `spline2A`, fitted at eight values of `level`. Its worth is that the interval
+counts come back sharply **non**-monotone — 6, 6, 15, 15, 29, 5, 5, 7 — which is what turned the
+knot-count loop from a guess into a rule.
+
+* `test_the_moved_knot_set_does_not_depend_on_level` — two levels that stop at the same count return
+  byte-identical vectors, so the moved set is a function of the data and the count alone. `level`
+  chooses when to stop, never where the knots go.
+* `test_the_loop_accepts_the_first_fit_whose_lower_bound_beats_level` — the rungs from 0.1 to 0.5 form
+  a ladder: each cached fit clears its own level, and no smaller cached count does.
+* `test_the_level_0_001_rung_is_predicted_from_scratch` — the one cached adaptive fit reproduced end
+  to end with no unsolved step, count and knots included, by sweeping interval counts and taking the
+  first whose lower bound clears 0.001.
+* `test_the_three_highest_levels_are_accepted_on_the_upper_bound` — 0.6, 0.7 and 0.8 stop at *fewer*
+  intervals than 0.5 does, on upper bounds rather than lower ones. That fallback is not reproduced;
+  the test records the evidence rather than a rule.
+
+`test_every_rung_is_reproduced_from_its_own_knots` covers all eight, at counts from 5 to 29 — the last
+leaving only 13 residual degrees of freedom.
