@@ -633,3 +633,22 @@ offset **45** — exactly one whole `rnorm(45, …)` call further on — so Prim
 across the saves that produced the file.
 `test_the_sheets_noise_is_our_random_stream_one_call_later` pins that offset, which says the generator
 is right and the worksheet state is what moved.
+
+### `references/spline2B.mcdx` (in the same module)
+
+31 points fitted on five **explicit** knot vectors (2, 4, 5, 8 and 10 intervals) and at two degrees.
+No placement rule is involved anywhere, so each echo is a clean (design, statistic, p-value) triple —
+which is what identified the last two trailing statistics.
+
+* `test_the_whole_packed_vector_matches_element_for_element` — knots, coefficients, residual standard
+  error, statistic **and both p-values**, to 3e-9 across six fits. That is the Beta CDF's own
+  precision, not a modelling gap. The degree-2 call is the only non-cubic fit in any fixture, and it
+  is what shows the coefficient count is `m + degree`, not `m + 3`.
+* `test_a_higher_degree_is_refused_the_way_mathcad_refuses_it` — the sheet's seventh call,
+  `Spline2(x, y, 4, k5)`, is the one region **Mathcad itself** will not compute: an `order_too_big`
+  engine error whose argument is 3. The family is capped at cubic, and `Spline2` raises to match.
+
+The two statistics are the classical **bounds** of the Durbin-Watson test — the statistic's exact null
+distribution depends on the design matrix, so Durbin and Watson published two design-free bounds
+instead. Mathcad stores the upper first (the probability of no positive autocorrelation, which is what
+the fit is judged by) then the lower.

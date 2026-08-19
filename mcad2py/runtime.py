@@ -2879,6 +2879,10 @@ def predict(v, m, n):
 # is reproduced here to the last bit. A call that has to place its own knots
 # raises rather than guessing -- see ``mapping.UNIMPLEMENTED``.
 
+# Prime caps the spline at cubic: a degree-4 call comes back with an
+# ``order_too_big`` engine error whose argument is the cap itself.
+_SPLINE2_MAX_DEGREE = 3
+
 _SPLINE2_ADAPTIVE = (
     "Spline2 chooses its own knots here, and Mathcad's placement rule is not "
     "reproduced; pass an explicit knot vector as the last argument"
@@ -2931,6 +2935,46 @@ def _bspline_design(t, degree, xq):
     return design
 
 
+def _durbin_watson_bounds(n, params, statistic):
+    """The two p-values Mathcad stores after the Durbin-Watson statistic.
+
+    They are the classical **bounds** of the Durbin-Watson test. The exact null
+    distribution of the statistic depends on the design matrix, which is why
+    Durbin and Watson published two design-free bounds instead: both are
+    weighted sums of the eigenvalues of the difference operator,
+    ``nu[j] = 2*(1 - cos(pi*j/n))``, taking the ``n - params`` smallest for the
+    upper bound and the ``n - params`` largest for the lower one. Each is then
+    approximated by a Beta distribution on ``[0, 4]`` matched to its own mean
+    and variance -- Durbin and Watson's own approximation, and the one their
+    tables were built from.
+
+    Returns ``(upper, lower)``, in Mathcad's storage order. The upper value is
+    the one the fit is judged by: it is the probability of no positive residual
+    autocorrelation, so it rises towards 1 as the spline stops leaving
+    structure in the residuals.
+    """
+    from scipy import stats
+
+    spare = n - params
+    if spare < 2:
+        return float("nan"), float("nan")
+    nu = 2.0 * (1.0 - np.cos(np.pi * np.arange(1, n) / n))
+
+    def beta_cdf(eigenvalues):
+        count = len(eigenvalues)
+        mean = eigenvalues.sum() / count
+        variance = 2.0 * (np.sum(eigenvalues ** 2)
+                          - eigenvalues.sum() ** 2 / count) / (
+                              count * (count + 2))
+        located = mean / 4.0
+        shape = located * (1.0 - located) / (variance / 16.0) - 1.0
+        return float(stats.beta.cdf(statistic / 4.0, located * shape,
+                                    (1.0 - located) * shape))
+
+    return (beta_cdf(nu[:spare]),
+            beta_cdf(nu[params - 1:params - 1 + spare]))
+
+
 def _durbin_watson(residuals):
     """The Durbin-Watson statistic of a residual sequence."""
     return float((np.diff(residuals) ** 2).sum() / (residuals ** 2).sum())
@@ -2968,6 +3012,9 @@ def Spline2(vx, vy, n, *rest):
     one.
     """
     degree = _count(n)
+    if degree > _SPLINE2_MAX_DEGREE:
+        # Mathcad's own refusal: an ``order_too_big`` engine error naming 3.
+        raise ValueError("The order of this spline must be no greater than 3.")
     x_unit = getattr(vx, "units", None)
     y_unit = getattr(vy, "units", None)
     xs = _magnitudes(vx).reshape(-1)
@@ -2998,6 +3045,7 @@ def Spline2(vx, vy, n, *rest):
     coef, *_ = np.linalg.lstsq(design * scale[:, None], yf * scale, rcond=None)
 
     residuals = yf - design @ coef
+    statistic = _durbin_watson(residuals * scale)
     freedom = max(len(xf) - len(coef), 1)
     packed = np.concatenate([
         [degree + 1.0, float(len(knots) - 1)],
@@ -3005,12 +3053,8 @@ def Spline2(vx, vy, n, *rest):
         coef,
         [float(np.sqrt((residuals ** 2).sum() / freedom)),
          0.0,
-         _durbin_watson(residuals * scale),
-         # Mathcad reports two more statistics here whose definition the cache
-         # does not give away (neither is R² nor adjusted R²). Inventing them
-         # would put plausible wrong numbers into a sheet that echoed them.
-         float("nan"),
-         float("nan")],
+         statistic,
+         *_durbin_watson_bounds(len(xf), len(coef), statistic)],
     ])
     return _PackedSpline(packed, x_unit, y_unit)
 

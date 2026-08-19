@@ -1077,13 +1077,40 @@ out of an interval width of about 2. The target is **not** the least-squares opt
 against an attainable 22.06), so the second phase is neither a plain optimiser nor any plain
 equidistribution tried so far.
 
-**Two side findings worth keeping.** The fourth trailing statistic is the test's p-value: across the
-five cached fits it rises monotonically with the statistic (`DW` 1.60 → 0.308, 1.87 → 0.731,
-2.00 → 0.930, 2.13 → 0.9993, 3.11 → 0.99999). A Beta approximation on `[0, 4]` matched to the exact
-null mean and variance is the right *shape* but not Mathcad's convention -- it gives 0.79 where
-Mathcad stores 0.99999 -- so the exact form is still open. And `spline2A`'s cached `y` is **our own
-`rnorm` stream at offset 45**, exactly one whole `rnorm(45, …)` call further on: Prime drew the vector
-twice across the saves that produced the file. The generator is right; the worksheet state moved.
+**The last two trailing statistics are solved**, by `references/spline2B.mcdx` -- 31 points fitted on
+five **explicit** knot vectors and at two degrees, so no placement rule is involved anywhere and every
+echo is a clean (design, statistic, p-value) triple. They are the classical **bounds** of the
+Durbin-Watson test. The statistic's exact null distribution depends on the design matrix, so Durbin
+and Watson published two design-free bounds instead, both weighted sums of the eigenvalues of the
+difference operator:
+
+```
+nu[j] = 2*(1 - cos(pi*j/n))            j = 1 .. n-1
+upper = Beta_cdf(d/4)   fitted to the mean and variance of  nu[0 : n-p]
+lower = Beta_cdf(d/4)   fitted to the mean and variance of  nu[p-1 : n-1]
+```
+
+Each bound is approximated by a Beta distribution on `[0, 4]` matched to its own mean and variance --
+Durbin and Watson's own approximation, the one their published tables were built from. That
+reproduces **both** numbers across all eleven cached fits to 3e-9, which is the Beta CDF's own
+precision. The upper bound comes first, and it is the one the fit is judged by: it is the probability
+of no positive residual autocorrelation, rising towards 1 as the spline stops leaving structure
+behind. `Spline2` now returns the whole packed vector, with nothing left as `nan`.
+
+That sheet also pins a hard limit: `Spline2(x, y, 4, …)` is the one region **Mathcad itself** will not
+compute, returning an `order_too_big` engine error whose argument is 3. The family is capped at cubic.
+
+**The stopping rule is still not pinned**, even with the p-value exact. Running the phase-one sweep
+over `spline2A` gives upper-bound p-values of 0.00007, 0.0031, 0.308, 0.457, 0.437, 0.930 at one
+through six intervals -- the third and sixth reproducing the cached `b3` and `b` values exactly -- so
+`level = 0.001` ought to stop at two intervals under a plain "stop when p > level", where Mathcad
+stopped at three. The same off-by-one shows on the 13-point sheet. So `level` enters somewhere other
+than a direct comparison against the upper bound, and the lower bound (which Mathcad also stores) is
+the obvious suspect.
+
+**One more side finding.** `spline2A`'s cached `y` is **our own `rnorm` stream at offset 45**, exactly
+one whole `rnorm(45, …)` call further on: Prime drew the vector twice across the saves that produced
+the file. The generator is right; the worksheet state moved.
 
 **The algorithms, identified from the cache** (all exact, 0.0 error unless noted):
 

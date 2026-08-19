@@ -203,10 +203,22 @@ def test_placing_its_own_knots_raises_rather_than_guessing(data):
         Spline2(x, y, 3, w)
 
 
-def test_the_two_unidentified_trailing_statistics_are_not_invented(data, knots):
-    """They come back ``nan``, not a plausible wrong number."""
-    fit = np.asarray(Spline2(*data[:2], 3, knots))
-    assert np.isnan(fit[-2]) and np.isnan(fit[-1])
+def test_the_last_two_statistics_are_the_durbin_watson_bounds(data, cache):
+    """The trailer ends with the classical **bounds** of the Durbin-Watson test.
+
+    The statistic's exact null distribution depends on the design matrix, so
+    Durbin and Watson published two design-free bounds instead. Mathcad stores
+    both: the upper first -- the probability of no positive autocorrelation,
+    which is what the fit is judged by -- then the lower. Each is a Beta
+    approximation on ``[0, 4]``, which is how their published tables were built.
+    """
+    x, y, _ = data
+    packed = np.array(cache[PACKED_B])
+    intervals = int(packed[1])
+    refit = np.asarray(Spline2(x, y, 3, packed[2:3 + intervals]))
+    # 1e-7 rather than tighter: on 536 points the Beta CDF is itself only
+    # good to about 1e-8 out in the tail, and that is the whole error.
+    assert refit[-2:] == pytest.approx(packed[-2:], rel=0, abs=1e-7)
 
 
 # ---------------------------------------------------------------------------
@@ -354,3 +366,53 @@ def test_the_sheets_noise_is_our_random_stream_one_call_later(wiggly):
     Seed(1)
     stream = np.asarray(rnorm(90, 0, 1)).reshape(-1)
     assert stream[45:] == pytest.approx(cached_noise, rel=1e-12, abs=1e-12)
+
+
+# ---------------------------------------------------------------------------
+# ``references/spline2B.mcdx`` -- 31 points fitted on five **explicit** knot
+# vectors and at two degrees. No placement rule is involved anywhere, so every
+# echo is a clean (design, statistic, p-value) triple. That is what identified
+# the two trailing statistics, and what pins the cubic cap.
+
+EXPLICIT_SHEET = reference("spline2B")
+EXPLICIT_X = "2"
+EXPLICIT_Y = "6"
+# result-id -> (degree, interval count)
+EXPLICIT_FITS = {"12": (3, 2), "13": (3, 4), "14": (3, 5),
+                 "15": (3, 8), "16": (3, 10), "17": (2, 5)}
+
+
+@pytest.fixture(scope="module")
+def explicit() -> tuple[np.ndarray, np.ndarray, dict[str, list[float]]]:
+    cache = cached_results(EXPLICIT_SHEET)
+    return np.array(cache[EXPLICIT_X]), np.array(cache[EXPLICIT_Y]), cache
+
+
+@pytest.mark.parametrize("ref", sorted(EXPLICIT_FITS))
+def test_the_whole_packed_vector_matches_element_for_element(explicit, ref):
+    """Knots, coefficients, residual standard error, statistic **and both
+    p-values** -- 3e-9 across six fits, which is the Beta CDF's own precision.
+
+    Five interval counts from 2 to 10 and two degrees. The degree-2 fit is the
+    only non-cubic case in any fixture, and it is what shows the coefficient
+    count is ``m + degree`` rather than ``m + 3``.
+    """
+    x, y, cache = explicit
+    degree, _ = EXPLICIT_FITS[ref]
+    packed = np.array(cache[ref])
+    intervals = int(packed[1])
+    assert packed[0] == degree + 1  # the packed order is degree + 1
+    fit = np.asarray(Spline2(x, y, degree, packed[2:3 + intervals]))
+    assert fit == pytest.approx(packed, rel=0, abs=1e-8)
+
+
+def test_a_higher_degree_is_refused_the_way_mathcad_refuses_it():
+    """The sheet's seventh call, ``Spline2(x, y, 4, k5)``, is the one region
+    Mathcad itself will not compute: its cached result is an ``order_too_big``
+    engine error whose argument is 3. So the family is capped at cubic.
+    """
+    root = ET.fromstring(zipfile.ZipFile(EXPLICIT_SHEET).read("mathcad/result.xml"))
+    codes = [node.text for node in root.iter() if _local(node.tag) == "errorCode"]
+    assert "order_too_big" in codes
+    with pytest.raises(ValueError, match="no greater than 3"):
+        Spline2(np.arange(31.0), np.arange(31.0), 4, np.array([0.0, 15.0, 30.0]))
