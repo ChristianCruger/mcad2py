@@ -29,9 +29,10 @@ import numpy as np
 import pytest
 
 from mcad2py.runtime import DWS, Binterp, Spline2
+from mcad2py.convert import convert_file
 from mcad2py.units import ureg
 
-from conftest import cached_results, reference
+from conftest import cached_results, flat, reference, run_sheet
 
 SHEET = reference("interpolation_prediction")
 
@@ -516,3 +517,48 @@ def test_the_three_highest_levels_are_accepted_on_the_upper_bound(ladder):
         level = LADDER[ref][0]
         packed = np.array(cache[ref])
         assert packed[-1] < level < packed[-2]
+
+
+# ---------------------------------------------------------------------------
+# The per-call gate. ``Spline2`` is not all-or-nothing: given an explicit knot
+# vector it is exact, so it is suppressed per *call* rather than per name --
+# see ``regions._spline2_needs_its_own_knots``.
+
+
+def test_a_sheet_of_explicit_knot_calls_converts_completely():
+    """``spline2B`` has no TODO left in it, and its numbers match the cache.
+
+    Six fits and the degree-4 region Mathcad itself refuses, which converts as a
+    guarded region the way any cached engine error does. The sheet's ``x`` and
+    ``y`` come back exactly too, since they are built from ``Seed``/``rnorm``.
+    """
+    source, _namespace, echoed = run_sheet(EXPLICIT_SHEET)
+    assert "# TODO" not in source
+    cache = cached_results(EXPLICIT_SHEET)
+    assert flat(echoed[0]) == pytest.approx(cache[EXPLICIT_X], rel=0, abs=0)
+    assert flat(echoed[3]) == pytest.approx(cache[EXPLICIT_Y], rel=0, abs=0)
+    for echo, ref in zip(echoed[4:10], sorted(EXPLICIT_FITS, key=int)):
+        assert flat(echo) == pytest.approx(cache[ref], rel=0, abs=1e-8)
+    label, error = echoed[10]
+    assert label == "error:" and "no greater than 3" in str(error)
+
+
+def test_the_gate_keeps_the_adaptive_calls_out():
+    """The catalogue sheet has both kinds, and each lands on the right side.
+
+    ``Spline2(x, y, n, w, Knots)`` and ``Spline2(x, y, n, Knots)`` convert --
+    the second only because the first named ``Knots`` in the unambiguous fifth
+    slot, since nothing else about a four-argument vector says knots rather than
+    weights. ``Spline2(x, y, n, w)``, ``Spline2(x, y, n)``, ``Spline2(…, 0.5)``
+    and ``Spline2(x, y, n, w, level)`` all still become comments: an unsorted
+    column, no fourth argument at all, and a significance in the knot slot.
+    """
+    source = convert_file(reference("interpolation_prediction"), fmt="py")
+    assert "SplineW = Spline2(x, y, n, w, Knots)" in source
+    assert "SplineNW = Spline2(x, y, n, Knots)" in source
+    assert "spline3 = transpose(Binterp(range_, SplineW))" in source
+    assert "print(DWS(SplineW))" in source
+    for adaptive in ("Spline2(x, y, n)", "Spline2(x, y, n, w)",
+                     "Spline2(x, y, n, 0.5)", "Spline2(x, y, n, w, level)"):
+        assert adaptive not in source
+    assert source.count("# TODO unsupported region: Spline2 would have to") == 5

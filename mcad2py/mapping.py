@@ -298,14 +298,21 @@ FUNCTIONS = {
 # later region with it (see ``_mark_unimplemented_builtins``). A worksheet that
 # defines the name itself is untouched.
 UNIMPLEMENTED = {
-    "Spline2": "least-squares B-spline with adaptive knot placement; Mathcad's "
-               "knot-choosing rule is undocumented and not reproducible here",
-    "Binterp": "evaluates a Spline2 B-spline vector, whose layout Spline2 "
-               "would have to define",
-    "DWS": "reads the Durbin-Watson statistic out of a Spline2 vector",
     "GrubbsClassic": "Grubbs outlier test returning Mathcad's own result table",
     "trim": "drops the rows a GrubbsClassic test flagged",
 }
+
+# ``Spline2`` is not all-or-nothing: given an explicit knot vector it is exact
+# (see the schema note), and only a call that would make Mathcad place its own
+# knots is out of reach. So it is suppressed per *call* rather than per name --
+# ``_mark_unimplemented_builtins`` decides, and this is the note it uses.
+# ``Binterp`` and ``DWS`` need no gate at all: both only read a packed vector,
+# so they follow whatever their ``Spline2`` did, and the ordinary taint carries
+# a suppressed one downstream.
+SPLINE2_ADAPTIVE = (
+    "Spline2 would have to place its own knots here, and Mathcad's rule for "
+    "that is not reproduced -- pass an explicit knot vector to convert it"
+)
 
 # Mathcad symbolic command keyword (first id of a <ml:command> sequence) ->
 # SymPy callable. Symbolic regions emit ``<callable>(expr, *args)``.

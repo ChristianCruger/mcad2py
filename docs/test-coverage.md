@@ -673,3 +673,18 @@ knot-count loop from a guess into a rule.
 
 `test_every_rung_is_reproduced_from_its_own_knots` covers all eight, at counts from 5 to 29 — the last
 leaving only 13 residual degrees of freedom.
+
+### The per-call `Spline2` gate (in the same module)
+
+`Spline2` is suppressed per *call*, not per name — with an explicit knot vector it is exact, so
+blocking the name would throw away work that is finished. Two tests pin the split:
+
+* `test_a_sheet_of_explicit_knot_calls_converts_completely` — `spline2B` has **no TODO left in it**
+  and its numbers match the cache, the degree-4 region included (which converts as a guarded region,
+  the way any cached engine error does). Its `x` and `y` come back exactly too, since they are built
+  from `Seed`/`rnorm`.
+* `test_the_gate_keeps_the_adaptive_calls_out` — `interpolation_prediction` has both kinds.
+  `Spline2(x, y, n, w, Knots)` and `Spline2(x, y, n, Knots)` convert, the second only because the
+  first named `Knots` in the unambiguous fifth slot. `Spline2(x, y, n)`, `Spline2(x, y, n, w)`,
+  `Spline2(…, 0.5)` and `Spline2(x, y, n, w, level)` all stay comments — an unsorted column, no
+  fourth argument, and a significance sitting in the knot slot.

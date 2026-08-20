@@ -196,12 +196,15 @@ layout, `Binterp` (a clamped B-spline returning value + three derivatives), the 
 fit (`w` is a *standard deviation*, so the weight is `1/w²`), the drop-data-outside-the-knot-range
 rule, and `DWS` — see the schema note and
 [tests/test_least_squares_spline.py](tests/test_least_squares_spline.py). `Spline2` **raises** when it
-would have to place its own knots. The names stay in `mapping.UNIMPLEMENTED` all the same, because
-whether a vector fourth argument is `w` or the knots is only knowable at *runtime* (Mathcad reads a
-sorted vector as knots and falls back to its own placement otherwise), and the suppression pass is
-static — so those regions still become visible `# TODO unsupported region` comments. Wiring the
-solved path through emission needs either the knot placement cracked (which makes the question moot)
-or a runtime-aware suppression.
+would have to place its own knots, and is therefore gated **per call, not per name** — it is *not* in
+`mapping.UNIMPLEMENTED`; `regions._spline2_needs_its_own_knots` decides. A call converts when the
+knot vector is provable: five arguments (the last is positionally the knot slot), a literal ascending
+vector, or a name the same sheet already passed in that fifth slot. A scalar in the knot slot is
+`level`, an unsorted literal is weights, and anything computed cannot be told apart before the sheet
+runs — all of those are suppressed, because emitting them would put a `NotImplementedError` at import
+time. `Binterp` and `DWS` need no gate at all: both only read a packed vector, so they follow whatever
+their `Spline2` did, and the ordinary taint carries a suppressed one downstream. The knot-count loop
+itself is solved bar one step — see the schema note.
 
 `find` solve blocks and `lsolve` work; `minerr`/`maximize`/`minimize`/`root`/`polyroots` don't yet.
 `solve_block` (runtime) falls back

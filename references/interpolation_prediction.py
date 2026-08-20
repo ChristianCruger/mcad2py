@@ -2,7 +2,7 @@
 import math
 import matplotlib.pyplot as plt
 
-from mcad2py.runtime import sin, cos, mc_max, mc_min, power, col, matrix, transpose, vec_set, augment, matcol, rows, last, matelem, reverse, csort, linterp, lspline, pspline, cspline, interp, polyint, polyiter, polycoeff, rationalint, Thielecoeff, Thiele, predict, index_build, range_sum, derivative, arange, sample, static_axis, plot_axis, plot_trace, vectorize
+from mcad2py.runtime import sin, cos, mc_max, mc_min, power, col, matrix, transpose, vec_set, augment, matcol, rows, last, matelem, reverse, csort, linterp, lspline, pspline, cspline, interp, polyint, polyiter, polycoeff, rationalint, Thielecoeff, Thiele, predict, Spline2, Binterp, DWS, index_build, range_sum, derivative, arange, sample, static_axis, plot_axis, plot_trace, vectorize
 from mcad2py.units import ureg
 
 
@@ -557,7 +557,7 @@ w = matcol(a, 2)
 
 n = 3
 
-# TODO unsupported region: Spline2 -- least-squares B-spline with adaptive knot placement; Mathcad's knot-choosing rule is undocumented and not reproducible here
+# TODO unsupported region: Spline2 would have to place its own knots here, and Mathcad's rule for that is not reproduced -- pass an explicit knot vector to convert it
 
 # TODO unsupported region: needs b, left undefined above
 
@@ -577,33 +577,33 @@ i = arange(0, 100, 1)
 
 range_ = index_build(i, lambda i: i * (mc_max(x) - mc_min(x)) / 101 + mc_min(x))
 
-# TODO unsupported region: Binterp -- evaluates a Spline2 B-spline vector, whose layout Spline2 would have to define
+# TODO unsupported region: needs b, left undefined above
 
 # TODO unsupported region: needs spline1, left undefined above
 
-# TODO unsupported region: DWS -- reads the Durbin-Watson statistic out of a Spline2 vector
+# TODO unsupported region: needs b, left undefined above
 
 # TODO unsupported region: needs b, left undefined above
 
 level = 0.001
 
-# TODO unsupported region: Spline2 -- least-squares B-spline with adaptive knot placement; Mathcad's knot-choosing rule is undocumented and not reproducible here
+# TODO unsupported region: Spline2 would have to place its own knots here, and Mathcad's rule for that is not reproduced -- pass an explicit knot vector to convert it
 
 # TODO unsupported region: needs b2, left undefined above
 
-# TODO unsupported region: DWS -- reads the Durbin-Watson statistic out of a Spline2 vector
+# TODO unsupported region: needs b2, left undefined above
 
-# TODO unsupported region: Binterp -- evaluates a Spline2 B-spline vector, whose layout Spline2 would have to define
+# TODO unsupported region: needs b2, left undefined above
 
 # TODO unsupported region: needs spline1, spline2, left undefined above
 
-# TODO unsupported region: Spline2 -- least-squares B-spline with adaptive knot placement; Mathcad's knot-choosing rule is undocumented and not reproducible here
+# TODO unsupported region: Spline2 would have to place its own knots here, and Mathcad's rule for that is not reproduced -- pass an explicit knot vector to convert it
 
-# TODO unsupported region: DWS -- reads the Durbin-Watson statistic out of a Spline2 vector
+# TODO unsupported region: needs b3, left undefined above
 
-# TODO unsupported region: Spline2 -- least-squares B-spline with adaptive knot placement; Mathcad's knot-choosing rule is undocumented and not reproducible here
+# TODO unsupported region: Spline2 would have to place its own knots here, and Mathcad's rule for that is not reproduced -- pass an explicit knot vector to convert it
 
-# TODO unsupported region: DWS -- reads the Durbin-Watson statistic out of a Spline2 vector
+# TODO unsupported region: needs b4, left undefined above
 
 # TODO unsupported region: needs spline1, left undefined above
 
@@ -615,17 +615,26 @@ level = 0.001
 
 Knots = range_
 
-# TODO unsupported region: Spline2 -- least-squares B-spline with adaptive knot placement; Mathcad's knot-choosing rule is undocumented and not reproducible here
+SplineW = Spline2(x, y, n, w, Knots)
 
-# TODO unsupported region: Binterp -- evaluates a Spline2 B-spline vector, whose layout Spline2 would have to define
+spline3 = transpose(Binterp(range_, SplineW))
 
-# TODO unsupported region: DWS -- reads the Durbin-Watson statistic out of a Spline2 vector
+print(DWS(SplineW))
 
-# TODO unsupported region: needs spline3, left undefined above
+_fig, _ax = plt.subplots()
+_ax.plot(*plot_trace(plot_axis(x, None), plot_axis(y, None)), label='x', color='#FF0000')
+_ax.plot(*plot_trace(plot_axis(range_, None), plot_axis(spline3, None)), label='range_', color='#0000FF')
+_ax.axhline(0, color='0.6', linewidth=0.8)
+_ax.axvline(0, color='0.6', linewidth=0.8)
+_ax.grid(True, alpha=0.3)
+_ax.set_xlabel('')
+_ax.set_ylabel('')
+_ax.legend()
+plt.show()
 
-# TODO unsupported region: Spline2 -- least-squares B-spline with adaptive knot placement; Mathcad's knot-choosing rule is undocumented and not reproducible here
+SplineNW = Spline2(x, y, n, Knots)
 
-# TODO unsupported region: DWS -- reads the Durbin-Watson statistic out of a Spline2 vector
+print(DWS(SplineNW))
 
 # TODO unsupported region: GrubbsClassic -- Grubbs outlier test returning Mathcad's own result table
 
@@ -637,19 +646,19 @@ Knots = range_
 
 # TODO unsupported region: trim -- drops the rows a GrubbsClassic test flagged
 
-# TODO unsupported region: Spline2 -- least-squares B-spline with adaptive knot placement; Mathcad's knot-choosing rule is undocumented and not reproducible here
+# TODO unsupported region: Spline2 would have to place its own knots here, and Mathcad's rule for that is not reproduced -- pass an explicit knot vector to convert it
 
-# TODO unsupported region: DWS -- reads the Durbin-Watson statistic out of a Spline2 vector
+# TODO unsupported region: needs b, left undefined above
 
-# TODO unsupported region: DWS -- reads the Durbin-Watson statistic out of a Spline2 vector
+# TODO unsupported region: needs b_no, left undefined above
 
 i = arange(0, 200, 1)
 
 range_ = index_build(i, lambda i: 700 + i)
 
-# TODO unsupported region: Binterp -- evaluates a Spline2 B-spline vector, whose layout Spline2 would have to define
+# TODO unsupported region: needs b_no, left undefined above
 
-# TODO unsupported region: Binterp -- evaluates a Spline2 B-spline vector, whose layout Spline2 would have to define
+# TODO unsupported region: needs b, left undefined above
 
 # TODO unsupported region: needs index, spline, spline_no, left undefined above
 

@@ -1,7 +1,7 @@
 """Auto-generated from a Mathcad worksheet by mcad2py."""
 import math
 
-from mcad2py.runtime import sin, disp, col, Seed, rnorm, index_build, arange
+from mcad2py.runtime import sin, disp, col, Seed, rnorm, Spline2, index_build, arange
 from mcad2py.units import ureg
 
 
@@ -32,16 +32,27 @@ k8 = col(0, 1.25, 2.5, 3.75, 5, 6.25, 7.5, 8.75, 10)
 
 k10 = col(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
 
-# TODO unsupported region: Spline2 -- least-squares B-spline with adaptive knot placement; Mathcad's knot-choosing rule is undocumented and not reproducible here
+s2 = Spline2(x, y, 3, k2)
+print(s2)
 
-# TODO unsupported region: Spline2 -- least-squares B-spline with adaptive knot placement; Mathcad's knot-choosing rule is undocumented and not reproducible here
+s4 = Spline2(x, y, 3, k4)
+print(s4)
 
-# TODO unsupported region: Spline2 -- least-squares B-spline with adaptive knot placement; Mathcad's knot-choosing rule is undocumented and not reproducible here
+s5 = Spline2(x, y, 3, k5)
+print(s5)
 
-# TODO unsupported region: Spline2 -- least-squares B-spline with adaptive knot placement; Mathcad's knot-choosing rule is undocumented and not reproducible here
+s8 = Spline2(x, y, 3, k8)
+print(s8)
 
-# TODO unsupported region: Spline2 -- least-squares B-spline with adaptive knot placement; Mathcad's knot-choosing rule is undocumented and not reproducible here
+s10 = Spline2(x, y, 3, k10)
+print(s10)
 
-# TODO unsupported region: Spline2 -- least-squares B-spline with adaptive knot placement; Mathcad's knot-choosing rule is undocumented and not reproducible here
+sq = Spline2(x, y, 2, k5)
+print(sq)
 
-# TODO unsupported region: Spline2 -- least-squares B-spline with adaptive knot placement; Mathcad's knot-choosing rule is undocumented and not reproducible here
+# Mathcad reports an error here: The value of one of the arguments is too large.
+try:
+    sf = Spline2(x, y, 4, k5)
+    print(sf)
+except Exception as _err:
+    print('error:', _err)

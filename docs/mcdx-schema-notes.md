@@ -986,15 +986,27 @@ that pass an explicit knot vector (`SplineW`, `SplineNW`) are reproduced to the 
   vector and the call falls back to the default adaptive fit — which is why
   `DWS(Spline2(x, y, n, w))` and `DWS(Spline2(x, y, n))` agree to all 17 digits.
 
-**The knot placement is the one unsolved piece**, but its family is now identified. Regressing
-`log(1/Δknot)` on `log|f'''|` over the cached knots gives a slope of **0.264** with R² 0.80 — that is
-de Boor's `NEWNOT` equidistribution of `|D^k f|^(1/k)` with `k = 4`, the exponent 1/4. Growing the
-knot set one interval at a time from `[min(x), max(x)]`, refitting and redistributing at each step,
-lands within 2–8 units over the first third of the sheet's knots (intervals are ~25 wide) and then
-drifts to ~70. So the scheme is right and the *variant* is not: de Boor's own routine builds `|D⁴f|`
-from the **jumps** of `D³f` as a piecewise-linear function and damps the move toward the new knots,
-and the outer loop stops on a Durbin-Watson test at `level`. Reproducing that exactly is still a
-research task, so the five names stay in `mapping.UNIMPLEMENTED`.
+**Only the knot *move* is unsolved** -- the step the loop below calls `<move them>`. The evidence
+gathered on it is in the loop section further down.
+
+**`Spline2` is therefore gated per call, not per name.** It is *not* in `mapping.UNIMPLEMENTED`;
+`regions._spline2_needs_its_own_knots` decides one call at a time, because with an explicit knot
+vector the function is exact. A call converts when the knot vector is **provable**:
+
+* five arguments -- the last is positionally the knot slot, so a vector there settles it;
+* a literal ascending vector (`k5 := (0 2 4 6 8 10)ᵀ`), folded straight out of the IR;
+* a name the same sheet already passed in that fifth slot. `interpolation_prediction` writes
+  `Spline2(x, y, n, w, Knots)` and then `Spline2(x, y, n, Knots)`, and the second converts on the
+  strength of the first, without anyone having to evaluate the formula `Knots` was built from.
+
+Everything else is suppressed: a **scalar** in the knot slot is `level` (whether written as `0.5` or
+reached through a name), an **unsorted** literal is weights (the catalogue sheet's `w` is a column of
+a measurement table), and anything **computed** cannot be told apart before the sheet runs. Emitting
+one of those would put a `NotImplementedError` at import time, which is the single outcome the
+suppression exists to prevent. `Binterp` and `DWS` need no gate: both only read a packed vector, so
+they follow whatever their `Spline2` did, and the ordinary taint carries a suppressed one downstream.
+Only `GrubbsClassic` and `trim` are still blocked by name. `references/spline2B.mcdx` converts with
+**no** TODO at all as a result.
 
 Tested against the cached knots and rejected: uniform spacing; the data's quantiles (5 to 48 points
 per interval, with the *fewest* points where the knots are *densest*); equidistributing arc length,

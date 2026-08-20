@@ -15,8 +15,8 @@ y = col(3, 2.5, 2, 1.5, 1.5, 2, 4, 6, 10, 14, 18, 22, 26)
 
 print(len(y))
 
-# TODO unsupported region: Spline2 -- least-squares B-spline with adaptive knot placement; Mathcad's knot-choosing rule is undocumented and not reproducible here
+# TODO unsupported region: Spline2 would have to place its own knots here, and Mathcad's rule for that is not reproduced -- pass an explicit knot vector to convert it
 
-# TODO unsupported region: Spline2 -- least-squares B-spline with adaptive knot placement; Mathcad's knot-choosing rule is undocumented and not reproducible here
+# TODO unsupported region: Spline2 would have to place its own knots here, and Mathcad's rule for that is not reproduced -- pass an explicit knot vector to convert it
 
-# TODO unsupported region: Spline2 -- least-squares B-spline with adaptive knot placement; Mathcad's knot-choosing rule is undocumented and not reproducible here
+# TODO unsupported region: Spline2 would have to place its own knots here, and Mathcad's rule for that is not reproduced -- pass an explicit knot vector to convert it
