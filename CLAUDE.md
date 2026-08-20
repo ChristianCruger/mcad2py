@@ -90,7 +90,11 @@ adding support for a new XML construct.
   on a `NameError` at import, taking the convertible rest of the sheet with it. The taint clears the
   moment a later region rebinds the name, and a worksheet that defines the name itself is untouched.
 - Unknown/unsupported constructs emit a visible `# TODO unsupported: <note>` so output still
-  loads — never silently drop a region. An echo is built through `print_lines`, which lifts such a note
+  loads — never silently drop a region. A suppressed **region** also carries the Python it would
+  have been, commented out above its note (`ir.UnsupportedRegion.original` holds the region it
+  replaced; the *backends* render it, so the parser never formats Python). Without that a reader sees
+  `needs b, left undefined above` with no way to learn what `b` was, and the point of a visible TODO
+  is that someone can act on it. An echo is built through `print_lines`, which lifts such a note
   onto its own line: `print(None  # TODO …)` would close its parenthesis *inside* the comment and stop
   the module parsing, which is the one outcome the convention exists to prevent.
 - Mathcad's `≡` (`<ml:globalDefine>`) binds over the **whole** sheet, so `_hoist_global_defines` moves

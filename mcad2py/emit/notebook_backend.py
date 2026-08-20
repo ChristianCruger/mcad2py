@@ -141,7 +141,18 @@ def _render_region(region: ir.Region) -> nbformat.NotebookNode | None:
         return nbformat.v4.new_code_cell("\n".join(grid_plot_lines(region)))
 
     if isinstance(region, ir.UnsupportedRegion):
-        return nbformat.v4.new_markdown_cell(f"> **TODO** unsupported region: {region.note}")
+        text = f"> **TODO** unsupported region: {region.note}"
+        # Show the Python it would have been. A downstream note reads "needs b,
+        # left undefined above", which is only actionable once you can see what
+        # ``b`` was. The label leads so a reader cannot mistake the block for a
+        # cell that is meant to run; the ``.py`` backend puts the code first,
+        # where the statement itself would have stood.
+        would_be = _render_region(region.original) if region.original else None
+        if would_be is not None and would_be.get("source"):
+            quoted = [f">     {line}"
+                      for line in would_be["source"].splitlines()]
+            text = "\n".join([text, ">", *quoted])
+        return nbformat.v4.new_markdown_cell(text)
 
     return None
 

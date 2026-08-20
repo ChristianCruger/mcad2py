@@ -762,9 +762,20 @@ class ImageRegion(Region):
 
 @dataclass
 class UnsupportedRegion(Region):
+    """A region the converter declines to emit, shown as a comment instead.
+
+    ``original`` is the region it replaced, kept so the backends can print the
+    Python it *would* have been. Without that a reader sees "needs b, left
+    undefined above" with no way to learn what ``b`` was -- and the whole point
+    of a visible TODO is that someone can act on it. Rendering is the backends'
+    job, so the node carries the IR rather than a rendered string; a parser that
+    formatted Python here would be reaching across the IR boundary.
+    """
+
     note: str
     raw: str = ""
     source: SourceRef | None = None
+    original: Region | None = None
 
 
 # ---------------------------------------------------------------------------

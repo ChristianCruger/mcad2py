@@ -28,8 +28,14 @@ print(nz)
 y = index_build(i, lambda i: q(x[i]) + nz[i])
 print(y[i])
 
+# b = Spline2(x, y, 3)
+# print(b)
 # TODO unsupported region: Spline2 would have to place its own knots here, and Mathcad's rule for that is not reproduced -- pass an explicit knot vector to convert it
 
+# b2 = Spline2(x, y, 3, 0.5)
+# print(b2)
 # TODO unsupported region: Spline2 would have to place its own knots here, and Mathcad's rule for that is not reproduced -- pass an explicit knot vector to convert it
 
+# b3 = Spline2(x, y, 3, 0.001)
+# print(b3)
 # TODO unsupported region: Spline2 would have to place its own knots here, and Mathcad's rule for that is not reproduced -- pass an explicit knot vector to convert it

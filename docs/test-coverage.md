@@ -688,3 +688,10 @@ blocking the name would throw away work that is finished. Two tests pin the spli
   first named `Knots` in the unambiguous fifth slot. `Spline2(x, y, n)`, `Spline2(x, y, n, w)`,
   `Spline2(…, 0.5)` and `Spline2(x, y, n, w, level)` all stay comments — an unsorted column, no
   fourth argument, and a significance sitting in the knot slot.
+
+**A suppressed region shows its own would-be code.**
+`test_a_suppressed_region_shows_the_python_it_would_have_been` (in `tests/test_interpolation.py`)
+holds every `# TODO unsupported region:` line to having the commented-out Python directly above it.
+That is what makes the taint chain readable: `# b = Spline2(x, y, n, w)` above the first note, and
+then a run of `needs b, left undefined above` that a reader can trace back to that one line. Multi-line
+regions are commented whole — the sheet's plots name the very variables their notes list as missing.

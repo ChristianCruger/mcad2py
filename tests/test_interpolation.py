@@ -330,3 +330,28 @@ def test_a_displayed_equation_is_not_evaluated(sheet):
     would index a real array with a real range variable and raise."""
     src, _, _ = sheet
     assert "# shown, not computed: Eq(X[k], c[0] * X[k - 3]" in src
+
+
+def test_a_suppressed_region_shows_the_python_it_would_have_been(sheet):
+    """Each TODO carries the commented-out code above it.
+
+    Without that, "needs b, left undefined above" tells a reader that something
+    is missing but not *what* -- and the whole point of a visible TODO is that
+    someone can act on it. With it, the chain reads top to bottom: ``b`` was a
+    ``Spline2`` call that needs a knot vector, and everything below it is
+    downstream of that one line.
+    """
+    src, _, _ = sheet
+    lines = src.splitlines()
+    notes = [i for i, line in enumerate(lines)
+             if line.startswith("# TODO unsupported region:")]
+    assert notes
+    for index in notes:
+        above = lines[index - 1]
+        assert above.startswith("# ") and not above.startswith("# TODO"), (
+            f"line {index + 1} has no would-be code above it"
+        )
+    assert "# b = Spline2(x, y, n, w)" in src
+    # A multi-line region is commented whole -- this plot names the three
+    # variables its own note lists as missing.
+    assert "# _fig, _ax = plt.subplots()" in src

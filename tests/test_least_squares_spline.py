@@ -558,7 +558,11 @@ def test_the_gate_keeps_the_adaptive_calls_out():
     assert "SplineNW = Spline2(x, y, n, Knots)" in source
     assert "spline3 = transpose(Binterp(range_, SplineW))" in source
     assert "print(DWS(SplineW))" in source
-    for adaptive in ("Spline2(x, y, n)", "Spline2(x, y, n, w)",
-                     "Spline2(x, y, n, 0.5)", "Spline2(x, y, n, w, level)"):
-        assert adaptive not in source
+    # Each adaptive call still appears -- commented out, above its own note, so
+    # a reader can see what the suppressed name was going to be bound to.
+    for adaptive in ("b = Spline2(x, y, n, w)", "b3 = Spline2(x, y, n)",
+                     "b4 = Spline2(x, y, n, 0.5)",
+                     "b2 = Spline2(x, y, n, w, level)"):
+        assert f"# {adaptive}" in source
+        assert "\n" + adaptive not in source
     assert source.count("# TODO unsupported region: Spline2 would have to") == 5

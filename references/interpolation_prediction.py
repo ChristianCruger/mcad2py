@@ -557,60 +557,112 @@ w = matcol(a, 2)
 
 n = 3
 
+# b = Spline2(x, y, n, w)
 # TODO unsupported region: Spline2 would have to place its own knots here, and Mathcad's rule for that is not reproduced -- pass an explicit knot vector to convert it
 
+# print(b)
 # TODO unsupported region: needs b, left undefined above
 
+# i = arange(0, b[1], 1)
 # TODO unsupported region: needs b, left undefined above
 
+# knots = index_build(i, lambda i: b[i + 2])
 # TODO unsupported region: needs b, i, left undefined above
 
 print(mc_min(x))
 
+# print(knots[0])
 # TODO unsupported region: needs knots, left undefined above
 
 print(mc_max(x))
 
+# print(knots[len(knots) - 1])
 # TODO unsupported region: needs knots, left undefined above
 
 i = arange(0, 100, 1)
 
 range_ = index_build(i, lambda i: i * (mc_max(x) - mc_min(x)) / 101 + mc_min(x))
 
+# spline1 = transpose(Binterp(range_, b))
 # TODO unsupported region: needs b, left undefined above
 
+# _fig, _ax = plt.subplots()
+# _ax.plot(*plot_trace(plot_axis(x, None), plot_axis(y, None)), label='x', color='#FF0000')
+# _ax.plot(*plot_trace(plot_axis(range_, None), plot_axis(matcol(spline1, 0), None)), label='range_', color='#0000FF')
+# _ax.axhline(0, color='0.6', linewidth=0.8)
+# _ax.axvline(0, color='0.6', linewidth=0.8)
+# _ax.grid(True, alpha=0.3)
+# _ax.set_xlabel('')
+# _ax.set_ylabel('')
+# _ax.legend()
+# plt.show()
 # TODO unsupported region: needs spline1, left undefined above
 
+# print(DWS(b))
 # TODO unsupported region: needs b, left undefined above
 
+# print(b[last(b) - 2])
 # TODO unsupported region: needs b, left undefined above
 
 level = 0.001
 
+# b2 = Spline2(x, y, n, w, level)
 # TODO unsupported region: Spline2 would have to place its own knots here, and Mathcad's rule for that is not reproduced -- pass an explicit knot vector to convert it
 
+# Nknots = b2[1]
+# print(Nknots)
 # TODO unsupported region: needs b2, left undefined above
 
+# print(DWS(b2))
 # TODO unsupported region: needs b2, left undefined above
 
+# spline2 = transpose(Binterp(range_, b2))
 # TODO unsupported region: needs b2, left undefined above
 
+# _fig, _ax = plt.subplots()
+# _ax.plot(*plot_trace(plot_axis(range_, None), plot_axis(matcol(spline1, 0), None)), label='range_', color='#0000FF')
+# _ax.plot(*plot_trace(plot_axis(range_, None), plot_axis(matcol(spline2, 0), None)), label='range_', color='#FF0000')
+# _ax.axhline(0, color='0.6', linewidth=0.8)
+# _ax.axvline(0, color='0.6', linewidth=0.8)
+# _ax.grid(True, alpha=0.3)
+# _ax.set_xlabel('')
+# _ax.set_ylabel('')
+# _ax.legend()
+# plt.show()
 # TODO unsupported region: needs spline1, spline2, left undefined above
 
+# b3 = Spline2(x, y, n)
 # TODO unsupported region: Spline2 would have to place its own knots here, and Mathcad's rule for that is not reproduced -- pass an explicit knot vector to convert it
 
+# print(DWS(b3))
 # TODO unsupported region: needs b3, left undefined above
 
+# b4 = Spline2(x, y, n, 0.5)
 # TODO unsupported region: Spline2 would have to place its own knots here, and Mathcad's rule for that is not reproduced -- pass an explicit knot vector to convert it
 
+# print(DWS(b4))
 # TODO unsupported region: needs b4, left undefined above
 
+# fd = matcol(spline1, 1)
 # TODO unsupported region: needs spline1, left undefined above
 
+# sd = matcol(spline1, 2)
 # TODO unsupported region: needs spline1, left undefined above
 
+# td = matcol(spline1, 3)
 # TODO unsupported region: needs spline1, left undefined above
 
+# _fig, _ax = plt.subplots()
+# _ax.plot(*plot_trace(plot_axis(range_, None), plot_axis(fd, None)), label='range_', color='#FF0000')
+# _ax.plot(*plot_trace(plot_axis(range_, None), plot_axis(10 * sd, None)), label='range_', color='#008000')
+# _ax.plot(*plot_trace(plot_axis(range_, None), plot_axis(100 * td, None)), label='range_', color='#0000FF')
+# _ax.axhline(0, color='0.6', linewidth=0.8)
+# _ax.axvline(0, color='0.6', linewidth=0.8)
+# _ax.grid(True, alpha=0.3)
+# _ax.set_xlabel('')
+# _ax.set_ylabel('')
+# _ax.legend()
+# plt.show()
 # TODO unsupported region: needs fd, sd, td, left undefined above
 
 Knots = range_
@@ -636,30 +688,54 @@ SplineNW = Spline2(x, y, n, Knots)
 
 print(DWS(SplineNW))
 
+# index = matelem(GrubbsClassic(y, 0.55), 0, 0)
 # TODO unsupported region: GrubbsClassic -- Grubbs outlier test returning Mathcad's own result table
 
+# print(index)
 # TODO unsupported region: needs index, left undefined above
 
+# X_no = trim(x, index)
 # TODO unsupported region: trim -- drops the rows a GrubbsClassic test flagged
 
+# Y_no = trim(y, index)
 # TODO unsupported region: trim -- drops the rows a GrubbsClassic test flagged
 
+# W_no = trim(w, index)
 # TODO unsupported region: trim -- drops the rows a GrubbsClassic test flagged
 
+# b_no = Spline2(X_no, Y_no, n, W_no)
 # TODO unsupported region: Spline2 would have to place its own knots here, and Mathcad's rule for that is not reproduced -- pass an explicit knot vector to convert it
 
+# WithOutlier = DWS(b)
+# print(WithOutlier)
 # TODO unsupported region: needs b, left undefined above
 
+# WithoutOutlier = DWS(b_no)
+# print(WithoutOutlier)
 # TODO unsupported region: needs b_no, left undefined above
 
 i = arange(0, 200, 1)
 
 range_ = index_build(i, lambda i: 700 + i)
 
+# spline_no = transpose(Binterp(range_, b_no))
 # TODO unsupported region: needs b_no, left undefined above
 
+# spline = transpose(Binterp(range_, b))
 # TODO unsupported region: needs b, left undefined above
 
+# _fig, _ax = plt.subplots()
+# _ax.plot(*plot_trace(plot_axis(x, None), plot_axis(y, None)), label='x', color='#008000')
+# _ax.plot(*plot_trace(plot_axis(x[index], None), plot_axis(y[index], None)), label='x[index]', color='#FF0000')
+# _ax.plot(*plot_trace(plot_axis(range_, None), plot_axis(matcol(spline, 0), None)), label='range_', color='#FF0000')
+# _ax.plot(*plot_trace(plot_axis(x, None), plot_axis(matcol(spline_no, 0), None)), label='x', color='#008000')
+# _ax.axhline(0, color='0.6', linewidth=0.8)
+# _ax.axvline(0, color='0.6', linewidth=0.8)
+# _ax.grid(True, alpha=0.3)
+# _ax.set_xlabel('')
+# _ax.set_ylabel('')
+# _ax.legend()
+# plt.show()
 # TODO unsupported region: needs index, spline, spline_no, left undefined above
 
 # Example: Cubic Spline Interpolation

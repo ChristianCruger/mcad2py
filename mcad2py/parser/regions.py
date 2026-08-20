@@ -1093,7 +1093,7 @@ def _mark_unimplemented_builtins(ws: ir.Worksheet) -> None:
             continue
         missing |= _defined_names(region)
         ws.regions[index] = ir.UnsupportedRegion(
-            note=note, source=getattr(region, "source", None)
+            note=note, source=getattr(region, "source", None), original=region
         )
 
 
