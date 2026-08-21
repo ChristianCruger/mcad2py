@@ -1152,8 +1152,8 @@ attainable 22.06); and a fixed warp `W(j/m)` of the index, which the five sets d
 **The loop model above is wrong on one point, and three purpose-built sheets say how.**
 `spline2D` / `spline2E` / `spline2F` fit one curve -- `f = exp(exp(x/2))`, 60 points, `x` uniform on
 `[0, 10]`, no noise -- at 40 values of `level`. They are *experiments*, not fixtures: they were built
-to expose the move, they are not committed under `references/`, and the numbers below are the whole
-result. Three things came out of them.
+to expose the move, they sit in the git-ignored `references/_experiments/` so no test globs them,
+and the numbers below are the whole result -- the sheets can be deleted without losing anything. Three things came out of them.
 
 *The move repeats at a fixed interval count.* The pseudo-code above allows one move per count. In
 fact several levels stop at the **same** count with **different** knots, so the loop moves, tests,
