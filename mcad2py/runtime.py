@@ -1568,6 +1568,121 @@ def contingtbl(tab):
     return col(chisq, float(df), prob, cramrv, ccc)
 
 
+# --- Outlier detection and removal ------------------------------------------
+#
+# ``Grubbs``/``GrubbsClassic`` take a *confidence* ``a``, not a significance:
+# PTC's own worked example calls ``Grubbs(y, 1 - alpha)``, so the significance
+# level used inside is ``1 - a``.
+#
+# The test statistic is ``|x - mean(v)| / stdev(v)`` with the **population**
+# deviation (Mathcad's lowercase ``stdev``), and the critical value is the
+# standard Grubbs bound built on the Student's t quantile at ``alpha / (2N)``
+# with ``N - 2`` degrees of freedom -- the formula PTC's "Grubbs' Method for
+# Detecting Outliers" example spells out beside the call. The choice of
+# deviation is pinned, not assumed: the "Outlier Removal" example's
+# ``Grubbs(y, 0.85)`` returns three rows (3, 19, 188), and the *sample*
+# deviation puts row 188 just under the bound and drops it.
+#
+# Each row is ``(index, test statistic, crit - statistic)``. The third column is
+# therefore **negative** for a point that failed the test, matching the cached
+# ``-0.207 / -0.312 / -0.003`` of that same example.
+
+
+def _outlier_stats(v):
+    """``(statistic per element, N)`` for an outlier test on ``v``."""
+    mag, _ = _split(v)
+    flat = np.atleast_1d(mag).reshape(-1)
+    if np.asarray(mag).ndim == 2 and min(np.asarray(mag).shape) > 1:
+        raise NotImplementedError(
+            "Mathcad's outlier functions return nested index pairs for a "
+            "matrix argument; only the vector form is implemented"
+        )
+    return np.abs(flat - flat.mean()) / np.std(flat), flat.size
+
+
+def _grubbs_critical(n, a):
+    """The Grubbs bound at confidence ``a`` for a sample of ``n`` points."""
+    from scipy.stats import t as _t
+
+    alpha = 1.0 - _num(a)
+    quantile = float(_t.ppf(alpha / (2.0 * n), n - 2))
+    return float(
+        (n - 1)
+        / math.sqrt(n)
+        * math.sqrt(quantile**2 / (n - 2 + quantile**2))
+    )
+
+
+def _outlier_rows(indices, stat, crit=None):
+    """Pack an ascending index list into Mathcad's result matrix."""
+    idx = np.asarray(indices, dtype=int)
+    columns = [idx.astype(float), stat[idx]]
+    if crit is not None:
+        columns.append(crit - stat[idx])
+    return np.column_stack(columns)
+
+
+def Grubbs(v, a):  # noqa: N802 -- Mathcad's own spelling
+    """Mathcad ``Grubbs``: every point whose test statistic beats the bound.
+
+    Returns one row ``(index, statistic, crit - statistic)`` per candidate, in
+    ascending index order. Mathcad's own note applies: more than one row does
+    not mean every one is an outlier, because both the bound and the statistic
+    move once a candidate is removed.
+
+    With no candidate at all an empty (0x3) matrix comes back. That case is
+    *not* pinned by any example -- ``ThreeSigma`` documents a fall back to the
+    closest point, but ``Grubbs`` does not, and inventing a row would be worse
+    than returning nothing.
+    """
+    stat, n = _outlier_stats(v)
+    crit = _grubbs_critical(n, a)
+    return _outlier_rows(np.flatnonzero(stat > crit), stat, crit)
+
+
+def GrubbsClassic(v, a):  # noqa: N802 -- Mathcad's own spelling
+    """Mathcad ``GrubbsClassic``: the one point most likely to be an outlier.
+
+    One row, ``(index, statistic, crit - statistic)``, for the largest
+    statistic in ``v``. The point is *not* necessarily an outlier -- a positive
+    third column says it stayed inside the bound.
+    """
+    stat, n = _outlier_stats(v)
+    crit = _grubbs_critical(n, a)
+    return _outlier_rows([int(np.argmax(stat))], stat, crit)
+
+
+def ThreeSigma(v):  # noqa: N802 -- Mathcad's own spelling
+    """Mathcad ``ThreeSigma``: the points more than three deviations out.
+
+    Two columns, ``(index, statistic)``, in ascending index order. With no such
+    point the closest one is returned instead, which Mathcad documents.
+    """
+    stat, _ = _outlier_stats(v)
+    found = np.flatnonzero(stat > 3.0)
+    if found.size == 0:
+        found = np.array([int(np.argmax(stat))])
+    return _outlier_rows(found, stat)
+
+
+def trim(v, vindex):
+    """Mathcad ``trim``: ``v`` without the rows ``vindex`` names.
+
+    ``v`` is a vector or a matrix and keeps its shape and unit; ``vindex`` is
+    one index or a vector of them, 0-based like everything else here. Indices
+    are read through the dimensionless seam, so a count a worksheet still
+    carries as a Pint ratio reduces rather than being read raw.
+    """
+    mag, unit = _split(v)
+    wanted = np.atleast_1d(
+        np.asarray(_reduce_dimensionless(vindex), dtype=float)
+    ).reshape(-1)
+    drop = {int(round(i)) for i in wanted}
+    height = mag.shape[0] if mag.ndim else 1
+    keep = [r for r in range(height) if r not in drop]
+    return _join(mag[keep] if mag.ndim == 1 else mag[keep, :], unit)
+
+
 # --- Probability distributions ----------------------------------------------
 #
 # Mathcad names these ``<letter><distribution>``: ``d`` the density, ``p`` the

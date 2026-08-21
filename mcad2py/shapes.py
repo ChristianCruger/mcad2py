@@ -52,6 +52,11 @@ _CALL_KINDS = {
     "eigenvecs": MATRIX,
     "genvecs": MATRIX,
     "csort": MATRIX,
+    # The outlier tests return one row per candidate; ``trim`` is absent
+    # because its shape follows its argument's.
+    "Grubbs": MATRIX,
+    "GrubbsClassic": MATRIX,
+    "ThreeSigma": MATRIX,
     "rsort": MATRIX,
     # -> vector
     "eigenvals": VECTOR,

@@ -44,7 +44,8 @@ When adding features, respect this boundary — parsers produce IR, backends con
 | [mapping.py](mcad2py/mapping.py) | Data tables: operators, builtins, constants, Greek, unit aliases |
 | [units.py](mcad2py/units.py) | The one Pint registry generated modules and `const.py` share |
 | [const.py](mcad2py/const.py) | Mathcad's built-in physical constants as importable Pint quantities |
-| [runtime.py](mcad2py/runtime.py) | Helpers imported by generated code: the full angle-aware trig + hyperbolic families, the full vector/matrix family (`rows`/`identity`/`det`/`lsolve`/the norm & condition sets/the eigen set/`sort`…), the full statistics family (`median`/`mode`/`var`/`Var`/`percentile`/`histogram`/`corr`/`slope`/`Spear`…), the full probability-distribution family (`d`/`p`/`q`/`r` sets for `norm`/`t`/`weibull`/`unif`/`exp`/`gamma`/`beta`/`F`/`chisq`/`lnorm`/`logis`/`cauchy`/`geom`/`hypergeom`/`binom`/`nbinom`, plus `cnorm`), `col`/`arange`/`index_build`/`vec_set`/`vectorize`/`transpose`, `linterp` (unit-aware linear interp), the interpolation & prediction family (`lspline`/`pspline`/`cspline` + `interp`, `polyint`/`polyiter`/`polycoeff`, `rationalint`, `Thiele`/`Thielecoeff`, `predict`, and the least-squares B-spline trio `Spline2`/`Binterp`/`DWS` for a given knot vector), `derivative` (Ridders) and `range_sum`, `integral` (scipy `quad`), `summation`, `solve_block` (scipy `fsolve`), `sample`/`plot_domain`/`plot_axis`/`plot_trace` (matplotlib plots) |
+| [runtime.py](mcad2py/runtime.py) | Helpers imported by generated code: the full angle-aware trig + hyperbolic families, the full vector/matrix family (`rows`/`identity`/`det`/`lsolve`/the norm & condition sets/the eigen set/`sort`…), the full statistics family (`median`/`mode`/`var`/`Var`/`percentile`/`histogram`/`corr`/`slope`/`Spear`…), the full probability-distribution family (`d`/`p`/`q`/`r` sets for `norm`/`t`/`weibull`/`unif`/`exp`/`gamma`/`beta`/`F`/`chisq`/`lnorm`/`logis`/`cauchy`/`geom`/`hypergeom`/`binom`/`nbinom`, plus `cnorm`), `col`/`arange`/`index_build`/`vec_set`/`vectorize`/`transpose`, `linterp` (unit-aware linear interp), the interpolation & prediction family (`lspline`/`pspline`/`cspline` + `interp`, `polyint`/`polyiter`/`polycoeff`, `rationalint`, `Thiele`/`Thielecoeff`, `predict`, and the least-squares B-spline trio `Spline2`/`Binterp`/`DWS` for a given knot vector), the outlier family
+(`Grubbs`/`GrubbsClassic`/`ThreeSigma`/`trim`), `derivative` (Ridders) and `range_sum`, `integral` (scipy `quad`), `summation`, `solve_block` (scipy `fsolve`), `sample`/`plot_domain`/`plot_axis`/`plot_trace` (matplotlib plots) |
 | [emit/codegen.py](mcad2py/emit/codegen.py) | Precedence-aware expression printer; shared by both backends. `header_lines(ws, source)` reads the generated module's imports **off the rendered body** — hence both backends build the body first |
 | [emit/notebook_backend.py](mcad2py/emit/notebook_backend.py) | IR→`.ipynb`; region→cell; bare last line echoes result |
 | [emit/py_backend.py](mcad2py/emit/py_backend.py) | IR→`.py`; evaluations become `print(...)` |
@@ -89,6 +90,8 @@ adding support for a new XML construct.
   `# TODO unsupported region` comment. Without that the call emits as a bare name and the module dies
   on a `NameError` at import, taking the convertible rest of the sheet with it. The taint clears the
   moment a later region rebinds the name, and a worksheet that defines the name itself is untouched.
+  The table is currently **empty** — every builtin the fixtures reach is implemented — but it stays the
+  right home for the next one.
 - Unknown/unsupported constructs emit a visible `# TODO unsupported: <note>` so output still
   loads — never silently drop a region. A suppressed **region** also carries the Python it would
   have been, commented out above its note (`ir.UnsupportedRegion.original` holds the region it
@@ -194,7 +197,10 @@ all exact against `references/interpolation_prediction.mcdx`. Three of them were
 cache: `polyiter` stops on the change between two successive interpolations (not on the error
 estimate) taking points in the order given, `Thielecoeff` divides by **1e-65** rather than raising on a
 zero reciprocal difference, and `predict` is Burg's maximum-entropy method. What's *not* done there is
-the least-squares spline set (`Spline2`/`Binterp`/`DWS`, with the `GrubbsClassic`/`trim` outlier pair).
+`Spline2`'s **adaptive knot placement**. (The outlier pair that sits beside it in the same worksheet
+— `Grubbs`/`GrubbsClassic`/`ThreeSigma`/`trim` — is done and exact against PTC's published example
+matrices; see the schema note for the two things those matrices pin, the `1 - a` confidence convention
+and the *population* standard deviation.)
 Everything there **except the knot placement** is solved and implemented exactly — the packed vector
 layout, `Binterp` (a clamped B-spline returning value + three derivatives), the weighted least-squares
 fit (`w` is a *standard deviation*, so the weight is `1/w²`), the drop-data-outside-the-knot-range

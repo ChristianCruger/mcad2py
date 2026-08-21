@@ -2,8 +2,8 @@
 least-squares B-spline family.
 
 Only the **knot placement** is Mathcad's own undocumented rule; a call that has
-to place its own knots raises, and ``mapping.UNIMPLEMENTED`` still turns those
-regions into visible comments. Everything a call with an explicit knot vector
+to place its own knots raises, and ``regions._spline2_needs_its_own_knots``
+turns those regions -- and only those -- into visible comments. Everything a call with an explicit knot vector
 does is reproduced here to the last bit, and this module pins it against
 ``references/interpolation_prediction.mcdx``'s cache.
 

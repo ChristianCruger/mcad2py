@@ -189,6 +189,13 @@ FUNCTIONS = {
     "Thielecoeff": "Thielecoeff",
     # Linear prediction (Burg's maximum-entropy method).
     "predict": "predict",
+    # --- Outliers (all runtime helpers; see runtime.py) ---------------------
+    # ``Grubbs``/``GrubbsClassic`` take a confidence, so the significance level
+    # is ``1 - a``. ``trim`` drops the rows either one flags.
+    "Grubbs": "Grubbs",
+    "GrubbsClassic": "GrubbsClassic",
+    "ThreeSigma": "ThreeSigma",
+    "trim": "trim",
     # --- Statistics (all runtime helpers; see runtime.py) -------------------
     # Note the capitalisation: Mathcad's ``var``/``stdev`` divide by n (the
     # population forms) and ``Var``/``Stdev`` by n-1 (the sample forms).
@@ -297,10 +304,7 @@ FUNCTIONS = {
 # otherwise emit as a bare name and raise ``NameError`` at import, taking every
 # later region with it (see ``_mark_unimplemented_builtins``). A worksheet that
 # defines the name itself is untouched.
-UNIMPLEMENTED = {
-    "GrubbsClassic": "Grubbs outlier test returning Mathcad's own result table",
-    "trim": "drops the rows a GrubbsClassic test flagged",
-}
+UNIMPLEMENTED: dict[str, str] = {}
 
 # ``Spline2`` is not all-or-nothing: given an explicit knot vector it is exact
 # (see the schema note), and only a call that would make Mathcad place its own

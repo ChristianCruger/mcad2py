@@ -60,15 +60,15 @@ from mcad2py.units import ureg
 REFERENCE = reference("interpolation_prediction")
 
 # The region Mathcad itself reports an error for, so its cache holds no value.
-ENGINE_ERRORS = frozenset({12})
+ENGINE_ERRORS = frozenset({13})
 
 # Echo index -> relative tolerance, for the two numeric-derivative and one
 # ill-conditioned echo described in the module docstring. Everything else is
 # held to 1e-12.
 APPROXIMATE = {
-    7: 2e-3,    # sd_p(vx[1])          -- across a knot, third derivative jumps
-    8: 1e-4,    # sd_p(vx[last-1])     -- likewise
-    17: 1e-10,  # polycoeff            -- cancellation over four decades
+    8: 2e-3,    # sd_p(vx[1])          -- across a knot, third derivative jumps
+    9: 1e-4,    # sd_p(vx[last-1])     -- likewise
+    18: 1e-10,  # polycoeff            -- cancellation over four decades
 }
 
 
@@ -82,12 +82,11 @@ def test_sheet_runs_end_to_end(sheet):
     """Every region the converter supports echoes, and nothing else is left
     unsupported: the only TODOs are the least-squares spline section.
 
-    Two of that section's echoes -- the ``DWS`` of the two fits built on an
-    **explicit** knot vector -- do convert, which is why the count is 30 rather
-    than the 28 of the days when the whole family was suppressed by name.
+    Three of that section's echoes convert: the ``DWS`` of the two fits built
+    on an **explicit** knot vector, and the ``GrubbsClassic`` outlier index.
     """
     src, _, echoed = sheet
-    assert len(echoed) == 30
+    assert len(echoed) == 31
     assert "TODO unsupported:" not in src  # no *expression* was dropped
     notes = [line for line in src.splitlines()
              if line.startswith("# TODO unsupported region:")]
@@ -114,7 +113,7 @@ def test_sheet_matches_cached_results(sheet):
             f"echo {index} ({echo_expr(region)}): {got} != {want}"
         )
         checked += 1
-    assert checked == 29  # the whole sheet bar the one Mathcad errors on
+    assert checked == 30  # the whole sheet bar the one Mathcad errors on
 
 
 def test_predict_refuses_to_use_every_data_point(sheet):
@@ -124,12 +123,12 @@ def test_predict_refuses_to_use_every_data_point(sheet):
     from mcad2py.runtime import predict
 
     _, _, echoed = sheet
-    label, error = echoed[12]
+    label, error = echoed[13]
     assert label == "error:" and isinstance(error, ValueError)
     assert "less than the number of data points" in str(error)
 
     # And the very next region, one point short, has an answer.
-    assert flat(echoed[13]).shape == (3,)
+    assert flat(echoed[14]).shape == (3,)
 
     with pytest.raises(ValueError, match="less than the number of data points"):
         predict(np.array([1.0, 2.0, 3.0]), 3, 2)
@@ -140,7 +139,7 @@ def test_predict_matches_the_sheets_hand_written_recurrence(sheet):
     next to the builtin call. Burg's coefficients are what make the two the
     same number rather than merely a close one."""
     _, _, echoed = sheet
-    assert np.allclose(flat(echoed[10]), flat(echoed[11]), rtol=1e-14, atol=0)
+    assert np.allclose(flat(echoed[11]), flat(echoed[12]), rtol=1e-14, atol=0)
 
 
 def test_polyiter_stops_on_the_change_not_the_error_estimate(sheet):
@@ -264,7 +263,7 @@ def test_thielecoeff_substitutes_a_tiny_denominator_for_zero(sheet):
     for the sheet's second example read 1e65 and -1e-65 -- and why the last one
     is a rounding artefact rather than a number with meaning."""
     _, _, echoed = sheet
-    degenerate = flat(echoed[20])
+    degenerate = flat(echoed[21])
     assert math.isclose(degenerate[1], 1e65, rel_tol=1e-15)
     assert math.isclose(degenerate[2], -1e-65, rel_tol=1e-15)
     assert abs(degenerate[4]) < 1e-49  # the artefact, reproduced exactly
@@ -308,15 +307,13 @@ def test_unimplemented_builtins_do_not_break_the_module(sheet):
 
     ``Spline2`` is gated per *call*, not per name -- the two calls on this sheet
     that pass an explicit knot vector convert and run, and ``Binterp`` and
-    ``DWS`` with them. Only ``GrubbsClassic`` and ``trim`` are still blocked by
-    name.
+    ``DWS`` with them. Nothing is blocked by name any more: ``GrubbsClassic``
+    and ``trim`` run, and only the calls whose knots Mathcad would place itself
+    are left as comments.
     """
     src, ns, _ = sheet
     assert "# TODO unsupported region: Spline2 would have to place its own" in src
-    for name in ("GrubbsClassic", "trim"):
-        assert f"# TODO unsupported region: {name}" in src
-        assert name not in ns
-    for name in ("Spline2", "Binterp", "DWS"):
+    for name in ("Spline2", "Binterp", "DWS", "GrubbsClassic", "trim"):
         assert name in ns
     # The taint stops at the next region that rebinds the name: ``i`` is a
     # suppressed range at first and a live one a few lines later.

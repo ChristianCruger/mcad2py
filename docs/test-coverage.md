@@ -518,19 +518,18 @@ What the sheet pinned that no reading of the documentation would have given:
 | `test_predict_refuses_to_use_every_data_point` | `m >= rows(v)` is an `<engineError>` in Mathcad, wording included |
 | `test_polyint_family_carries_the_ordinates_unit` | Mathcad tags the **whole** returned vector with `vy`'s unit — `polyiter`'s converged flag and order arrive in seconds too. Cached as a `<unitedValue>` wrapping the matrix, so this is the cache's own reading |
 | `test_the_three_splines_differ_only_at_the_ends` | `lspline` = natural (y'' = 0), `pspline` = parabolic ends (y'' constant over the end piece), `cspline` = not-a-knot |
-| `test_unimplemented_builtins_do_not_break_the_module` | The `Spline2` section degrades to comments and the rest of the sheet still runs |
+| `test_unimplemented_builtins_do_not_break_the_module` | The adaptive-knot `Spline2` calls degrade to comments and the rest of the sheet still runs — including `GrubbsClassic` and `trim`, which sit in the same section |
 
 **Documented divergences.**
 
-*The least-squares spline section is not implemented.* `Spline2`, `Binterp` and `DWS` (with the
-`GrubbsClassic` / `trim` outlier pair) drive the sheet's first 14 echoes. `Spline2` returns a packed
-vector — `[order, knot count, 35 knots, 38 B-spline coefficients, 0, Durbin-Watson, 0.99934, 0.4495]`
-— whose knots are placed **adaptively**: they are neither uniform nor quantiles of the data, and PTC
-documents no rule. Guessing one would return plausible wrong numbers from a green-looking sheet,
-which is the failure this repo's conventions exist to prevent, so the five names are listed in
-`mapping.UNIMPLEMENTED` and their regions convert to visible `# TODO unsupported region` comments
-instead. `DWS` is trivially `b[last(b) - 2]` (the sheet proves it, echoing both) and `trim` just drops
-a row — but neither is reachable without `Spline2`, so they wait with it.
+*Only `Spline2`'s adaptive knot placement is missing.* `Spline2`, `Binterp` and `DWS` (with the
+`GrubbsClassic` / `trim` outlier pair) drive the sheet's first 15 echoes. Everything there is
+implemented and exact except the calls where Mathcad would place its own knots: they are neither
+uniform nor quantiles of the data, and PTC documents no rule. Guessing one would return plausible
+wrong numbers from a green-looking sheet, which is the failure this repo's conventions exist to
+prevent, so those calls — and only those — convert to visible `# TODO unsupported region` comments.
+Nothing is blocked by *name*: see `tests/test_least_squares_spline.py` for the per-call gate and
+`tests/test_outliers.py` for the outlier pair.
 
 *The second derivative at an interior knot* — `sd_p(vx[1])` and `sd_p(vx[last-1])`, taken with the
 numeric derivative operator — agrees to ~1e-3 and ~1e-5, not 1e-14. A spline's third derivative jumps
@@ -695,3 +694,25 @@ holds every `# TODO unsupported region:` line to having the commented-out Python
 That is what makes the taint chain readable: `# b = Spline2(x, y, n, w)` above the first note, and
 then a run of `needs b, left undefined above` that a reader can trace back to that one line. Multi-line
 regions are commented whole — the sheet's plots name the very variables their notes list as missing.
+
+## `tests/test_outliers.py` — PTC's published example matrices
+
+`references/interpolation_prediction.mcdx` reaches exactly one arm of Mathcad's outlier family:
+`GrubbsClassic(y, 0.55)` on a plain unitless column, read for its index alone (cached as `150`). That
+one call would come out the same under several wrong readings, so this module pins the rest against
+PTC's own worked examples, which publish the returned matrices in full for one 195-point heatflow
+data set. See the schema note for where each number comes from.
+
+| Test | What it pins |
+|------|--------------|
+| `test_grubbs_reproduces_the_published_matrix` | `Grubbs(y, 0.85)` → the three rows `3 3.526 -0.207 / 19 3.631 -0.312 / 188 3.322 -0.003`. This is the test that identifies the **population** standard deviation: the sample form drops row 188 |
+| `test_a_tighter_confidence_returns_fewer_rows` | `a = 0.9` → two rows, and the third column moves with the bound rather than the data. Confirms `a` is a *confidence*, so the significance is `1 - a` |
+| `test_grubbs_returns_nothing_when_no_point_clears_the_bound` | No example publishes this case, so an empty 0×3 matrix comes back rather than an invented row |
+| `test_grubbs_classic_returns_the_extreme_point_outlier_or_not` | `[19 3.631 -0.389]` at `a = 0.8`, and a **positive** third column at `a = 0.98` — the documented "not an outlier, but the point most likely to be one" |
+| `test_three_sigma_returns_index_and_statistic_only` | Two columns, no bound to subtract |
+| `test_three_sigma_falls_back_to_the_closest_point` | The one place the family invents a row, and Mathcad documents it |
+| `test_the_statistic_is_dimensionless_for_dimensioned_data` | `|x - mean| / stdev` cancels the unit, so a column of metres gives a bare matrix — indexing it must not hand a sheet a stray unit |
+| `test_trim_drops_the_named_rows_of_a_matrix_and_keeps_the_unit` | The "Outlier Removal" example's two-column `augment(x, y)`: 195 rows in, 192 out, unit intact |
+| `test_trim_takes_a_single_index` | The reference sheet passes one scalar, not a vector; a vector keeps its 1-D shape |
+| `test_trim_reduces_a_dimensionless_index` | An index still carried as `mm/m` reduces before rounding — reading the raw magnitude would drop row 2000 and trim nothing |
+| `test_a_matrix_argument_is_refused_rather_than_flattened` | Mathcad returns nested *pairs* of indices there; a flat index into a 2-D shape would be a plausible wrong answer |

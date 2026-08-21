@@ -944,6 +944,38 @@ nothing for the region either way, but evaluating it in Python indexes a real 7-
 real range variable and raises. `ir.SymbolicEquation.display_only` marks the case (every free name
 already defined above) and both backends emit it as a `# shown, not computed:` comment.
 
+**The outlier family — `Grubbs`, `GrubbsClassic`, `ThreeSigma`, `trim`.** These sit beside the
+least-squares spline in the same worksheet, but they are ordinary documented functions and nothing
+about them had to be reverse-engineered. PTC publishes the returned matrices in full for one
+195-point heatflow data set, across three example pages ("Outlier Detection", "Grubbs' Method for
+Detecting Outliers", "Outlier Removal"), and those published numbers settle every choice:
+
+* **`a` is a confidence, not a significance.** PTC's own example writes `Grubbs(y, 1 - α)`, so the
+  significance level used inside is `1 - a`. The reference sheet's `GrubbsClassic(y, 0.55)` therefore
+  tests at `α = 0.45`.
+* **The test statistic uses the *population* standard deviation** — Mathcad's lowercase `stdev`,
+  divide-by-n. This is pinned, not assumed: `Grubbs(y, 0.85)` publishes three rows (indices 3, 19,
+  188), and the *sample* deviation puts row 188 at 3.3133 against a bound of 3.3191 and returns two.
+* **The critical value** is the standard Grubbs bound, which the "Grubbs' Method" page spells out as a
+  worksheet formula beside the call: `t := qt(α/(2N), N-2)` and
+  `crit := (N-1)/√N · √(t²/(N-2+t²))`.
+* **Each row is `(index, statistic, crit - statistic)`**, indices ascending. The third column is
+  *negative* for a point that failed the test — the published `-0.207 / -0.312 / -0.003` at `a = 0.85`
+  and `-0.102 / -0.207` at `a = 0.9` are reproduced exactly. `GrubbsClassic` returns one such row for
+  the largest statistic whether or not it clears the bound (`[19 3.631 -0.389]` at `a = 0.8`);
+  `ThreeSigma` returns two columns only, and falls back to the closest point when nothing exceeds 3.
+
+The reference sheet reaches exactly one arm of this — `matelem(GrubbsClassic(y, 0.55), 0, 0)`, cached
+as `150`, which is the index of the largest statistic and would come out the same under either
+deviation. Everything above is pinned in `tests/test_outliers.py` against the published matrices
+instead. Two cases are *not* pinned by anything: `Grubbs` with no candidate at all (an empty 0×3
+matrix comes back rather than an invented row) and a **matrix** argument, for which Mathcad returns
+nested pairs of indices — that raises rather than flattening, since a flat index into a 2-D shape
+would be a plausible wrong answer.
+
+`trim(v, vindex)` drops the rows `vindex` names, keeping the shape and unit of `v`; the indices are
+relative to `ORIGIN`, i.e. 0-based here.
+
 **`Spline2` / `Binterp` / `DWS`, and `GrubbsClassic` / `trim`** are genuine Prime built-ins — the
 worksheet has no include region and no add-in reference, and Prime labels them `FUNCTION` exactly like
 `cspline`. `Spline2(x, y, n[, w][, level | knots])` returns one packed vector, and the sheet caches the
@@ -1005,8 +1037,8 @@ a measurement table), and anything **computed** cannot be told apart before the 
 one of those would put a `NotImplementedError` at import time, which is the single outcome the
 suppression exists to prevent. `Binterp` and `DWS` need no gate: both only read a packed vector, so
 they follow whatever their `Spline2` did, and the ordinary taint carries a suppressed one downstream.
-Only `GrubbsClassic` and `trim` are still blocked by name. `references/spline2B.mcdx` converts with
-**no** TODO at all as a result.
+Nothing is blocked by name any more — `GrubbsClassic` and `trim` are implemented (next section).
+`references/spline2B.mcdx` converts with **no** TODO at all as a result.
 
 Tested against the cached knots and rejected: uniform spacing; the data's quantiles (5 to 48 points
 per interval, with the *fewest* points where the knots are *densest*); equidistributing arc length,

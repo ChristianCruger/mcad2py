@@ -2,7 +2,7 @@
 import math
 import matplotlib.pyplot as plt
 
-from mcad2py.runtime import sin, cos, mc_max, mc_min, power, col, matrix, transpose, vec_set, augment, matcol, rows, last, matelem, reverse, csort, linterp, lspline, pspline, cspline, interp, polyint, polyiter, polycoeff, rationalint, Thielecoeff, Thiele, predict, Spline2, Binterp, DWS, index_build, range_sum, derivative, arange, sample, static_axis, plot_axis, plot_trace, vectorize
+from mcad2py.runtime import sin, cos, mc_max, mc_min, power, col, matrix, transpose, vec_set, augment, matcol, rows, last, matelem, reverse, csort, GrubbsClassic, trim, linterp, lspline, pspline, cspline, interp, polyint, polyiter, polycoeff, rationalint, Thielecoeff, Thiele, predict, Spline2, Binterp, DWS, index_build, range_sum, derivative, arange, sample, static_axis, plot_axis, plot_trace, vectorize
 from mcad2py.units import ureg
 
 
@@ -688,20 +688,15 @@ SplineNW = Spline2(x, y, n, Knots)
 
 print(DWS(SplineNW))
 
-# index = matelem(GrubbsClassic(y, 0.55), 0, 0)
-# TODO unsupported region: GrubbsClassic -- Grubbs outlier test returning Mathcad's own result table
+index = matelem(GrubbsClassic(y, 0.55), 0, 0)
 
-# print(index)
-# TODO unsupported region: needs index, left undefined above
+print(index)
 
-# X_no = trim(x, index)
-# TODO unsupported region: trim -- drops the rows a GrubbsClassic test flagged
+X_no = trim(x, index)
 
-# Y_no = trim(y, index)
-# TODO unsupported region: trim -- drops the rows a GrubbsClassic test flagged
+Y_no = trim(y, index)
 
-# W_no = trim(w, index)
-# TODO unsupported region: trim -- drops the rows a GrubbsClassic test flagged
+W_no = trim(w, index)
 
 # b_no = Spline2(X_no, Y_no, n, W_no)
 # TODO unsupported region: Spline2 would have to place its own knots here, and Mathcad's rule for that is not reproduced -- pass an explicit knot vector to convert it
@@ -736,7 +731,7 @@ range_ = index_build(i, lambda i: 700 + i)
 # _ax.set_ylabel('')
 # _ax.legend()
 # plt.show()
-# TODO unsupported region: needs index, spline, spline_no, left undefined above
+# TODO unsupported region: needs spline, spline_no, left undefined above
 
 # Example: Cubic Spline Interpolation
 
