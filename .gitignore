@@ -12,3 +12,4 @@ dist/
 !references/**/*.ipynb
 references/_extracted/
 scratch_*.py
+references/_experiments/

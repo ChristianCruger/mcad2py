@@ -218,6 +218,13 @@ def _emit(node: ir.Expr) -> tuple[str, int]:
             _ATOM,
         )
 
+    if isinstance(node, ir.Derivative):
+        return (
+            f"derivative({expr_to_str(node.func)}, {node.var}, "
+            f"{expr_to_str(node.degree)})",
+            _ATOM,
+        )
+
     if isinstance(node, ir.Summation):
         return (
             f"summation({expr_to_str(node.func)}, "
@@ -1180,7 +1187,11 @@ def _sympy_imports(ws: ir.Worksheet) -> set[str]:
         if isinstance(region, ir.SymbolDeclarations):
             names.add("Symbol")
         elif isinstance(region, ir.SymbolicEquation):
-            names.add("Eq")
+            # A display-only equation is emitted as a comment, so it needs no
+            # import -- and asking for one the body never names would break the
+            # import round-trip test.
+            if not region.display_only:
+                names.add("Eq")
         elif isinstance(region, ir.SymbolicEval):
             names.add(region.command)
             if any(isinstance(e, ir.Equation) for e in _walk(region.expr)):

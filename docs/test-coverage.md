@@ -500,6 +500,239 @@ A sheet that never calls `Seed` **is** reproducible: Prime opens a new worksheet
 as `Seed(1)`. `test_a_fresh_worksheet_starts_at_state_one` pins that the module-level generator starts
 there too.
 
+## `tests/test_interpolation.py` — `references/interpolation_prediction.mcdx`
+
+PTC's own "Interpolation and Prediction" tutorial. 28 evaluated regions covering the three cubic
+splines and `interp`, the polynomial set (`polyint` / `polyiter` / `polycoeff`), the rational and
+Thiele continued-fraction interpolants, and `predict`. Echoes are paired with regions by `region-id`
+via the shared `cached_results` / `result_refs` helpers, as in `test_statistics.py`.
+
+What the sheet pinned that no reading of the documentation would have given:
+
+| Test | Pins |
+|------|------|
+| `test_sheet_matches_cached_results` | All 27 computable echoes against `result.xml` |
+| `test_polyiter_stops_on_the_change_not_the_error_estimate` | The convergence rule. The same data and query converge at **order 3** when allowed 5, and report failure at **order 2** when capped there — and `polyint`'s error estimate for that query is exactly 0. So `polyiter` compares two *successive interpolations*, not the error estimate, and it takes the data points **in the order given**, not nearest-first |
+| `test_thielecoeff_substitutes_a_tiny_denominator_for_zero` | Mathcad divides by **1e-65** where a reciprocal difference is infinite. The sheet's degenerate example caches `1e65`, `-1e-65`, `-1e65` and then `-4.2764235361e-50` — that last one is pure floating-point noise from the substitution, and reproducing the substitution reproduces it to the last digit |
+| `test_predict_matches_the_sheets_hand_written_recurrence` | `predict` is Burg's maximum-entropy method (NR `memcof` + `predic`). The sheet writes the predictor out term by term beside the builtin call, which is what identified the method and the coefficient order (`memcof`'s `d[0]` weights the *most recent* sample; Mathcad displays them oldest-first) |
+| `test_predict_refuses_to_use_every_data_point` | `m >= rows(v)` is an `<engineError>` in Mathcad, wording included |
+| `test_polyint_family_carries_the_ordinates_unit` | Mathcad tags the **whole** returned vector with `vy`'s unit — `polyiter`'s converged flag and order arrive in seconds too. Cached as a `<unitedValue>` wrapping the matrix, so this is the cache's own reading |
+| `test_the_three_splines_differ_only_at_the_ends` | `lspline` = natural (y'' = 0), `pspline` = parabolic ends (y'' constant over the end piece), `cspline` = not-a-knot |
+| `test_unimplemented_builtins_do_not_break_the_module` | The adaptive-knot `Spline2` calls degrade to comments and the rest of the sheet still runs — including `GrubbsClassic` and `trim`, which sit in the same section |
+
+**Documented divergences.**
+
+*Only `Spline2`'s adaptive knot placement is missing.* `Spline2`, `Binterp` and `DWS` (with the
+`GrubbsClassic` / `trim` outlier pair) drive the sheet's first 15 echoes. Everything there is
+implemented and exact except the calls where Mathcad would place its own knots: they are neither
+uniform nor quantiles of the data, and PTC documents no rule. Guessing one would return plausible
+wrong numbers from a green-looking sheet, which is the failure this repo's conventions exist to
+prevent, so those calls — and only those — convert to visible `# TODO unsupported region` comments.
+Nothing is blocked by *name*: see `tests/test_least_squares_spline.py` for the per-call gate and
+`tests/test_outliers.py` for the outlier pair.
+
+*The second derivative at an interior knot* — `sd_p(vx[1])` and `sd_p(vx[last-1])`, taken with the
+numeric derivative operator — agrees to ~1e-3 and ~1e-5, not 1e-14. A spline's third derivative jumps
+at a knot, so any finite difference straddling one is wrong in its last digits; Mathcad's own two
+values for what is provably the *same* number (a parabolic end piece has constant y'') disagree at the
+7th digit. The values at the **ends**, where the end piece continues smoothly and Mathcad extrapolates
+along it, match to 1e-13 — that is the real check on the spline coefficients, and it is exact enough to
+confirm the end conditions above.
+
+*`polycoeff`* agrees to 1e-11 rather than 1e-14: a 5th-degree fit over x ≈ 300…333 has a leading
+coefficient of 1.8e4 against a trailing one of 2.4e-6, and the cancellation between them is the whole
+computation.
+
+**What the worksheet does not reach.** Every interpolator on the sheet is called on dimensionless data
+except the `polyint`/`polyiter` block, and no spline there is ever asked for a *dimensioned* query
+point or handed a query in a different unit from its knots. The direct unit tests below the fixture
+ones cover: a query in mm against knots in m (through `linterp`, `interp` and `polyint` alike, plus a
+tolerance in ms against ordinates in s); `interp` over a whole **vector** of query points, which is
+how the sheet's plots call it but which no echo checks; the three splines' end conditions read off
+their coefficients; `rationalint` on a pole and on an exact hit; a `Thielecoeff` → `Thiele` round trip;
+the derivative operator on a **dimensioned** argument (m/s² differentiated twice against s); and
+`range_sum` over a stepped range and over a unit-bearing summand.
+
+## `tests/test_least_squares_spline.py` — `references/interpolation_prediction.mcdx`
+
+`Spline2` / `Binterp` / `DWS`, the **reproducible half** of Mathcad's least-squares B-spline family.
+The knot *placement* is still Mathcad's own undocumented rule, so the names stay in
+`mapping.UNIMPLEMENTED` and the sheet's regions still convert to visible comments; this module tests
+the runtime helpers directly. A call that has to place its own knots raises rather than fitting a
+plausible wrong curve, and `test_placing_its_own_knots_raises_rather_than_guessing` pins that for all
+three shapes Mathcad also declines (no fourth argument, a scalar `level`, and an unsorted vector).
+
+The sheet never echoes `SplineW` or `SplineNW`, so the anchors are indirect and worth naming:
+
+| Anchor | What it pins |
+|--------|--------------|
+| `DWS(SplineNW)` = 2.3915925499477493 | an **unweighted** fit on a given knot vector |
+| `DWS(SplineW)` = 2.3217321679568084 | `w` is a **standard deviation** — the weight is `1/w²`, and `DWS` runs on the *weighted* residuals |
+| the cached plot trace of `Binterp(range, SplineW)` | `Binterp`'s four rows (value + three derivatives) at 101 points — the only direct check of it that exists |
+| the cached 79-element `b` | the packed layout, and that a refit on Mathcad's own knots returns Mathcad's own coefficients |
+
+**The detail that hides the rest: `Spline2` drops data outside the knot range.** The sheet's
+`Knots := range` stops at 1982.96 while `x` reaches 1999.7, so five of the 536 points fall out.
+Keeping them shifts every number here by about 0.2% — close enough to read as a rounding difference,
+which is why `test_points_outside_the_knot_range_are_dropped` asserts it rather than leaving it to be
+caught downstream.
+
+**One documented divergence.** `Binterp`'s **third** derivative is not compared against the cached
+trace. It is piecewise constant, the trace samples it exactly *at* the knots, and Mathcad picks the
+left or the right interval there inconsistently — its own values repeat at samples 1, 4, 8, 16, 32, 64
+and 100, a bisection artifact in Mathcad's interval search. Pinning against it would encode that bug.
+`test_the_third_derivative_differentiates_mathcads_own_second` checks it at interval *midpoints*
+against the difference quotient of Mathcad's cached second derivative instead.
+
+**What the worksheet does not reach.** Every `Spline2` call on the sheet is dimensionless, so
+`test_a_query_is_converted_into_the_abscissae_unit` builds a fit in metres and queries it in
+millimetres, and checks that the derivative rows come back in `kg/m`, `kg/m²`, `kg/m³` — the four rows
+cannot share one unit, which is why `Binterp` returns an object array in that case. The two
+unidentified trailing statistics come back `nan` rather than a guess, pinned by its own test.
+
+### `references/spline2.mcdx` (in the same module)
+
+13 points, calling `Spline2(x, y, 3)` at the default `level`, at 0.5 and at 0.001. Its value is that
+all three echoes are **identical** — knots `[0, 6, 12]`, the midpoint exactly, on data that is not
+symmetric. Three tests pin what that proves:
+
+* `test_a_small_sheet_reproduces_its_whole_packed_vector` — every element to 4e-15, on data with
+  nothing in common with the 536-row sheet.
+* `test_the_level_argument_changes_nothing_on_the_small_sheet` — the stopping rule is a
+  Durbin-Watson p-value against `level`. One interval gives p = 0.00069, below every level tried; two
+  gives 0.79, above all of them. So all three calls stop in the same place.
+* `test_the_small_sheets_knots_are_uniform` — the search **starts at one interval**. With one
+  interval the fit is a single cubic, `|D³f|` is constant, and any curvature-based redistribution
+  returns uniform knots, which is why the interior knot is exactly 6.0.
+
+The sheet deliberately cannot discriminate between knot-placement rules — its `x` is uniform and it
+stops before the redistribution step ever runs. It settles the loop around that step instead.
+
+### `references/spline2A.mcdx` (in the same module)
+
+45 points on **non-uniformly spaced** `x` — its spacing varies by a factor of four — with two kinks
+placed deliberately in the sparse half, so that a placement rule which equidistributes in `x` and one
+that equidistributes over data points cannot agree. Three calls at the default `level`, at 0.5 and at
+0.001 return 6, 4 and 3 intervals.
+
+* `test_the_starting_knots_are_uniform_in_data_index` — the headline. Two of the three cached knot
+  vectors are `interp(j·(len(x)-1)/m, 0..len(x)-1, x)` **exactly**, zero difference. Mathcad's first
+  try at every interval count puts an equal number of *data points* in each interval, not an equal
+  width, and interpolates the knot between the two neighbouring points (which is where values like
+  0.834022 come from).
+* `test_a_stricter_level_can_return_a_redistributed_knot_set` — the `level = 0.5` call does **not**
+  return that set. It is the one cached example of the second phase on small data, and the rule
+  behind it is the last unsolved piece.
+* `test_every_cached_vector_is_reproduced_from_its_own_knots` — given the knots, all three vectors
+  come back to 1e-12, at three different interval counts.
+
+**A documented divergence.** The sheet does `Seed(1)` then `nz := rnorm(45, 0, 0.85)`, so executing
+the generated module gives a different `y` from the cached one. The cached values are our stream at
+offset **45** — exactly one whole `rnorm(45, …)` call further on — so Prime drew the vector twice
+across the saves that produced the file.
+`test_the_sheets_noise_is_our_random_stream_one_call_later` pins that offset, which says the generator
+is right and the worksheet state is what moved.
+
+### `references/spline2B.mcdx` (in the same module)
+
+31 points fitted on five **explicit** knot vectors (2, 4, 5, 8 and 10 intervals) and at two degrees.
+No placement rule is involved anywhere, so each echo is a clean (design, statistic, p-value) triple —
+which is what identified the last two trailing statistics.
+
+* `test_the_whole_packed_vector_matches_element_for_element` — knots, coefficients, residual standard
+  error, statistic **and both p-values**, to 3e-9 across six fits. That is the Beta CDF's own
+  precision, not a modelling gap. The degree-2 call is the only non-cubic fit in any fixture, and it
+  is what shows the coefficient count is `m + degree`, not `m + 3`.
+* `test_a_higher_degree_is_refused_the_way_mathcad_refuses_it` — the sheet's seventh call,
+  `Spline2(x, y, 4, k5)`, is the one region **Mathcad itself** will not compute: an `order_too_big`
+  engine error whose argument is 3. The family is capped at cubic, and `Spline2` raises to match.
+
+The two statistics are the classical **bounds** of the Durbin-Watson test — the statistic's exact null
+distribution depends on the design matrix, so Durbin and Watson published two design-free bounds
+instead. Mathcad stores the upper first (the probability of no positive autocorrelation, which is what
+the fit is judged by) then the lower.
+
+### `references/spline2C.mcdx` (in the same module)
+
+The same 45 points as `spline2A`, fitted at eight values of `level`. Its worth is that the interval
+counts come back sharply **non**-monotone — 6, 6, 15, 15, 29, 5, 5, 7 — which is what turned the
+knot-count loop from a guess into a rule.
+
+* `test_the_moved_knot_set_does_not_depend_on_level` — two levels that stop at the same count return
+  byte-identical vectors, so the moved set is a function of the data and the count alone. `level`
+  chooses when to stop, never where the knots go.
+* `test_the_loop_accepts_the_first_fit_whose_lower_bound_beats_level` — the rungs from 0.1 to 0.5 form
+  a ladder: each cached fit clears its own level, and no smaller cached count does.
+* `test_the_level_0_001_rung_is_predicted_from_scratch` — the one cached adaptive fit reproduced end
+  to end with no unsolved step, count and knots included, by sweeping interval counts and taking the
+  first whose lower bound clears 0.001.
+* `test_the_three_highest_levels_are_accepted_on_the_upper_bound` — 0.6, 0.7 and 0.8 stop at *fewer*
+  intervals than 0.5 does, on upper bounds rather than lower ones. That fallback is not reproduced;
+  the test records the evidence rather than a rule.
+
+`test_every_rung_is_reproduced_from_its_own_knots` covers all eight, at counts from 5 to 29 — the last
+leaving only 13 residual degrees of freedom.
+
+### The per-call `Spline2` gate (in the same module)
+
+`Spline2` is suppressed per *call*, not per name — with an explicit knot vector it is exact, so
+blocking the name would throw away work that is finished. Two tests pin the split:
+
+* `test_a_sheet_of_explicit_knot_calls_converts_completely` — `spline2B` has **no TODO left in it**
+  and its numbers match the cache, the degree-4 region included (which converts as a guarded region,
+  the way any cached engine error does). Its `x` and `y` come back exactly too, since they are built
+  from `Seed`/`rnorm`.
+* `test_the_gate_keeps_the_adaptive_calls_out` — `interpolation_prediction` has both kinds.
+  `Spline2(x, y, n, w, Knots)` and `Spline2(x, y, n, Knots)` convert, the second only because the
+  first named `Knots` in the unambiguous fifth slot. `Spline2(x, y, n)`, `Spline2(x, y, n, w)`,
+  `Spline2(…, 0.5)` and `Spline2(x, y, n, w, level)` all stay comments — an unsorted column, no
+  fourth argument, and a significance sitting in the knot slot.
+
+**A suppressed region shows its own would-be code.**
+`test_a_suppressed_region_shows_the_python_it_would_have_been` (in `tests/test_interpolation.py`)
+holds every `# TODO unsupported region:` line to having the commented-out Python directly above it.
+That is what makes the taint chain readable: `# b = Spline2(x, y, n, w)` above the first note, and
+then a run of `needs b, left undefined above` that a reader can trace back to that one line. Multi-line
+regions are commented whole — the sheet's plots name the very variables their notes list as missing.
+
+## `tests/test_outliers.py` — `references/grubbs.mcdx` and PTC's published matrices
+
+`references/interpolation_prediction.mcdx` reaches exactly one arm of Mathcad's outlier family:
+`GrubbsClassic(y, 0.55)` on a plain unitless column, read for its index alone (cached as `150`). That
+one call would come out the same under several wrong readings, so this module pins the rest two ways:
+against PTC's worked examples, which publish the returned matrices in full for one 195-point heatflow
+data set, and against `references/grubbs.mcdx`, a 20-value sheet built to reach every branch. See the
+schema note for where each number comes from.
+
+| Test | What it pins |
+|------|--------------|
+| `test_grubbs_reproduces_the_published_matrix` | `Grubbs(y, 0.85)` → the three rows `3 3.526 -0.207 / 19 3.631 -0.312 / 188 3.322 -0.003`. This is the test that identifies the **population** standard deviation: the sample form drops row 188 |
+| `test_a_tighter_confidence_returns_fewer_rows` | `a = 0.9` → two rows, and the third column moves with the bound rather than the data. Confirms `a` is a *confidence*, so the significance is `1 - a` |
+| `test_grubbs_falls_back_to_the_closest_point` | With nothing past the bound `Grubbs` returns the one most extreme point, third column **positive** — the same row `GrubbsClassic` gives. An empty table was the natural guess and the cache says it is wrong |
+| `test_grubbs_classic_returns_the_extreme_point_outlier_or_not` | `[19 3.631 -0.389]` at `a = 0.8`, and a **positive** third column at `a = 0.98` — the documented "not an outlier, but the point most likely to be one" |
+| `test_three_sigma_returns_index_and_statistic_only` | Two columns, no bound to subtract |
+| `test_three_sigma_falls_back_to_the_closest_point` | The one place the family invents a row, and Mathcad documents it |
+| `test_the_statistic_is_dimensionless_for_dimensioned_data` | `|x - mean| / stdev` cancels the unit, so a column of metres gives a bare matrix — indexing it must not hand a sheet a stray unit |
+| `test_trim_drops_the_named_rows_of_a_matrix_and_keeps_the_unit` | The "Outlier Removal" example's two-column `augment(x, y)`: 195 rows in, 192 out, unit intact |
+| `test_trim_takes_a_single_index` | The reference sheet passes one scalar, not a vector; a vector keeps its 1-D shape |
+| `test_trim_reduces_a_dimensionless_index` | An index still carried as `mm/m` reduces before rounding — reading the raw magnitude would drop row 2000 and trim nothing |
+| `test_a_matrix_is_one_flat_bag_with_nested_index_pairs` | A matrix is judged as a single sample of **all** its elements, and the position comes back as a nested 2×1 `(row, col)` column |
+
+### `references/grubbs.mcdx` (in the same module)
+
+Built for this family alone: 20 values with one outlier at index 19, a clean twin `u`, and 16 echoes.
+
+| Test | What it pins |
+|------|--------------|
+| `test_the_sheet_converts_with_no_todo` | Nothing in it is suppressed |
+| `test_every_echo_matches_the_cache` | All 16 echoes to ~1e-11. This is what pins the critical value to **fourteen** digits — the published pages print three |
+| `test_the_sheet_pins_the_fallback_and_the_nested_pair` | The two readings no page shows, named rather than buried in the sweep: `Grubbs(v, 0.999)` returns the closest point, and `Grubbs(M, 0.95)` returns a nested `(row, col)` column |
+| `test_a_unit_on_the_data_leaves_the_table_bare` | Prime accepts `GrubbsClassic(v·m, 0.95)` and caches plain reals, identical to the unitless call |
+| `test_the_nested_pair_is_row_then_column` | `Grubbs(augment(x, v), …)` puts its extreme at (0, 0), which reads the same either way round. `Grubbs(augment(v, x), …)` moves the same point to row 0 of column **1** and caches `(0 1)ᵀ` — so the pair is `(row, col)` |
+
+**Still unconfirmed.** One candidate cannot show what order **several** matrix candidates come back
+in. We emit column-major — Mathcad's own storage order, and the order the vector case is confirmed to
+use.
 
 ## `tests/test_range_sum.py` — `references/range_sum.mcdx`
 

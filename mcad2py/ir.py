@@ -293,6 +293,23 @@ class Summation(Expr):
 
 
 @dataclass
+class Derivative(Expr):
+    """Mathcad's numeric derivative operator ``d^n/dx^n f(x)``.
+
+    The XML is ``<ml:apply><ml:derivative /><ml:lambda>…<ml:degree>``; the
+    lambda's bound variable is the one differentiated against, and an empty
+    ``<ml:degree>`` means first order. Emitted as
+    ``derivative(<func>, <var>, <degree>)`` -- evaluated *at* the variable, which
+    is in scope because the operator only ever appears inside a definition of a
+    function of it.
+    """
+
+    func: Lambda
+    var: str
+    degree: Expr
+
+
+@dataclass
 class VectorSum(Expr):
     """Mathcad's bare ``Σ`` over a whole vector (no index bounds).
 
@@ -606,10 +623,18 @@ class SymbolDeclarations(Region):
 
 @dataclass
 class SymbolicEquation(Region):
-    """A standalone symbolic equation shown as a step (assigned to nothing)."""
+    """A standalone symbolic equation shown as a step (assigned to nothing).
+
+    ``display_only`` marks one whose names the sheet has *already* given numeric
+    values -- a tutorial writing out the recurrence ``X[k] = c[0]·X[k-3] + …``
+    beside the data it applies to. Mathcad computes nothing for such a region,
+    and evaluating it in Python would index a real array with a real range
+    variable and raise, so it is emitted as a comment instead of as ``Eq(...)``.
+    """
 
     equation: Equation
     source: SourceRef | None = None
+    display_only: bool = False
 
 
 @dataclass
@@ -739,9 +764,20 @@ class ImageRegion(Region):
 
 @dataclass
 class UnsupportedRegion(Region):
+    """A region the converter declines to emit, shown as a comment instead.
+
+    ``original`` is the region it replaced, kept so the backends can print the
+    Python it *would* have been. Without that a reader sees "needs b, left
+    undefined above" with no way to learn what ``b`` was -- and the whole point
+    of a visible TODO is that someone can act on it. Rendering is the backends'
+    job, so the node carries the IR rather than a rendered string; a parser that
+    formatted Python here would be reaching across the IR boundary.
+    """
+
     note: str
     raw: str = ""
     source: SourceRef | None = None
+    original: Region | None = None
 
 
 # ---------------------------------------------------------------------------

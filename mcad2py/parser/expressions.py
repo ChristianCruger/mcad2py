@@ -225,6 +225,10 @@ def _parse_apply(elem: ET.Element) -> ir.Expr:
     if head_tag in ("integral", "summation"):
         return _parse_integral_like(head_tag, rest)
 
+    # Numeric derivative: <apply><derivative/> <lambda/> <degree-or-placeholder/>.
+    if head_tag == "derivative":
+        return _parse_derivative(rest)
+
     # Unit scaling: <apply><scale/> <value/> <unit/>
     if head_tag == "scale":
         value = parse_expr(rest[0])
@@ -380,6 +384,24 @@ def _parse_integral_like(head_tag: str, rest: list[ET.Element]) -> ir.Expr:
         return ir.RangeSum(func=func)
     cls = ir.Integral if head_tag == "integral" else ir.Summation
     return cls(func=func, lower=lower, upper=upper)
+
+
+def _parse_derivative(rest: list[ET.Element]) -> ir.Expr:
+    """Parse a numeric derivative: a lambda plus an optional ``<ml:degree>``."""
+    func: ir.Lambda | None = None
+    degree: ir.Expr = ir.Number("1")
+    for child in rest:
+        ctag = localname(child.tag)
+        if ctag == "lambda":
+            func = _parse_lambda(child)
+        elif ctag == "degree" and len(child):
+            parsed = parse_expr(child[0])
+            # An empty <ml:degree> placeholder is Mathcad's first derivative.
+            if not isinstance(parsed, ir.Placeholder):
+                degree = parsed
+    if func is None or len(func.params) != 1:
+        return ir.Unsupported(note="apply/derivative")
+    return ir.Derivative(func=func, var=func.params[0], degree=degree)
 
 
 def _parse_matrix(elem: ET.Element) -> ir.Expr:

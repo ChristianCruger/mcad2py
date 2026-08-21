@@ -44,7 +44,8 @@ When adding features, respect this boundary — parsers produce IR, backends con
 | [mapping.py](mcad2py/mapping.py) | Data tables: operators, builtins, constants, Greek, unit aliases |
 | [units.py](mcad2py/units.py) | The one Pint registry generated modules and `const.py` share |
 | [const.py](mcad2py/const.py) | Mathcad's built-in physical constants as importable Pint quantities |
-| [runtime.py](mcad2py/runtime.py) | Helpers imported by generated code: the full angle-aware trig + hyperbolic families, the full vector/matrix family (`rows`/`identity`/`det`/`lsolve`/the norm & condition sets/the eigen set/`sort`…), the full statistics family (`median`/`mode`/`var`/`Var`/`percentile`/`histogram`/`corr`/`slope`/`Spear`…), the full probability-distribution family (`d`/`p`/`q`/`r` sets for `norm`/`t`/`weibull`/`unif`/`exp`/`gamma`/`beta`/`F`/`chisq`/`lnorm`/`logis`/`cauchy`/`geom`/`hypergeom`/`binom`/`nbinom`, plus `cnorm`), `col`/`arange`/`index_build`/`vec_set`/`vectorize`/`transpose`, `linterp` (unit-aware linear interp), `integral` (scipy `quad`), `summation`, `solve_block` (scipy `fsolve`), `sample`/`plot_domain`/`plot_axis`/`plot_trace` (matplotlib plots) |
+| [runtime.py](mcad2py/runtime.py) | Helpers imported by generated code: the full angle-aware trig + hyperbolic families, the full vector/matrix family (`rows`/`identity`/`det`/`lsolve`/the norm & condition sets/the eigen set/`sort`…), the full statistics family (`median`/`mode`/`var`/`Var`/`percentile`/`histogram`/`corr`/`slope`/`Spear`…), the full probability-distribution family (`d`/`p`/`q`/`r` sets for `norm`/`t`/`weibull`/`unif`/`exp`/`gamma`/`beta`/`F`/`chisq`/`lnorm`/`logis`/`cauchy`/`geom`/`hypergeom`/`binom`/`nbinom`, plus `cnorm`), `col`/`arange`/`index_build`/`vec_set`/`vectorize`/`transpose`, `linterp` (unit-aware linear interp), the interpolation & prediction family (`lspline`/`pspline`/`cspline` + `interp`, `polyint`/`polyiter`/`polycoeff`, `rationalint`, `Thiele`/`Thielecoeff`, `predict`, and the least-squares B-spline trio `Spline2`/`Binterp`/`DWS` for a given knot vector), the outlier family
+(`Grubbs`/`GrubbsClassic`/`ThreeSigma`/`trim`), `derivative` (Ridders) and `range_sum`, `integral` (scipy `quad`), `summation`, `solve_block` (scipy `fsolve`), `sample`/`plot_domain`/`plot_axis`/`plot_trace` (matplotlib plots) |
 | [emit/codegen.py](mcad2py/emit/codegen.py) | Precedence-aware expression printer; shared by both backends. `header_lines(ws, source)` reads the generated module's imports **off the rendered body** — hence both backends build the body first |
 | [emit/notebook_backend.py](mcad2py/emit/notebook_backend.py) | IR→`.ipynb`; region→cell; bare last line echoes result |
 | [emit/py_backend.py](mcad2py/emit/py_backend.py) | IR→`.py`; evaluations become `print(...)` |
@@ -84,8 +85,19 @@ adding support for a new XML construct.
   `Seed(1)` on its own line — is `ir.Statement` and emits a plain call. Mathcad shows no result for it,
   so printing would invent output. Inside a program body the same shape is `ir.ExprStmt`: Mathcad's
   implicit return is a block's *last* line only.
+- A **builtin we know of but don't implement** goes in `mapping.UNIMPLEMENTED` (name -> why), which
+  turns its region — and every later region that read what it defined — into a visible
+  `# TODO unsupported region` comment. Without that the call emits as a bare name and the module dies
+  on a `NameError` at import, taking the convertible rest of the sheet with it. The taint clears the
+  moment a later region rebinds the name, and a worksheet that defines the name itself is untouched.
+  The table is currently **empty** — every builtin the fixtures reach is implemented — but it stays the
+  right home for the next one.
 - Unknown/unsupported constructs emit a visible `# TODO unsupported: <note>` so output still
-  loads — never silently drop a region. An echo is built through `print_lines`, which lifts such a note
+  loads — never silently drop a region. A suppressed **region** also carries the Python it would
+  have been, commented out above its note (`ir.UnsupportedRegion.original` holds the region it
+  replaced; the *backends* render it, so the parser never formats Python). Without that a reader sees
+  `needs b, left undefined above` with no way to learn what `b` was, and the point of a visible TODO
+  is that someone can act on it. An echo is built through `print_lines`, which lifts such a note
   onto its own line: `print(None  # TODO …)` would close its parenthesis *inside* the comment and stop
   the module parsing, which is the one outcome the convention exists to prevent.
 - Mathcad's `≡` (`<ml:globalDefine>`) binds over the **whole** sheet, so `_hoist_global_defines` moves
@@ -178,6 +190,34 @@ compares notebooks with ids stripped for exactly this reason.
 
 For a full **function-catalog coverage map** — every Mathcad function category vs. what we emit, plus a
 prioritized TODO — see [docs/mathcad-function-coverage.md](docs/mathcad-function-coverage.md).
+
+The **interpolation & prediction family is complete** — the three cubic splines with `interp`, the
+polynomial set (`polyint`/`polyiter`/`polycoeff`), `rationalint`, `Thiele`/`Thielecoeff` and `predict`,
+all exact against `references/interpolation_prediction.mcdx`. Three of them were only pinnable from the
+cache: `polyiter` stops on the change between two successive interpolations (not on the error
+estimate) taking points in the order given, `Thielecoeff` divides by **1e-65** rather than raising on a
+zero reciprocal difference, and `predict` is Burg's maximum-entropy method. What's *not* done there is
+`Spline2`'s **adaptive knot placement**. (The outlier family that sits beside it in the same worksheet
+— `Grubbs`/`GrubbsClassic`/`ThreeSigma`/`trim` — is done and exact, against both PTC's published
+example matrices and `references/grubbs.mcdx`. The published pages pin the `1 - a` confidence
+convention and the *population* standard deviation; the sheet pins the two readings no page shows —
+**no call ever returns an empty table** (with nothing past the bound the closest point comes back)
+and a **matrix argument is one flat bag** whose position is a nested `(row, col)` column. See the
+schema note.)
+Everything there **except the knot placement** is solved and implemented exactly — the packed vector
+layout, `Binterp` (a clamped B-spline returning value + three derivatives), the weighted least-squares
+fit (`w` is a *standard deviation*, so the weight is `1/w²`), the drop-data-outside-the-knot-range
+rule, and `DWS` — see the schema note and
+[tests/test_least_squares_spline.py](tests/test_least_squares_spline.py). `Spline2` **raises** when it
+would have to place its own knots, and is therefore gated **per call, not per name** — it is *not* in
+`mapping.UNIMPLEMENTED`; `regions._spline2_needs_its_own_knots` decides. A call converts when the
+knot vector is provable: five arguments (the last is positionally the knot slot), a literal ascending
+vector, or a name the same sheet already passed in that fifth slot. A scalar in the knot slot is
+`level`, an unsorted literal is weights, and anything computed cannot be told apart before the sheet
+runs — all of those are suppressed, because emitting them would put a `NotImplementedError` at import
+time. `Binterp` and `DWS` need no gate at all: both only read a packed vector, so they follow whatever
+their `Spline2` did, and the ordinary taint carries a suppressed one downstream. The knot-count loop
+itself is solved bar one step — see the schema note.
 
 `find` solve blocks and `lsolve` work; `minerr`/`maximize`/`minimize`/`root`/`polyroots` don't yet.
 `solve_block` (runtime) falls back

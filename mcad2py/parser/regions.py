@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import base64
+import dataclasses
 import re
 import xml.etree.ElementTree as ET
 from typing import Callable
 
-from .. import ir
+from .. import ir, mapping
 from ..mapping import CONSTANTS, SYMBOLIC_COMMANDS
 from ..shapes import annotate_products
 from .expressions import (
@@ -97,6 +98,9 @@ def parse_worksheet(
     # Mathcad spells scalar, matrix and dot products all as ``·``; deciding
     # which is which needs the whole sheet's shapes, so it runs as a pass.
     annotate_products(ws)
+    # Last: a builtin we know about but don't implement has to take out its own
+    # region (and whatever depended on it) rather than the whole module.
+    _mark_unimplemented_builtins(ws)
     return ws
 
 
@@ -1041,6 +1045,254 @@ def _parse_text(
     return ir.TextRegion(text=text)
 
 
+def _mark_unimplemented_builtins(ws: ir.Worksheet) -> None:
+    """Turn a region that leans on a known-but-unimplemented builtin into a
+    visible :class:`ir.UnsupportedRegion`, and carry the taint downstream.
+
+    Without this the call emits as a bare name and the generated module dies on
+    a ``NameError`` at import -- taking the rest of the sheet, which may be
+    perfectly convertible, with it. ``mapping.UNIMPLEMENTED`` names the builtins
+    this applies to and why (see the table there); a worksheet that defines the
+    name itself keeps its own definition, since Mathcad would too.
+
+    ``Spline2`` is gated per *call* rather than per name -- with an explicit
+    knot vector it is exact, and only a call that would make Mathcad place its
+    own knots is out of reach. See :func:`_spline2_needs_its_own_knots`.
+
+    The taint spreads because a suppressed ``b := Spline2(…)`` leaves ``b``
+    undefined, so every later region reading ``b`` would raise in turn. Each one
+    still emits its own comment, so nothing disappears silently.
+    """
+    own = {
+        r.target.py for r in ws.regions
+        if isinstance(r, ir.Define) and isinstance(r.target, ir.Name)
+    }
+    blocked = {n: why for n, why in mapping.UNIMPLEMENTED.items() if n not in own}
+    folded = _literal_vectors(ws)
+    known_knots = _named_knot_vectors(ws, folded)
+
+    missing: set[str] = set()
+    for index, region in enumerate(ws.regions):
+        names = _referenced_names(region)
+        culprit = next((n for n in names if n in blocked), None)
+        conditional = (None if "Spline2" in own
+                       else _adaptive_spline2_note(region, folded,
+                                                   known_knots))
+        if culprit is not None:
+            note = f"{culprit} -- {blocked[culprit]}"
+        elif conditional is not None:
+            note = conditional
+        elif names & missing:
+            note = (f"needs {', '.join(sorted(names & missing))}, left "
+                    f"undefined above")
+        else:
+            # A later region that rebinds the name puts it back in play -- the
+            # sheet reuses ``i`` for a fresh range straight after the one it
+            # built from a suppressed spline.
+            missing -= _defined_names(region)
+            continue
+        missing |= _defined_names(region)
+        ws.regions[index] = ir.UnsupportedRegion(
+            note=note, source=getattr(region, "source", None), original=region
+        )
+
+
+def _literal_vectors(ws: ir.Worksheet) -> dict[str, list[float]]:
+    """Names the sheet binds to a vector of plain numbers, folded to values.
+
+    Only two shapes are folded, because only two are needed to tell a knot
+    vector from a weight vector: a matrix literal, and one column of one. Both
+    are how a worksheet types data in. Anything computed stays unknown, and an
+    unknown argument is treated as the unsupported case.
+    """
+    folded: dict[str, list[float]] = {}
+    for region in ws.regions:
+        if not (isinstance(region, ir.Define)
+                and isinstance(region.target, ir.Name)):
+            continue
+        values = _fold_vector(region.value, folded)
+        if values is not None:
+            folded[region.target.py] = values
+        else:
+            # Rebound to something we cannot fold: it is no longer known.
+            folded.pop(region.target.py, None)
+    return folded
+
+
+def _fold_vector(node: ir.Expr, folded: dict[str, list[float]]) -> list[float] | None:
+    """``node`` as a list of numbers, or None if it is not a literal vector."""
+    if isinstance(node, ir.Name):
+        return folded.get(node.py)
+    if isinstance(node, ir.Parens):
+        return _fold_vector(node.inner, folded)
+    if isinstance(node, ir.Number):
+        # A scalar folds to a one-element list, which the ascending check below
+        # rejects -- so ``level`` reaching the knot slot reads as "not knots",
+        # whether it arrived as a literal or through a name.
+        try:
+            return [float(node.value)]
+        except ValueError:
+            return None
+    if isinstance(node, ir.MatrixLiteral):
+        if node.rows != 1 and node.cols != 1:
+            return None
+        return _fold_numbers(node.elements)
+    if isinstance(node, ir.MatCol):
+        base, index = node.base, node.index
+        if isinstance(base, ir.Name):
+            return None  # a folded *matrix* is not kept, only vectors
+        if not (isinstance(base, ir.MatrixLiteral)
+                and isinstance(index, ir.Number)):
+            return None
+        try:
+            column = int(float(index.value))
+        except ValueError:
+            return None
+        if not 0 <= column < base.cols:
+            return None
+        # ``elements`` is column-major, so one column is a contiguous run.
+        start = column * base.rows
+        return _fold_numbers(base.elements[start:start + base.rows])
+    return None
+
+
+def _fold_numbers(elements: list[ir.Expr]) -> list[float] | None:
+    values: list[float] = []
+    for element in elements:
+        if not isinstance(element, ir.Number):
+            return None
+        try:
+            values.append(float(element.value))
+        except ValueError:
+            return None
+    return values
+
+
+def _named_knot_vectors(ws: ir.Worksheet,
+                        folded: dict[str, list[float]]) -> set[str]:
+    """Names the sheet itself uses in ``Spline2``'s unambiguous knot slot.
+
+    With five arguments the last one is positionally the knots, so a name that
+    appears there is a knot vector -- and it is still one when the same sheet
+    passes it as a *fourth* argument, where weights and knots are otherwise
+    indistinguishable. That is exactly how the reference sheet writes
+    ``Spline2(x, y, n, w, Knots)`` and ``Spline2(x, y, n, Knots)`` one after the
+    other, and it converts the second without having to evaluate the formula
+    ``Knots`` was built from.
+
+    A name that folds to a single number is skipped: the fifth argument is the
+    knot slot only when a fourth was given, and ``Spline2(x, y, n, w, level)``
+    puts the significance there instead.
+    """
+    known: set[str] = set()
+
+    def walk(node: object) -> None:
+        if (isinstance(node, ir.Call) and node.func == "Spline2"
+                and len(node.args) >= 5
+                and isinstance(node.args[-1], ir.Name)):
+            values = folded.get(node.args[-1].py)
+            if values is None or len(values) >= 2:
+                known.add(node.args[-1].py)
+        if dataclasses.is_dataclass(node) and not isinstance(node, type):
+            for field in dataclasses.fields(node):
+                walk(getattr(node, field.name))
+        elif isinstance(node, (list, tuple)):
+            for item in node:
+                walk(item)
+
+    walk(ws.regions)
+    return known
+
+
+def _spline2_needs_its_own_knots(call: ir.Call,
+                                 folded: dict[str, list[float]],
+                                 known_knots: set[str] = frozenset()) -> bool:
+    """Whether this ``Spline2(…)`` call would make Mathcad place its own knots.
+
+    The signature is ``Spline2(vx, vy, n[, w][, knots | level])``, and Mathcad
+    reads the optional arguments by *shape*: a scalar is the significance
+    ``level``, a sorted vector is the knots, and an unsorted vector is neither,
+    so the call falls back to placing its own (which is why the reference
+    sheet's ``Spline2(x, y, n, w)`` and ``Spline2(x, y, n)`` agree to all 17
+    digits). Only the middle case converts.
+
+    With five arguments the last one is positionally the knot slot, so a vector
+    there settles it. With four the argument could be either, and it is settled
+    only if the sheet typed it in as literal data -- ``k5 := (0 2 4 6 8 10)ᵀ``
+    is provably knots, a column of a measurement table is provably not. Anything
+    computed cannot be told apart before the sheet runs, and an argument we
+    cannot read is treated as the unsupported case: emitting it would put a
+    ``NotImplementedError`` at import time, which is the one outcome the
+    suppression exists to prevent.
+    """
+    if len(call.args) < 4:
+        return True
+    last = call.args[-1]
+    if isinstance(last, ir.Name) and last.py in known_knots:
+        return False
+    values = _fold_vector(last, folded)
+    if values is not None:
+        ascending = all(b > a for a, b in zip(values, values[1:]))
+        return not (len(values) >= 2 and ascending)
+    return len(call.args) < 5
+
+
+def _adaptive_spline2_note(region: ir.Region,
+                           folded: dict[str, list[float]],
+                           known_knots: set[str]) -> str | None:
+    """``mapping.SPLINE2_ADAPTIVE`` if the region has such a call, else None."""
+    found = False
+
+    def walk(node: object) -> None:
+        nonlocal found
+        if isinstance(node, ir.Call) and node.func == "Spline2":
+            found = found or _spline2_needs_its_own_knots(
+                node, folded, known_knots)
+        if dataclasses.is_dataclass(node) and not isinstance(node, type):
+            for field in dataclasses.fields(node):
+                walk(getattr(node, field.name))
+        elif isinstance(node, (list, tuple)):
+            for item in node:
+                walk(item)
+
+    walk(region)
+    return mapping.SPLINE2_ADAPTIVE if found else None
+
+
+def _defined_names(region: ir.Region) -> set[str]:
+    """The names a region binds -- one ``target``, or a list of ``targets``."""
+    found: set[str] = set()
+    for attr in ("target", "targets"):
+        value = getattr(region, attr, None)
+        for name in value if isinstance(value, list) else [value]:
+            if isinstance(name, ir.Name):
+                found.add(name.py)
+    return found
+
+
+def _referenced_names(region: ir.Region) -> set[str]:
+    """Every variable and called-function name a region mentions."""
+    found: set[str] = set()
+
+    def walk(node: object) -> None:
+        if isinstance(node, ir.Name):
+            found.add(node.py)
+        elif isinstance(node, ir.Call):
+            found.add(node.func)
+        if dataclasses.is_dataclass(node) and not isinstance(node, type):
+            for field in dataclasses.fields(node):
+                walk(getattr(node, field.name))
+        elif isinstance(node, (list, tuple)):
+            for item in node:
+                walk(item)
+
+    for field in dataclasses.fields(region):
+        # The region's own target is what it *defines*, not what it reads.
+        if field.name not in ("target", "targets"):
+            walk(getattr(region, field.name))
+    return found
+
+
 def _inject_symbol_declarations(ws: ir.Worksheet) -> None:
     """Declare free identifiers as SymPy Symbols ahead of the first symbolic region.
 
@@ -1063,7 +1315,17 @@ def _inject_symbol_declarations(ws: ir.Worksheet) -> None:
     names: list[str] = []
     for region in ws.regions:
         if isinstance(region, ir.SymbolicEquation):
-            _collect_var_names(region.equation, names)
+            own: list[str] = []
+            _collect_var_names(region.equation, own)
+            # Every name already carries a number: nothing here is a free
+            # symbol, so the region is a written-out relation Mathcad shows and
+            # does not compute. See ir.SymbolicEquation.display_only.
+            region.display_only = bool(own) and all(
+                n in defined_before for n in own
+            )
+            # ``_collect_var_names`` de-duplicates against the list it is
+            # given, so merge by hand to keep one declaration per name.
+            names.extend(n for n in own if n not in names)
         elif isinstance(region, ir.SymbolicEval):
             _collect_var_names(region.expr, names)
             for arg in region.args:

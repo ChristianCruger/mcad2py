@@ -106,6 +106,8 @@ def _render_region(region: ir.Region) -> list[str]:
 
     if isinstance(region, ir.SymbolicEquation):
         # A step shown for context; assigned to nothing, like the Mathcad sheet.
+        if region.display_only:
+            return ["", f"# shown, not computed: {expr_to_str(region.equation)}"]
         return ["", expr_to_str(region.equation)]
 
     if isinstance(region, ir.SymbolicEval):
@@ -121,6 +123,13 @@ def _render_region(region: ir.Region) -> list[str]:
         return ["", *grid_plot_lines(region)]
 
     if isinstance(region, ir.UnsupportedRegion):
-        return ["", f"# TODO unsupported region: {region.note}"]
+        # The Python it would have been, commented out. A downstream note reads
+        # "needs b, left undefined above", which is only actionable once you can
+        # see what ``b`` was.
+        would_be = [f"# {line}" if line else "#"
+                    for line in _render_region(region.original)] if region.original else []
+        while would_be and would_be[0] == "#":
+            would_be.pop(0)
+        return ["", *would_be, f"# TODO unsupported region: {region.note}"]
 
     return []

@@ -947,3 +947,367 @@ acceptance rate, and our `rnorm` lands on the same state to the bit.
 
 The file is a **Prime 12** worksheet and still declares `worksheet50`/`math50`, like every other
 fixture, so nothing in the parser needed a version check.
+
+## Interpolation & prediction (`interpolation_prediction.mcdx`)
+
+PTC's own tutorial sheet for the family. Three XML constructs it is the first fixture to reach, then
+the algorithms the cache identified.
+
+**The numeric derivative operator.** `<ml:apply><ml:derivative /><ml:lambda>…<ml:degree>`. The
+lambda's single bound variable is the one differentiated against, and `<ml:degree>` holds the order —
+an empty `<ml:placeholder />` there means first order, not "no derivative". Parsed to `ir.Derivative`
+and emitted as `derivative(<lambda>, <var>, <degree>)`; the variable is in scope because the operator
+only ever appears inside a definition of a function of it (`sd_p(x) := d²/dx² fitp(x)`). The runtime
+helper is Ridders' method — a central difference at a shrinking step, Richardson-extrapolated — and it
+divides `x`'s unit off the answer once per order.
+
+**Σ over a range variable.** A `<ml:summation>` that *names* a bound variable but leaves both bounds
+as empty placeholders is Mathcad's **range sum**: the index is a range variable already defined on the
+sheet and the operator runs over every value in it. That is a third reading of the same element — the
+existing two being the bounded sum (`ir.Summation`) and the bare `Σ` over a vector, which has *no*
+bound variable (`ir.VectorSum`). Emitted as `range_sum(<index>, <lambda>)`, reading its limits off the
+range itself so a step other than 1 sums the terms Mathcad shows. Without this the bounds emitted as
+`None  # placeholder` and the trailing comment swallowed the closing parenthesis, so the module would
+not even parse — the same hazard `print_lines` exists to avoid.
+
+**A displayed equation whose names are already numbers.** A bare `<ml:apply><ml:equal />` region is
+normally a symbolic step: its identifiers carry no `labels` attribute, and the converter declares them
+as SymPy `Symbol`s. This sheet writes the linear-prediction recurrence `X[k] = c[0]·X[k-3] + …` out
+beside the very data it applies to, so `X`, `c` and `k` all *do* have numeric values. Mathcad computes
+nothing for the region either way, but evaluating it in Python indexes a real 7-element array with a
+real range variable and raises. `ir.SymbolicEquation.display_only` marks the case (every free name
+already defined above) and both backends emit it as a `# shown, not computed:` comment.
+
+**The outlier family — `Grubbs`, `GrubbsClassic`, `ThreeSigma`, `trim`.** These sit beside the
+least-squares spline in the same worksheet, but they are ordinary documented functions and nothing
+about them had to be reverse-engineered. PTC publishes the returned matrices in full for one
+195-point heatflow data set, across three example pages ("Outlier Detection", "Grubbs' Method for
+Detecting Outliers", "Outlier Removal"), and those published numbers settle every choice:
+
+* **`a` is a confidence, not a significance.** PTC's own example writes `Grubbs(y, 1 - α)`, so the
+  significance level used inside is `1 - a`. The reference sheet's `GrubbsClassic(y, 0.55)` therefore
+  tests at `α = 0.45`.
+* **The test statistic uses the *population* standard deviation** — Mathcad's lowercase `stdev`,
+  divide-by-n. This is pinned, not assumed: `Grubbs(y, 0.85)` publishes three rows (indices 3, 19,
+  188), and the *sample* deviation puts row 188 at 3.3133 against a bound of 3.3191 and returns two.
+* **The critical value** is the standard Grubbs bound, which the "Grubbs' Method" page spells out as a
+  worksheet formula beside the call: `t := qt(α/(2N), N-2)` and
+  `crit := (N-1)/√N · √(t²/(N-2+t²))`.
+* **Each row is `(index, statistic, crit - statistic)`**, indices ascending. The third column is
+  *negative* for a point that failed the test — the published `-0.207 / -0.312 / -0.003` at `a = 0.85`
+  and `-0.102 / -0.207` at `a = 0.9` are reproduced exactly. `GrubbsClassic` returns one such row for
+  the largest statistic whether or not it clears the bound (`[19 3.631 -0.389]` at `a = 0.8`);
+  `ThreeSigma` returns two columns only, and falls back to the closest point when nothing exceeds 3.
+
+`interpolation_prediction.mcdx` reaches exactly one arm of this — `matelem(GrubbsClassic(y, 0.55), 0, 0)`,
+cached as `150`, which is the index of the largest statistic and would come out the same under either
+deviation. **`references/grubbs.mcdx`** is the purpose-built sheet for the rest: 20 values with one
+outlier, and 14 echoes covering every branch. It settles two readings no published page shows, and
+the natural guess was wrong on both.
+
+* **No function of this family ever returns an empty table.** `Grubbs(v, 0.999)`, where nothing
+  clears the bound, caches as the one most extreme point with a **positive** third column — the same
+  row `GrubbsClassic` gives. `ThreeSigma` documents that fall back; `Grubbs` shares it silently.
+* **A matrix argument is one flat bag of values, and the position comes back nested.**
+  `Grubbs(augment(x, v), 0.95)` on a 20×2 caches as a 1×3 whose first element is a nested 2×1 column
+  `(0 0)ᵀ`, with statistic 2.52141319039385 — that is the extreme of all **40** elements measured
+  against their common mean and deviation, not a per-column test. The nested column is what the
+  documentation's "nested pairs of indices" means, and `A[0,0]` echoes it as a 2×1 matrix.
+
+The pair is **`(row, col)`**, settled by the sheet's last two regions: `augment(x, v)` puts the
+extreme at (0, 0), which reads the same either way round, so `Grubbs(augment(v, x), 0.95)` moves the
+same point to row 0 of column 1 and caches `(0 1)ᵀ`. One detail is still **unconfirmed** — what order
+*several* matrix candidates come back in. We emit column-major, which is Mathcad's own storage order
+and matches the ascending order of the vector case.
+
+The sheet also confirms that Prime **accepts a unit**: `GrubbsClassic(v·m, 0.95)` caches as plain
+reals identical to the unitless call, since the statistic divides the unit out and an index never had
+one. And it pins the critical value to full precision — the published pages print three decimals,
+while the cached `-0.4049316586941907` confirms the `qt(α/(2N), N-2)` bound to fourteen digits.
+
+`trim(v, vindex)` drops the rows `vindex` names, keeping the shape and unit of `v`; the indices are
+relative to `ORIGIN`, i.e. 0-based here. The sheet trims both a vector and a two-column matrix.
+
+**`Spline2` / `Binterp` / `DWS`, and `GrubbsClassic` / `trim`** are genuine Prime built-ins — the
+worksheet has no include region and no add-in reference, and Prime labels them `FUNCTION` exactly like
+`cspline`. `Spline2(x, y, n[, w][, level | knots])` returns one packed vector, and the sheet caches the
+whole 79-element example (`b`, region 8), which pins the layout exactly:
+
+| Slice | Meaning | Example |
+|-------|---------|---------|
+| `b[0]` | spline **order** (`n + 1`) | `4` |
+| `b[1]` | knot **interval** count `m` | `34` |
+| `b[2 : 3+m]` | the `m+1` knots, first = `min(x)`, last = `max(x)` | 309.4 … 1999.7 |
+| `b[3+m : 6+2m]` | the `m+3` B-spline coefficients | 3726.71 … 749.31 |
+| `b[6+2m:]` | four trailing statistics: `0`, the **Durbin-Watson statistic**, 0.99934, 0.44954 | — |
+
+`i := 0 .. b[1]` / `knots[i] := b[i+2]` in the sheet confirms the knot slice, and `DWS(b)` echoing
+`b[last(b) - 2]` confirms where the statistic sits.
+
+**Everything except the knot placement is solved**, and exactly. The sheet's two `Spline2` calls
+that pass an explicit knot vector (`SplineW`, `SplineNW`) are reproduced to the last bit:
+
+* `Binterp(u, b)` is an ordinary **clamped B-spline evaluation** — knot vector
+  `[k0]*(n+1) + interior + [ke]*(n+1)`, i.e. `scipy.interpolate.BSpline(t, b[3+m:6+2m], n)`. It returns
+  **four** columns: the value and the first three derivatives. Matches the cached trace to 1.5e-11 on
+  values near 6e4.
+* Given knots, the coefficients are a **least-squares fit**, and `w` is a vector of **standard
+  deviations**: the weight is `1/w²`. Weighting by `w`, `1/w`, `w²` or `√w` all miss.
+* **Data points outside the knot range are dropped.** This is the detail that hides the rest: the
+  sheet's `Knots := range` stops at 1982.96 while `x` reaches 1999.7, so five points fall outside.
+  Keeping them moves every later check off by ~0.2% and makes the fit look wrong. Dropping them makes
+  `DWS(SplineNW)` come out at 2.3915925499477533 against a cached 2.3915925499477493, and the whole
+  `SplineW` trace match to 2.4e-10 out of 6e4.
+* `DWS` is the plain **Durbin-Watson statistic** of the residuals — *weighted* residuals `r/w` when a
+  `w` was given. Weighted: 2.32173216795681 against a cached 2.3217321679568084.
+* The four trailing numbers are `[residual standard error, 0, DWS, ?, ?]`. The first is
+  `sqrt(SSE/(N-p))` with `p` the coefficient count: 749.3112471272 against a cached 749.3112471272.
+  The last two (0.999340554, 0.449535631) are still unidentified — neither is R² (0.99787) nor
+  adjusted R² (0.99772).
+* Argument reading, from the six cached calls: a **scalar** 4th argument is `level`; a **vector** 4th
+  argument is the knots; with **five** arguments the 4th is `w` and the 5th is the knots. Passing an
+  unsorted vector as the 4th (the sheet's `Spline2(x, y, n, w)`) is evidently rejected as a knot
+  vector and the call falls back to the default adaptive fit — which is why
+  `DWS(Spline2(x, y, n, w))` and `DWS(Spline2(x, y, n))` agree to all 17 digits.
+
+**Only the knot *move* is unsolved** -- the step the loop below calls `<move them>`. The evidence
+gathered on it is in the loop section further down.
+
+**`Spline2` is therefore gated per call, not per name.** It is *not* in `mapping.UNIMPLEMENTED`;
+`regions._spline2_needs_its_own_knots` decides one call at a time, because with an explicit knot
+vector the function is exact. A call converts when the knot vector is **provable**:
+
+* five arguments -- the last is positionally the knot slot, so a vector there settles it;
+* a literal ascending vector (`k5 := (0 2 4 6 8 10)ᵀ`), folded straight out of the IR;
+* a name the same sheet already passed in that fifth slot. `interpolation_prediction` writes
+  `Spline2(x, y, n, w, Knots)` and then `Spline2(x, y, n, Knots)`, and the second converts on the
+  strength of the first, without anyone having to evaluate the formula `Knots` was built from.
+
+Everything else is suppressed: a **scalar** in the knot slot is `level` (whether written as `0.5` or
+reached through a name), an **unsorted** literal is weights (the catalogue sheet's `w` is a column of
+a measurement table), and anything **computed** cannot be told apart before the sheet runs. Emitting
+one of those would put a `NotImplementedError` at import time, which is the single outcome the
+suppression exists to prevent. `Binterp` and `DWS` need no gate: both only read a packed vector, so
+they follow whatever their `Spline2` did, and the ordinary taint carries a suppressed one downstream.
+Nothing is blocked by name any more — `GrubbsClassic` and `trim` are implemented (next section).
+`references/spline2B.mcdx` converts with **no** TODO at all as a result.
+
+Tested against the cached knots and rejected: uniform spacing; the data's quantiles (5 to 48 points
+per interval, with the *fewest* points where the knots are *densest*); equidistributing arc length,
+`Σ|Δy|`, `Σy·Δx`, `Σw`, `Σ1/w`, `√y`, `log x`; FITPACK (`splrep`) at the matching knot count, whose
+first interior knot lands at 535 where Mathcad's is at 445.9; equal **SSE**, equal `Σ|residual|`,
+equal residual sign-run count and equal local `Σ(Δresidual)²` per interval (spreads 0.45 to 0.78,
+where "equal" means 0); and a 720-point scan of de Boor `NEWNOT` variants — the `|D⁴f|` estimate taken
+from the jump of `D³f` over the average interval, over the two-interval span, raw, and as `|D³f|`
+itself; exponents 1/5, 1/4, 1/3, 1/2; one to three redistribution passes per step; and knot counts
+grown by 1, by 2, or in one jump from a 1-, 2-, 3-, 4- or 34-interval start. The best of those lands
+35 units from Mathcad's knots at worst and 12.6 on average, against interval widths of about 25 — the
+right neighbourhood, the wrong rule.
+
+**The outer loop, on the other hand, is pinned** -- by `references/spline2.mcdx`, 13 points calling
+`Spline2(x, y, 3)` at the default `level`, at 0.5 and at 0.001. All three echo the *identical* vector,
+with knots `[0, 6, 12]`:
+
+```
+knots = [min(x), max(x)]                  # one interval
+loop:
+    fit least squares on knots
+    d = Durbin-Watson statistic of the residuals
+    if P(DW < d) > level:  stop
+    m += 1
+    knots = redistribute over m intervals   # the one unsolved step
+```
+
+Three things fall out of that sheet. **The search starts at one interval**: with a single interval the
+fit is one cubic, so `|D³f|` is constant and any curvature-based redistribution returns uniform knots
+-- which is exactly why the interior knot lands on 6.0 on visibly asymmetric data. **The stopping rule
+is a Durbin-Watson p-value against `level`**: one interval gives `DW = 1.063`, `P(DW < d) = 0.00069`,
+below every level the sheet tries, and two intervals give 0.79, above all of them -- so all three
+calls stop in the same place, which is what the identical vectors prove. And **the rule reproduces the
+big sheet's count**: run the same loop over the 536-row data and the first `m` with `P(DW < d) > 0.05`
+is **34**, the cached number exactly (at `level = 0.001` it gives 30 against a cached 32, the gap
+being the approximate redistribution).
+
+The p-value is a Beta approximation on `[0, 4]` matched to the exact mean and variance of the
+statistic under the null (`P = tr(MA)`, `Q = tr(MAMA)`, `M` the residual-maker of the B-spline design,
+`A` the usual difference form with 1 in both corners). It lands within 3% of the number Mathcad stores
+in the trailer -- 0.4561 against 0.4495 on the big sheet, 0.7925 against 0.7690 on the small one -- so
+the fifth trailing statistic **is** this p-value, and only its exact convention is still open. The
+exact (Imhof) distribution is no closer, so the difference is a modelling detail, not a quadrature one.
+
+**The starting knot set is solved**, by `references/spline2A.mcdx` -- 45 points on `x` whose spacing
+varies by a factor of four, with two kinks placed in the sparse half. Its three calls stop at 6, 4 and
+3 intervals, and two of them return knots that are **uniform in the data index**, exactly:
+
+```
+knots[j] = interp(j * (len(x) - 1) / m,  0..len(x)-1,  x)      # equal points per interval
+```
+
+Zero difference on both -- and the interpolation between two data points is where the non-round
+values come from (`0.834022` is `x[7] + (1/3)(x[8] - x[7])`). So Mathcad's first try at every interval
+count puts an **equal number of data points** in each interval, not an equal width. The 13-point
+sheet's `[0, 6, 12]` is the same rule on uniformly spaced data.
+
+That makes the loop two-phase:
+
+```
+for m = 1, 2, 3, ...:
+    knots = uniform in data index
+    fit;  if p > level:  stop            # b and b3 stop here
+    knots = <redistribute>               # the one step still unsolved
+    fit;  if p > level:  stop            # b2 stops here
+```
+
+`spline2A`'s middle call is the one cached example of the second phase on small data: at four
+intervals it drags the interior knots from `1.375 / 3.5 / 6.375` out to `3.538 / 6.926 / 8.908`,
+towards the kinks. The three calls are mutually consistent with `stop when p > level` and a **default
+`level` between 0.73 and 0.93** -- `level = 0.5` accepts the redistributed four-interval set at
+p = 0.731 while the default rejects it and runs on to the uniform six-interval set at p = 0.930.
+The big sheet's 34-interval answer and the 536-row `p = 0.9993` sit on the same rule.
+
+Against that one cached example, a single redistribution step from the uniform-in-index fit was
+scanned over `|D¹f|`, `|D²f|`, `|D³f|` and arc length, exponents 1/5 to 1, integrated in `x` and summed
+over data points, plus residual-weighted variants, plus the equidistribution fixed point, plus a
+Nelder-Mead free-knot search on both the sum of squares and the statistic itself. The best lands 0.58
+out of an interval width of about 2. The target is **not** the least-squares optimum (its SSE is 27.18
+against an attainable 22.06), so the second phase is neither a plain optimiser nor any plain
+equidistribution tried so far.
+
+**The last two trailing statistics are solved**, by `references/spline2B.mcdx` -- 31 points fitted on
+five **explicit** knot vectors and at two degrees, so no placement rule is involved anywhere and every
+echo is a clean (design, statistic, p-value) triple. They are the classical **bounds** of the
+Durbin-Watson test. The statistic's exact null distribution depends on the design matrix, so Durbin
+and Watson published two design-free bounds instead, both weighted sums of the eigenvalues of the
+difference operator:
+
+```
+nu[j] = 2*(1 - cos(pi*j/n))            j = 1 .. n-1
+upper = Beta_cdf(d/4)   fitted to the mean and variance of  nu[0 : n-p]
+lower = Beta_cdf(d/4)   fitted to the mean and variance of  nu[p-1 : n-1]
+```
+
+Each bound is approximated by a Beta distribution on `[0, 4]` matched to its own mean and variance --
+Durbin and Watson's own approximation, the one their published tables were built from. That
+reproduces **both** numbers across all eleven cached fits to 3e-9, which is the Beta CDF's own
+precision. The upper bound comes first, and it is the one the fit is judged by: it is the probability
+of no positive residual autocorrelation, rising towards 1 as the spline stops leaving structure
+behind. `Spline2` now returns the whole packed vector, with nothing left as `nan`.
+
+That sheet also pins a hard limit: `Spline2(x, y, 4, …)` is the one region **Mathcad itself** will not
+compute, returning an `order_too_big` engine error whose argument is 3. The family is capped at cubic.
+
+**The loop is solved except for one step.** `references/spline2C.mcdx` fits the same 45 points at
+eight values of `level`, and the interval counts come back sharply **non**-monotone -- 6, 6, 15, 15,
+29, 5, 5, 7 -- which is what turned the loop from a guess into a rule:
+
+```
+for m = 1, 2, 3, ...:
+    knots = uniform in data index
+    fit;  if lower > level:  stop            # spline2A's level = 0.001 stops here
+    knots = <move them>                      # THE ONE UNSOLVED STEP
+    fit;  if lower > level:  stop            # every other cached adaptive fit stops here
+```
+
+`lower` is the **lower** Durbin-Watson bound, and the **default `level` is 0.05**. The moved sets
+reach lower bounds of 0.034 (5 intervals), 0.203 (6), 0.065 (7), 0.461 (15) and 0.520 (29), and read
+against the levels those explain every rung from 0.05 to 0.5: 0.05, 0.1 and 0.2 stop at 6 because
+0.203 is the first value above them; 0.3 and 0.4 pass 6 and take 15; 0.5 needs 29. The move is a
+separate step from adding a knot -- `level = 0.001` and the default both stop at **six** intervals,
+one on the uniform set and one on the moved one. And the moved set is a function of the data and the
+count alone: two levels that stop at the same count return byte-identical vectors.
+
+The three highest levels (0.6, 0.7, 0.8) stop at 5, 5 and 7 intervals -- *fewer* than 0.5's 29 -- with
+lower bounds far below their levels but **upper** bounds (0.768, 0.768, 0.972) that clear. So when the
+loop cannot satisfy a level it falls back to the weaker half of the bounds test and to a count it had
+already passed. The fallback is not reproduced.
+
+**The move itself is still unsolved, and the search space is now well covered.** With five cached
+moved sets on one dataset (5, 6, 7, 15 and 29 intervals) plus the 536-row sheet's 34, these were
+scanned and rejected: equidistributing `|D¹f|`, `|D²f|` or `|D³f|` to any exponent from 0.05 to 1.5,
+integrated in `x` or summed over data points, one to three passes, seeded from the uniform-in-index
+fit at the same count *or* chained from the previous cached moved set (best mean error 0.6 of an
+interval width, and the best exponent tends to 0, meaning the density is contributing nothing);
+equidistributing the residuals as `r²`, `|r|`, `Σ(Δr)²`, `|r_i·r_{i+1}|` and `1 + r²`; uniform in `x`
+and every blend of uniform-in-x with uniform-in-index; FITPACK's `splrep` at matching counts (its
+knots sit *on* data points, Mathcad's do not); a free-knot Nelder-Mead search on both the sum of
+squares and the statistic (the cached set is not the least-squares optimum -- 27.18 against an
+attainable 22.06); and a fixed warp `W(j/m)` of the index, which the five sets do not collapse onto.
+
+**The loop model above is wrong on one point, and three purpose-built sheets say how.**
+`spline2D` / `spline2E` / `spline2F` fit one curve -- `f = exp(exp(x/2))`, 60 points, `x` uniform on
+`[0, 10]`, no noise -- at 40 values of `level`. They are *experiments*, not fixtures: they were built
+to expose the move, they sit in the git-ignored `references/_experiments/` so no test globs them,
+and the numbers below are the whole result -- the sheets can be deleted without losing anything. Three things came out of them.
+
+*The move repeats at a fixed interval count.* The pseudo-code above allows one move per count. In
+fact several levels stop at the **same** count with **different** knots, so the loop moves, tests,
+moves again. Four 3-interval sets and four 4-interval sets came back, which read as two chains:
+
+```
+m=3   3.3333 6.6667 -> 4.0223 7.2806 -> 4.8233 7.8291 -> 5.6032 8.3291
+m=4   3.2393 6.1336 8.1752 -> 4.3195 7.2257 8.7123 -> 5.4260 8.0475 9.1324 -> 6.4652 8.7034 9.4549
+```
+
+*The move reads only the curve.* `spline2E` fits `f` and its exact mirror `g = exp(exp((10-x)/2))` at
+twelve levels each. At every level `g`'s knots are `10 - reverse(f's knots)` to all cached digits. So
+the rule carries no direction bias and no dependence on the data index -- which rules out anything
+that walks the points in order, and anything seeded from a one-sided sweep.
+
+*The level enters only as a stopping decision.* Levels 0.1, 0.2 and 0.3 return byte-identical knots,
+as do 0.96 through 0.985. The level never reaches the placement arithmetic.
+
+The search order is **not** "first configuration whose `lower` clears the level". Sorting all thirteen
+cached configurations by `lower` gives an interval count of 3, 4, 3, 4, 4, 4, 5, 6, 8, 9 -- it drops
+back to 3 -- and at the top end `lower` itself is non-monotone (8 intervals cache 0.998638, 9 cache
+0.998135, and level 0.99 returns the 9). Ordering the same configurations by their **Durbin-Watson
+statistic** and taking the first with `lower > level` reproduces 20 of the 24 rungs, including the
+drop back to 3 intervals; the four it misses are all above `level = 0.8`, where two different
+5-interval sets are reachable and which one comes back depends on the level. So the path through the
+search is itself level-dependent, and a plain ordered scan will not model it.
+
+Against those six move steps the following were tried and rejected, on top of everything in the
+previous paragraph: equidistributing `|D³f|`, `|D³f|/h`, the **jump** of `D³f` across each knot (de
+Boor's `NEWNOT`), `|D²f|` at midpoints, the RMS of `D²f` over each interval, and the mean residual --
+each to 600 exponents from 0.02 to 3. The best fit is a de Boor jump equidistribution at an exponent
+near 1/3, which lands **0.04 to 0.18** in `x` against interval widths of 2.5 -- seven times closer
+than anything the noisy sheets gave, and still not a rule. The exponent that fits best is not shared:
+the 3-interval steps want 0.46, the 4-interval steps want 0.34.
+
+Two structural facts to build on, if this is picked up again. The sum of squares falls monotonically
+along both chains (to 0.66 of its start over the 3-interval chain, 0.12 over the 4-interval one), so
+the move is a descent step. But it is not gradient descent -- the cosine between the step and the
+negative gradient runs 0.78 down to 0.33 -- and it is not converging on the free-knot optimum, which
+for this curve is degenerate and sits far to the right of every cached set.
+
+A practical note for building the next sheet: only **noise-free** data exercises the move at all. In
+`spline2D` the three signals carrying pseudo-noise all ran straight to 30 intervals and were accepted
+on the **uniform** set, with no move anywhere. The noise-free curve was the one that moved.
+
+**One more side finding, now closed.** An earlier save of `spline2A` had cached a `y` that was our own
+`rnorm` stream at offset 45 -- exactly one whole `rnorm(45, …)` call further on, because Prime had
+drawn the vector twice across the saves. The sheet was re-saved and the stream now starts where it
+should, so the fixture reproduces `y` element for element. Worth remembering as a diagnosis: a
+worksheet whose random data will not reproduce is far more likely to have been recalculated than to
+have caught a generator bug, and the offset says which.
+
+**The algorithms, identified from the cache** (all exact, 0.0 error unless noted):
+
+| Function | Method | How the cache identified it |
+|----------|--------|------------------------------|
+| `polyint` | Numerical Recipes `polint` (Neville) | `[value, error]`, error being the last correction added — the second cached element |
+| `polycoeff` | NR `polcoe` | Lowest power first; agrees to 1e-11, the fit being ill-conditioned |
+| `polyiter` | Rising order over the **first** k+1 points, stopping when two successive interpolations differ by < ε | Three cached calls: order 3 when allowed 5, order 2 and *not* converged when capped there — while `polyint`'s error estimate for that query is exactly 0 |
+| `rationalint` | NR `ratint` (Bulirsch-Stoer) | Only plotted on the sheet, never echoed |
+| `Thielecoeff` | Reciprocal differences, dividing by **1e-65** where the denominator is 0 | The degenerate example caches `1e65`, `-1e-65`, `-1e65`, `-4.2764235361e-50`; that last one is floating-point noise from the substitution and comes out to the last digit |
+| `Thiele` | The continued fraction those coefficients define | The sheet writes `Q(a)` out by hand next to it |
+| `predict` | Burg's maximum entropy (NR `memcof` + `predic`), each prediction fed back as data | The sheet writes the recurrence out term by term, with the coefficients cached: `memcof`'s `d[0]` weights the most recent sample, so Mathcad's display order is this vector reversed |
+| `lspline` / `pspline` / `cspline` | Natural / parabolic-end / not-a-knot cubic spline | The cached second derivatives of the fits at the end knots: 0 for `lspline`, and `-0.0114488208` for `pspline` — which is exactly the y'' our tridiagonal solve puts at *both* of the first two knots, the parabolic condition |
+
+Two cache readings worth keeping:
+
+* **The whole returned vector carries the ordinates' unit.** `polyint(X, Y, U)` with `Y` in seconds
+  caches as a `<unitedValue>` wrapping the 2×1 matrix — and so does `polyiter`, whose converged flag
+  and order therefore arrive in seconds as well. Mathcad tags the result, not the elements.
+* **`interp` extrapolates along the end piece.** `sd_p(vx[0])` — a second derivative taken *at* the
+  first knot, so its finite difference reaches outside the data — caches the exact y'' of the end
+  polynomial, which only happens if Mathcad continues that polynomial rather than clamping.

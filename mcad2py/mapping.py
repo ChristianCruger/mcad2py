@@ -172,6 +172,32 @@ FUNCTIONS = {
     "vlookup": "vlookup",
     "hlookup": "hlookup",
     "vhlookup": "vhlookup",
+    # --- Interpolation & prediction (all runtime helpers; see runtime.py) ---
+    # ``linterp`` is the piecewise-linear one; the three splines differ only in
+    # how the curve ends (linear / parabolic / cubic) and all feed ``interp``.
+    "linterp": "linterp",
+    "lspline": "lspline",
+    "pspline": "pspline",
+    "cspline": "cspline",
+    "interp": "interp",
+    # The polynomial set. ``polyint``/``rationalint`` each return
+    # ``[value, error estimate]`` and ``polyiter`` ``[converged, order, value]``
+    # -- Mathcad's own result shape, not a bare number.
+    "polyint": "polyint",
+    "polyiter": "polyiter",
+    "polycoeff": "polycoeff",
+    "rationalint": "rationalint",
+    "Thiele": "Thiele",
+    "Thielecoeff": "Thielecoeff",
+    # Linear prediction (Burg's maximum-entropy method).
+    "predict": "predict",
+    # --- Outliers (all runtime helpers; see runtime.py) ---------------------
+    # ``Grubbs``/``GrubbsClassic`` take a confidence, so the significance level
+    # is ``1 - a``. ``trim`` drops the rows either one flags.
+    "Grubbs": "Grubbs",
+    "GrubbsClassic": "GrubbsClassic",
+    "ThreeSigma": "ThreeSigma",
+    "trim": "trim",
     # --- Statistics (all runtime helpers; see runtime.py) -------------------
     # Note the capitalisation: Mathcad's ``var``/``stdev`` divide by n (the
     # population forms) and ``Var``/``Stdev`` by n-1 (the sample forms).
@@ -273,6 +299,26 @@ FUNCTIONS = {
     "qpois": "qpois",
     "rpois": "rpois",
 }
+
+# Mathcad builtins we know of but do not implement -> why, for the
+# ``# TODO unsupported region`` comment the converter leaves in their place.
+# Naming them here is what keeps a sheet that uses one loadable: the call would
+# otherwise emit as a bare name and raise ``NameError`` at import, taking every
+# later region with it (see ``_mark_unimplemented_builtins``). A worksheet that
+# defines the name itself is untouched.
+UNIMPLEMENTED: dict[str, str] = {}
+
+# ``Spline2`` is not all-or-nothing: given an explicit knot vector it is exact
+# (see the schema note), and only a call that would make Mathcad place its own
+# knots is out of reach. So it is suppressed per *call* rather than per name --
+# ``_mark_unimplemented_builtins`` decides, and this is the note it uses.
+# ``Binterp`` and ``DWS`` need no gate at all: both only read a packed vector,
+# so they follow whatever their ``Spline2`` did, and the ordinary taint carries
+# a suppressed one downstream.
+SPLINE2_ADAPTIVE = (
+    "Spline2 would have to place its own knots here, and Mathcad's rule for "
+    "that is not reproduced -- pass an explicit knot vector to convert it"
+)
 
 # Mathcad symbolic command keyword (first id of a <ml:command> sequence) ->
 # SymPy callable. Symbolic regions emit ``<callable>(expr, *args)``.
