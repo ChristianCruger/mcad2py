@@ -197,10 +197,13 @@ all exact against `references/interpolation_prediction.mcdx`. Three of them were
 cache: `polyiter` stops on the change between two successive interpolations (not on the error
 estimate) taking points in the order given, `Thielecoeff` divides by **1e-65** rather than raising on a
 zero reciprocal difference, and `predict` is Burg's maximum-entropy method. What's *not* done there is
-`Spline2`'s **adaptive knot placement**. (The outlier pair that sits beside it in the same worksheet
-— `Grubbs`/`GrubbsClassic`/`ThreeSigma`/`trim` — is done and exact against PTC's published example
-matrices; see the schema note for the two things those matrices pin, the `1 - a` confidence convention
-and the *population* standard deviation.)
+`Spline2`'s **adaptive knot placement**. (The outlier family that sits beside it in the same worksheet
+— `Grubbs`/`GrubbsClassic`/`ThreeSigma`/`trim` — is done and exact, against both PTC's published
+example matrices and `references/grubbs.mcdx`. The published pages pin the `1 - a` confidence
+convention and the *population* standard deviation; the sheet pins the two readings no page shows —
+**no call ever returns an empty table** (with nothing past the bound the closest point comes back)
+and a **matrix argument is one flat bag** whose position is a nested `(row, col)` column. See the
+schema note.)
 Everything there **except the knot placement** is solved and implemented exactly — the packed vector
 layout, `Binterp` (a clamped B-spline returning value + three derivatives), the weighted least-squares
 fit (`w` is a *standard deviation*, so the weight is `1/w²`), the drop-data-outside-the-knot-range

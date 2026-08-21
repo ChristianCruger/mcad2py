@@ -965,16 +965,33 @@ Detecting Outliers", "Outlier Removal"), and those published numbers settle ever
   the largest statistic whether or not it clears the bound (`[19 3.631 -0.389]` at `a = 0.8`);
   `ThreeSigma` returns two columns only, and falls back to the closest point when nothing exceeds 3.
 
-The reference sheet reaches exactly one arm of this — `matelem(GrubbsClassic(y, 0.55), 0, 0)`, cached
-as `150`, which is the index of the largest statistic and would come out the same under either
-deviation. Everything above is pinned in `tests/test_outliers.py` against the published matrices
-instead. Two cases are *not* pinned by anything: `Grubbs` with no candidate at all (an empty 0×3
-matrix comes back rather than an invented row) and a **matrix** argument, for which Mathcad returns
-nested pairs of indices — that raises rather than flattening, since a flat index into a 2-D shape
-would be a plausible wrong answer.
+`interpolation_prediction.mcdx` reaches exactly one arm of this — `matelem(GrubbsClassic(y, 0.55), 0, 0)`,
+cached as `150`, which is the index of the largest statistic and would come out the same under either
+deviation. **`references/grubbs.mcdx`** is the purpose-built sheet for the rest: 20 values with one
+outlier, and 14 echoes covering every branch. It settles two readings no published page shows, and
+the natural guess was wrong on both.
+
+* **No function of this family ever returns an empty table.** `Grubbs(v, 0.999)`, where nothing
+  clears the bound, caches as the one most extreme point with a **positive** third column — the same
+  row `GrubbsClassic` gives. `ThreeSigma` documents that fall back; `Grubbs` shares it silently.
+* **A matrix argument is one flat bag of values, and the position comes back nested.**
+  `Grubbs(augment(x, v), 0.95)` on a 20×2 caches as a 1×3 whose first element is a nested 2×1 column
+  `(0 0)ᵀ`, with statistic 2.52141319039385 — that is the extreme of all **40** elements measured
+  against their common mean and deviation, not a per-column test. The nested column is what the
+  documentation's "nested pairs of indices" means, and `A[0,0]` echoes it as a 2×1 matrix.
+
+Two details there are still **unconfirmed**, because one cached row cannot show them: whether the
+nested pair is `(row, col)` or `(col, row)` — the cached pair is `(0 0)ᵀ`, which reads the same either
+way — and what order several matrix candidates come back in. We emit `(row, col)` and column-major
+order, which is Mathcad's own storage order and matches the ascending order of the vector case.
+
+The sheet also confirms that Prime **accepts a unit**: `GrubbsClassic(v·m, 0.95)` caches as plain
+reals identical to the unitless call, since the statistic divides the unit out and an index never had
+one. And it pins the critical value to full precision — the published pages print three decimals,
+while the cached `-0.4049316586941907` confirms the `qt(α/(2N), N-2)` bound to fourteen digits.
 
 `trim(v, vindex)` drops the rows `vindex` names, keeping the shape and unit of `v`; the indices are
-relative to `ORIGIN`, i.e. 0-based here.
+relative to `ORIGIN`, i.e. 0-based here. The sheet trims both a vector and a two-column matrix.
 
 **`Spline2` / `Binterp` / `DWS`, and `GrubbsClassic` / `trim`** are genuine Prime built-ins — the
 worksheet has no include region and no add-in reference, and Prime labels them `FUNCTION` exactly like

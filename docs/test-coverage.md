@@ -695,19 +695,20 @@ That is what makes the taint chain readable: `# b = Spline2(x, y, n, w)` above t
 then a run of `needs b, left undefined above` that a reader can trace back to that one line. Multi-line
 regions are commented whole — the sheet's plots name the very variables their notes list as missing.
 
-## `tests/test_outliers.py` — PTC's published example matrices
+## `tests/test_outliers.py` — `references/grubbs.mcdx` and PTC's published matrices
 
 `references/interpolation_prediction.mcdx` reaches exactly one arm of Mathcad's outlier family:
 `GrubbsClassic(y, 0.55)` on a plain unitless column, read for its index alone (cached as `150`). That
-one call would come out the same under several wrong readings, so this module pins the rest against
-PTC's own worked examples, which publish the returned matrices in full for one 195-point heatflow
-data set. See the schema note for where each number comes from.
+one call would come out the same under several wrong readings, so this module pins the rest two ways:
+against PTC's worked examples, which publish the returned matrices in full for one 195-point heatflow
+data set, and against `references/grubbs.mcdx`, a 20-value sheet built to reach every branch. See the
+schema note for where each number comes from.
 
 | Test | What it pins |
 |------|--------------|
 | `test_grubbs_reproduces_the_published_matrix` | `Grubbs(y, 0.85)` → the three rows `3 3.526 -0.207 / 19 3.631 -0.312 / 188 3.322 -0.003`. This is the test that identifies the **population** standard deviation: the sample form drops row 188 |
 | `test_a_tighter_confidence_returns_fewer_rows` | `a = 0.9` → two rows, and the third column moves with the bound rather than the data. Confirms `a` is a *confidence*, so the significance is `1 - a` |
-| `test_grubbs_returns_nothing_when_no_point_clears_the_bound` | No example publishes this case, so an empty 0×3 matrix comes back rather than an invented row |
+| `test_grubbs_falls_back_to_the_closest_point` | With nothing past the bound `Grubbs` returns the one most extreme point, third column **positive** — the same row `GrubbsClassic` gives. An empty table was the natural guess and the cache says it is wrong |
 | `test_grubbs_classic_returns_the_extreme_point_outlier_or_not` | `[19 3.631 -0.389]` at `a = 0.8`, and a **positive** third column at `a = 0.98` — the documented "not an outlier, but the point most likely to be one" |
 | `test_three_sigma_returns_index_and_statistic_only` | Two columns, no bound to subtract |
 | `test_three_sigma_falls_back_to_the_closest_point` | The one place the family invents a row, and Mathcad documents it |
@@ -715,4 +716,21 @@ data set. See the schema note for where each number comes from.
 | `test_trim_drops_the_named_rows_of_a_matrix_and_keeps_the_unit` | The "Outlier Removal" example's two-column `augment(x, y)`: 195 rows in, 192 out, unit intact |
 | `test_trim_takes_a_single_index` | The reference sheet passes one scalar, not a vector; a vector keeps its 1-D shape |
 | `test_trim_reduces_a_dimensionless_index` | An index still carried as `mm/m` reduces before rounding — reading the raw magnitude would drop row 2000 and trim nothing |
-| `test_a_matrix_argument_is_refused_rather_than_flattened` | Mathcad returns nested *pairs* of indices there; a flat index into a 2-D shape would be a plausible wrong answer |
+| `test_a_matrix_is_one_flat_bag_with_nested_index_pairs` | A matrix is judged as a single sample of **all** its elements, and the position comes back as a nested 2×1 `(row, col)` column |
+
+### `references/grubbs.mcdx` (in the same module)
+
+Built for this family alone: 20 values with one outlier at index 19, a clean twin `u`, and 14 echoes.
+
+| Test | What it pins |
+|------|--------------|
+| `test_the_sheet_converts_with_no_todo` | Nothing in it is suppressed |
+| `test_every_echo_matches_the_cache` | All 14 echoes to ~1e-11. This is what pins the critical value to **fourteen** digits — the published pages print three |
+| `test_the_sheet_pins_the_fallback_and_the_nested_pair` | The two readings no page shows, named rather than buried in the sweep: `Grubbs(v, 0.999)` returns the closest point, and `Grubbs(M, 0.95)` returns a nested `(row, col)` column |
+| `test_a_unit_on_the_data_leaves_the_table_bare` | Prime accepts `GrubbsClassic(v·m, 0.95)` and caches plain reals, identical to the unitless call |
+
+**Unconfirmed, and worth a later region.** The cached nested pair is `(0 0)ᵀ`, which reads the same as
+`(row, col)` or as `(col, row)`, and one candidate cannot show what order several would come back in.
+We emit `(row, col)` and column-major order — Mathcad's own storage order, and the order the vector
+case is confirmed to use. A single extra region, `Grubbs(augment(v, x), 0.95) =`, would settle the
+first: its extreme sits at row 0 of column 1.

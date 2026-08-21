@@ -1583,21 +1583,21 @@ def contingtbl(tab):
 # ``Grubbs(y, 0.85)`` returns three rows (3, 19, 188), and the *sample*
 # deviation puts row 188 just under the bound and drops it.
 #
-# Each row is ``(index, test statistic, crit - statistic)``. The third column is
-# therefore **negative** for a point that failed the test, matching the cached
+# Each row is ``(position, test statistic, crit - statistic)``. The third column
+# is therefore **negative** for a point that failed the test, matching the cached
 # ``-0.207 / -0.312 / -0.003`` of that same example.
+#
+# A **matrix** argument is one flat bag of values -- ``references/grubbs.mcdx``
+# caches a 20x2 whose most extreme element is judged against all 40 -- and the
+# position comes back as a nested 2x1 ``(row, col)`` column rather than a plain
+# index. None of these functions ever returns an empty table: see ``_flagged``.
 
 
-def _outlier_stats(v):
-    """``(statistic per element, N)`` for an outlier test on ``v``."""
+def _outlier_statistic(v):
+    """``|x - mean| / stdev`` per element, in the argument's own shape."""
     mag, _ = _split(v)
-    flat = np.atleast_1d(mag).reshape(-1)
-    if np.asarray(mag).ndim == 2 and min(np.asarray(mag).shape) > 1:
-        raise NotImplementedError(
-            "Mathcad's outlier functions return nested index pairs for a "
-            "matrix argument; only the vector form is implemented"
-        )
-    return np.abs(flat - flat.mean()) / np.std(flat), flat.size
+    arr = np.atleast_1d(mag)
+    return np.abs(arr - arr.mean()) / np.std(arr)
 
 
 def _grubbs_critical(n, a):
@@ -1613,56 +1613,82 @@ def _grubbs_critical(n, a):
     )
 
 
-def _outlier_rows(indices, stat, crit=None):
-    """Pack an ascending index list into Mathcad's result matrix."""
-    idx = np.asarray(indices, dtype=int)
-    columns = [idx.astype(float), stat[idx]]
-    if crit is not None:
-        columns.append(crit - stat[idx])
-    return np.column_stack(columns)
+def _outlier_result(stat, picked, crit=None):
+    """Mathcad's result table for the flagged positions of ``stat``.
+
+    ``picked`` indexes ``stat`` read **column-major** -- the order Mathcad
+    stores a matrix in, and the ascending order a vector result comes back in.
+    Each row is ``(position, statistic[, crit - statistic])``, and for a matrix
+    argument the position is itself a nested 2x1 ``(row, col)`` column, which
+    is what makes the whole table an object array.
+    """
+    flat_stat = stat.reshape(-1, order="F")
+    nested = stat.ndim == 2 and min(stat.shape) > 1
+    picked = np.asarray(picked, dtype=int)
+    values = flat_stat[picked]
+    columns = [values] if crit is None else [values, crit - values]
+
+    table = np.empty((picked.size, 1 + len(columns)),
+                     dtype=object if nested else float)
+    for row, position in enumerate(picked):
+        if nested:
+            i, j = np.unravel_index(int(position), stat.shape, order="F")
+            table[row, 0] = np.array([[float(i)], [float(j)]])
+        else:
+            table[row, 0] = float(position)
+        for column, values_ in enumerate(columns, start=1):
+            table[row, column] = values_[row]
+    return table
+
+
+def _flagged(flat_stat, bound):
+    """Positions above ``bound``, or the single closest one if there are none.
+
+    The fall back is not a guess: ``references/grubbs.mcdx`` caches
+    ``Grubbs(v, 0.999)``, where nothing clears the bound, as the one most
+    extreme point with a **positive** third column. ``ThreeSigma`` documents the
+    same behaviour, and ``GrubbsClassic`` is that behaviour by definition -- so
+    all three agree, and no call of this family ever returns nothing.
+    """
+    found = np.flatnonzero(flat_stat > bound)
+    return found if found.size else np.array([int(np.argmax(flat_stat))])
 
 
 def Grubbs(v, a):  # noqa: N802 -- Mathcad's own spelling
     """Mathcad ``Grubbs``: every point whose test statistic beats the bound.
 
-    Returns one row ``(index, statistic, crit - statistic)`` per candidate, in
-    ascending index order. Mathcad's own note applies: more than one row does
-    not mean every one is an outlier, because both the bound and the statistic
-    move once a candidate is removed.
-
-    With no candidate at all an empty (0x3) matrix comes back. That case is
-    *not* pinned by any example -- ``ThreeSigma`` documents a fall back to the
-    closest point, but ``Grubbs`` does not, and inventing a row would be worse
-    than returning nothing.
+    Returns one row ``(position, statistic, crit - statistic)`` per candidate,
+    in ascending position order. Mathcad's own note applies: more than one row
+    does not mean every one is an outlier, because both the bound and the
+    statistic move once a candidate is removed.
     """
-    stat, n = _outlier_stats(v)
-    crit = _grubbs_critical(n, a)
-    return _outlier_rows(np.flatnonzero(stat > crit), stat, crit)
+    stat = _outlier_statistic(v)
+    crit = _grubbs_critical(stat.size, a)
+    return _outlier_result(stat, _flagged(stat.reshape(-1, order="F"), crit),
+                           crit)
 
 
 def GrubbsClassic(v, a):  # noqa: N802 -- Mathcad's own spelling
     """Mathcad ``GrubbsClassic``: the one point most likely to be an outlier.
 
-    One row, ``(index, statistic, crit - statistic)``, for the largest
+    One row, ``(position, statistic, crit - statistic)``, for the largest
     statistic in ``v``. The point is *not* necessarily an outlier -- a positive
     third column says it stayed inside the bound.
     """
-    stat, n = _outlier_stats(v)
-    crit = _grubbs_critical(n, a)
-    return _outlier_rows([int(np.argmax(stat))], stat, crit)
+    stat = _outlier_statistic(v)
+    crit = _grubbs_critical(stat.size, a)
+    flat_stat = stat.reshape(-1, order="F")
+    return _outlier_result(stat, [int(np.argmax(flat_stat))], crit)
 
 
 def ThreeSigma(v):  # noqa: N802 -- Mathcad's own spelling
     """Mathcad ``ThreeSigma``: the points more than three deviations out.
 
-    Two columns, ``(index, statistic)``, in ascending index order. With no such
-    point the closest one is returned instead, which Mathcad documents.
+    Two columns, ``(position, statistic)``. With no such point the closest one
+    is returned instead, which Mathcad documents.
     """
-    stat, _ = _outlier_stats(v)
-    found = np.flatnonzero(stat > 3.0)
-    if found.size == 0:
-        found = np.array([int(np.argmax(stat))])
-    return _outlier_rows(found, stat)
+    stat = _outlier_statistic(v)
+    return _outlier_result(stat, _flagged(stat.reshape(-1, order="F"), 3.0))
 
 
 def trim(v, vindex):

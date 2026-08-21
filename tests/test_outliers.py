@@ -8,13 +8,18 @@ index alone. Everything else is pinned here against PTC's own worked examples
 Removal"), which publish the returned matrices in full for one 195-point
 heatflow data set.
 
-Those published matrices settle two things the reference sheet cannot:
+Those published matrices settle two things:
 
 * the confidence convention -- PTC calls ``Grubbs(y, 1 - alpha)``, so ``a`` is
   a confidence and the significance level used inside is ``1 - a``;
 * the **population** standard deviation. ``Grubbs(y, 0.85)`` returns three rows
   (3, 19, 188); the sample deviation puts row 188 just under the bound and
   returns two.
+
+``references/grubbs.mcdx`` is the purpose-built fixture for the rest. It is a
+20-value column with one outlier, and it caches the two cases no published page
+shows: what happens when **nothing** clears the bound, and what a **matrix**
+argument returns.
 """
 
 from __future__ import annotations
@@ -24,8 +29,15 @@ import math
 import numpy as np
 import pytest
 
+from mcad2py.convert import convert_worksheet
+from mcad2py.emit.codegen import echo_expr
+from mcad2py.loader import load_mcdx
 from mcad2py.runtime import Grubbs, GrubbsClassic, ThreeSigma, trim
 from mcad2py.units import ureg
+
+from conftest import cached_results, flat, reference, result_refs, run_sheet
+
+SHEET = reference("grubbs")
 
 # PTC's heatflow data set, the one every published example above uses.
 HEATFLOW = np.array([
@@ -76,11 +88,16 @@ def test_a_tighter_confidence_returns_fewer_rows():
     assert np.allclose(got[:, 2], [-0.102, -0.207], atol=5e-4)
 
 
-def test_grubbs_returns_nothing_when_no_point_clears_the_bound():
-    """No example publishes this case, so an empty matrix comes back rather
-    than an invented row. ``rows()`` of it is 0, which a sheet can act on."""
-    got = Grubbs(HEATFLOW, 0.999)
-    assert got.shape == (0, 3)
+def test_grubbs_falls_back_to_the_closest_point():
+    """No published page shows this case, and it is not what the shape of the
+    function suggests: with nothing past the bound ``Grubbs`` returns the one
+    most extreme point, third column **positive**, exactly as ``GrubbsClassic``
+    would. ``references/grubbs.mcdx`` region 8 is what pins it -- an empty table
+    was the natural guess and it is wrong."""
+    got = Grubbs(HEATFLOW, 0.99999999)
+    assert got.shape == (1, 3)
+    assert got[0, 0] == 19.0 and got[0, 2] > 0
+    assert np.allclose(got, GrubbsClassic(HEATFLOW, 0.99999999))
 
 
 def test_grubbs_classic_returns_the_extreme_point_outlier_or_not():
@@ -154,9 +171,87 @@ def test_trim_reduces_a_dimensionless_index():
     assert trim(v, index).magnitude.tolist() == [10.0, 20.0, 40.0]
 
 
-def test_a_matrix_argument_is_refused_rather_than_flattened():
-    """Mathcad returns nested *pairs* of indices for a matrix. Flattening it
-    would return a single index into a shape that has none."""
-    grid = np.arange(12.0).reshape(4, 3)
-    with pytest.raises(NotImplementedError, match="nested index pairs"):
-        GrubbsClassic(grid, 0.9)
+def test_a_matrix_is_one_flat_bag_with_nested_index_pairs():
+    """A matrix argument is judged as a single sample of all its elements, and
+    the position comes back as a nested 2x1 ``(row, col)`` column. Both halves
+    are cached by ``references/grubbs.mcdx``; the sheet test below is the
+    anchor, this one is the shape on its own.
+    """
+    grid = np.column_stack([np.arange(20.0), HEATFLOW[:20]])
+    got = GrubbsClassic(grid, 0.9)
+    assert got.shape == (1, 3) and got.dtype == object
+    assert np.asarray(got[0, 0]).shape == (2, 1)
+    # The whole 40 values set the mean, so the extreme is an ``x`` end, not a
+    # heatflow reading -- which is the point of the flat-bag reading.
+    assert np.asarray(got[0, 0]).reshape(-1).tolist() == [19.0, 0.0]
+
+
+# ---------------------------------------------------------------------------
+# references/grubbs.mcdx -- the purpose-built sheet
+# ---------------------------------------------------------------------------
+
+# ``result-id`` 17: ``Grubbs(M, 0.95)``, whose first column holds a *nested*
+# matrix. ``cached_results`` reads only the direct ``<real>`` children of a
+# matrix, so it returns that row's two scalar columns and nothing else -- which
+# is exactly what can be compared. The nested pair itself is region 18, echoed
+# as ``A[0, 0]`` for that reason.
+NESTED = "17"
+
+
+@pytest.fixture(scope="module")
+def sheet():
+    """Convert, execute, and return ``(source, namespace, echoed values)``."""
+    return run_sheet(SHEET)
+
+
+def test_the_sheet_converts_with_no_todo(sheet):
+    """Every region of it is supported -- there is nothing left to suppress."""
+    src, _, echoed = sheet
+    assert "TODO unsupported" not in src
+    assert len(echoed) == 14
+
+
+def test_every_echo_matches_the_cache(sheet):
+    """The whole sheet against Mathcad's own numbers, to ~1e-11.
+
+    This is what pins the critical value to full precision: PTC's published
+    matrices print three decimals, and the cached ``-0.4049316586941907``
+    confirms the ``qt(alpha/(2N), N-2)`` bound to fourteen digits rather than
+    to four.
+    """
+    _, _, echoed = sheet
+    cached, refs = cached_results(SHEET), result_refs(SHEET)
+    regions = [r for r in convert_worksheet(load_mcdx(SHEET)).regions
+               if echo_expr(r) is not None]
+    assert len(regions) == len(echoed)
+
+    for index, region in enumerate(regions):
+        ref = refs[region.source.region_id]
+        want = np.asarray(cached[ref], dtype=float)
+        # The nested row cannot go through ``flat``; compare its scalar columns.
+        got = (np.asarray(echoed[index][0, 1:], dtype=float) if ref == NESTED
+               else flat(echoed[index]))
+        assert got.shape == want.shape, f"echo {index}: {got.shape} vs {want.shape}"
+        assert np.allclose(got, want, rtol=1e-11, atol=1e-12), (
+            f"echo {index}: {got} != {want}"
+        )
+
+
+def test_the_sheet_pins_the_fallback_and_the_nested_pair(sheet):
+    """The two readings no published page shows, named rather than left inside
+    the sweep above: ``Grubbs`` at a confidence nothing clears returns the
+    closest point (echo 3, third column positive), and a matrix argument
+    returns a nested ``(row, col)`` column (echo 12)."""
+    _, _, echoed = sheet
+    assert echoed[3][0, 0] == 19.0 and echoed[3][0, 2] > 0
+    assert np.allclose(np.asarray(echoed[3], dtype=float), echoed[5].astype(float))
+    assert np.asarray(echoed[12]).reshape(-1).tolist() == [0.0, 0.0]
+
+
+def test_a_unit_on_the_data_leaves_the_table_bare(sheet):
+    """Prime accepts ``GrubbsClassic(v*m, 0.95)`` and caches it as plain reals,
+    identical to the unitless call. The statistic divides the unit out, and the
+    index never had one."""
+    _, _, echoed = sheet
+    assert not hasattr(echoed[13], "units")
+    assert np.allclose(echoed[13].astype(float), echoed[4].astype(float))
