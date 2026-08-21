@@ -728,9 +728,46 @@ Built for this family alone: 20 values with one outlier at index 19, a clean twi
 | `test_every_echo_matches_the_cache` | All 16 echoes to ~1e-11. This is what pins the critical value to **fourteen** digits — the published pages print three |
 | `test_the_sheet_pins_the_fallback_and_the_nested_pair` | The two readings no page shows, named rather than buried in the sweep: `Grubbs(v, 0.999)` returns the closest point, and `Grubbs(M, 0.95)` returns a nested `(row, col)` column |
 | `test_a_unit_on_the_data_leaves_the_table_bare` | Prime accepts `GrubbsClassic(v·m, 0.95)` and caches plain reals, identical to the unitless call |
-
 | `test_the_nested_pair_is_row_then_column` | `Grubbs(augment(x, v), …)` puts its extreme at (0, 0), which reads the same either way round. `Grubbs(augment(v, x), …)` moves the same point to row 0 of column **1** and caches `(0 1)ᵀ` — so the pair is `(row, col)` |
 
 **Still unconfirmed.** One candidate cannot show what order **several** matrix candidates come back
 in. We emit column-major — Mathcad's own storage order, and the order the vector case is confirmed to
 use.
+
+## `tests/test_range_sum.py` — `references/range_sum.mcdx`
+
+Mathcad writes three different sums with one `<ml:summation>` head, told apart by the lambda's bound
+variable and the bounds. The sheet puts one of each over the same data, so confusing two of them
+shows up as a wrong number rather than as a parse failure.
+
+| Test | Pins |
+|------|------|
+| `test_generated_source_shape` | Each `Σ` reaches a different helper — `total`, `range_sum`, `summation` |
+| `test_the_indexed_vector_matches` | `X[i] := mod(2i, 7)` over `i := 0..10` |
+| `test_a_bare_sigma_totals_the_vector` | The bare `Σ` over an already-built vector |
+| `test_a_range_sum_covers_the_whole_range_variable` | The point of the sheet: `Σ_i X[i]` with no bounds is 33, the same as `total(X)` — an empty bound is the whole range variable, not an unfinished slot |
+| `test_an_indexed_sum_still_honours_its_bounds` | `Σ_{j=1}^{4} X[j]` is 13, so the bounded form did not quietly become a range sum |
+| `test_an_indexed_sum_over_a_function` | The bounded form over `f(j)` |
+| `test_a_range_sum_over_an_expression_in_the_index` | `Σ_i f(2i) = 1551`, so the body sees each index value, not the range as a whole |
+| three parser-shape tests | That each XML shape is *told apart* in the first place. A value check cannot do this alone: `total` and `range_sum` agree on this data by design |
+
+**What the worksheet does not reach.** It sums dimensionless integers over a dimensionless range and
+calls `mod` only on non-negative values. Direct unit tests below the fixture ones cover a dimensioned
+domain, a dimensioned result, `mod`'s sign rule (C's `fmod`, not Python's `%`), `mod` with a divisor
+in a *different* unit (`2.5 m` against `300 mm`), `mod` on an unreduced `mm/m` ratio, and `mod`
+applied element-wise to a vector.
+
+`mod`'s sign rule is PTC's documented one, not a cached number. One negative `mod` region on the
+sheet would upgrade it.
+
+## `tests/test_emit_notes.py` — no fixture
+
+A `# TODO`/`# placeholder` note is a comment, so it swallows the rest of its line. Harmless when the
+note *is* the whole expression, fatal one level down: `summation(f, None  # placeholder, None  #
+placeholder)` puts the closing parenthesis inside the comment and the module stops parsing — the one
+outcome the "output still loads" convention exists to prevent.
+
+These build the IR by hand: a nested placeholder, a nested unsupported node, two notes in one
+expression, a top-level note (which must stay byte-identical to before the fix), and that the
+collector does not leak between expressions. No fixture, because the worksheet that surfaced it calls
+several functions it never defines and cannot be executed.

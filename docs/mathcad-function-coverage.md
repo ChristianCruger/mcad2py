@@ -31,7 +31,7 @@ sample worksheet will hit an unsupported builtin.
 | Hyperbolic | `sinh` `cosh` `tanh` `coth` `sech` `csch` + all six inverses | argument reduced to a pure number first (Mathcad angles are dimensionless, so `sinh(103.2 deg)` = `sinh(1.80118)`) |
 | Log & exponential | `exp`, `ln`, `log` (1- and 2-arg), `ln0`, `logspace` | `ln`/`log` return a **complex** value for a negative real argument (matching Mathcad — only `ln(0)` is a genuine domain error); `ln0` avoids that one case, returning `-1e307` at `x=0` |
 | Powers & roots | `sqrt`, `nth_root`, `power` | dimension-aware: a dimensioned radicand keeps its unit, a dimensionless ratio is reduced first |
-| Rounding / truncation | `ceil`, `floor`, `round` (→ `mround`) | dimensionless-aware; keep a unit if dimensioned |
+| Rounding / truncation | `ceil`, `floor`, `round` (→ `mround`), `mod` | dimensionless-aware; keep a unit if dimensioned. `mod` takes the sign of **x** (C `fmod`), not Python's `%` |
 | Min / max | `min` `max` (element-wise `np.minimum/maximum`), `mc_min` `mc_max` (flattening reductions) | Mathcad `max/min` flatten *all* args to a scalar; the element-wise form only appears under a vectorize arrow |
 | Absolute value / size | `abs`, `length` (→ `len`) | |
 | Interpolation | `linterp`, `lspline` `pspline` `cspline` + `interp`, `polyint` `polyiter` `polycoeff`, `rationalint`, `Thiele` `Thielecoeff`, `predict` | `linterp` is unit-aware and **extrapolates** past the knots (unlike `np.interp`; arg order reversed vs. numpy). The splines differ only in their end condition (natural / parabolic / not-a-knot) and `interp` applies element-wise to a whole query vector. `polyint`/`rationalint` return `[value, error]` and `polyiter` `[converged, order, value]`, the whole vector carrying the ordinates' unit. `predict` is Burg's maximum-entropy method. See `references/interpolation_prediction.mcdx` |
@@ -86,7 +86,7 @@ Legend: ✅ done · 🟡 partial · ⬜ not started · ⛔ out of scope (unlikel
 | **Hyperbolic** | ✅ | sinh cosh tanh coth sech csch + all six inverses | — |
 | **Log & exponential** | ✅ | exp ln log (1- and 2-arg) ln0 logspace | — (see `references/log-exp.mcdx`) |
 | **Piecewise / conditional** | 🟡 | `if` (inline + block) | `sign`/`signum`, `Φ` Heaviside, `δ` Kronecker, `ε` Levi-Civita, `until` |
-| **Truncation & round-off** | 🟡 | ceil floor round | `trunc`, `Ceil/Floor/Round/Trunc(x, y)` (round-to-multiple), `mantissa` |
+| **Truncation & round-off** | 🟡 | ceil floor round mod | `trunc`, `Ceil/Floor/Round/Trunc(x, y)` (round-to-multiple), `mantissa` |
 | **Vector & matrix** | ✅ | the full list above (see `references/matrices.mcdx`), plus the table searches `match` `lookup` `vlookup` `hlookup` `vhlookup` (see `references/stack_augment_lookup.mcdx`) | — |
 | **Solving & optimization** | 🟡 | `find` (numeric), `solve` (symbolic), `lsolve` (linear systems) | `root`, `polyroots`, `minerr`, `maximize` `minimize`, `Isolve` |
 | **Interpolation & prediction** | ✅ | `linterp`, `lspline` `pspline` `cspline` + `interp`, `polyint` `polyiter` `polycoeff`, `rationalint`, `Thiele` `Thielecoeff`, `predict` | `bicubic`/`bilinear`/`sinterp` (2-D); and the least-squares spline set `Spline2`/`Binterp`/`DWS`, whose adaptive knot placement PTC does not document — listed in `mapping.UNIMPLEMENTED` rather than guessed at (see `references/interpolation_prediction.mcdx`) |
@@ -177,6 +177,11 @@ structural worksheet converter.
 - `TOL`/`CTOL` from `calculation.xml` aren't consumed — solve uses `fsolve` defaults.
 - A *branching* program applied to an array still relies on `elementwise`/`sample`; a raw
   `np.vectorize(fn)` path for the general case isn't wired.
+- `mod(x, y)` carries the sign of **x** (C's `fmod`), not of the divisor as Python's `%` does. Only
+  non-negative arguments are pinned by a cached number; the sign rule is PTC's documented one.
+- Mathcad's `Σ` has three forms sharing one XML head — indexed, bare-over-a-vector, and **range
+  summation** over a range variable. All three are supported; see `range_sum.mcdx` in
+  [mcdx-schema-notes.md](mcdx-schema-notes.md).
 - Scriptable-control JScript is intentionally **not** transpiled (we surface the cached `RL` value).
 - The four Numerical Recipes p-values (`Spear`'s `probd`, `kendltau`/`kendltau2`'s `prob`, `Ftest`'s
   `p`) match Mathcad only to ~1e-7: it uses NR's Chebyshev `erfcc`/continued-fraction `betai`, we use

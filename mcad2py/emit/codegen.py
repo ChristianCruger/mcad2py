@@ -28,9 +28,38 @@ _ATOM = 100
 _WRAP_WIDTH = 88
 
 
+# A ``# TODO``/``# placeholder`` note is a comment, so it swallows whatever
+# follows it on the line. That is harmless when the note *is* the whole
+# expression (``x = None  # TODO unsupported: …``) and fatal when it sits in an
+# argument list, where the closing parenthesis ends up inside the comment and
+# the module stops parsing -- the one outcome the "output still loads"
+# convention exists to prevent. So a note node renders as a bare ``None`` and
+# pushes its text here; the outermost :func:`expr_to_str` appends the collected
+# notes once, at the end of the line, where a comment is safe.
+_NOTES: list[str] = []
+_DEPTH = 0
+
+
 def expr_to_str(node: ir.Expr) -> str:
     """Render an expression with no unnecessary outer parentheses."""
-    return _emit(node)[0]
+    global _DEPTH
+    if _DEPTH == 0:
+        _NOTES.clear()
+    _DEPTH += 1
+    try:
+        text = _emit(node)[0]
+    finally:
+        _DEPTH -= 1
+    if _DEPTH == 0 and _NOTES:
+        text += "  # " + "; ".join(_NOTES)
+        _NOTES.clear()
+    return text
+
+
+def _note(text: str) -> str:
+    """Record a TODO/placeholder note and render its node as a bare ``None``."""
+    _NOTES.append(text)
+    return "None"
 
 
 def _emit(node: ir.Expr) -> tuple[str, int]:
@@ -147,10 +176,20 @@ def _emit(node: ir.Expr) -> tuple[str, int]:
     if isinstance(node, ir.ProgramBlock):
         # A ProgramBlock is only ever a Define/MultiAssign value (emitted as a
         # ``def`` by assignment_line/multi_assign_lines), never inline.
-        return "None  # TODO: program block used inline", _ATOM
+        return _note("TODO: program block used inline"), _ATOM
 
     if isinstance(node, ir.VectorSum):
         return f"total({expr_to_str(node.operand)})", _ATOM
+
+    if isinstance(node, ir.RangeSum):
+        var = node.func.params[0]
+        # The first argument reads the range variable from the enclosing scope;
+        # the lambda's parameter shadows it for the body, which is exactly what
+        # Mathcad does with the same name.
+        return (
+            f"range_sum({var}, lambda {var}: {expr_to_str(node.func.body)})",
+            _ATOM,
+        )
 
     if isinstance(node, ir.Vectorize):
         return f"vectorize({expr_to_str(node.operand)})", _ATOM
@@ -176,12 +215,6 @@ def _emit(node: ir.Expr) -> tuple[str, int]:
         return (
             f"integral({expr_to_str(node.func)}, "
             f"{expr_to_str(node.lower)}, {expr_to_str(node.upper)})",
-            _ATOM,
-        )
-
-    if isinstance(node, ir.RangeSum):
-        return (
-            f"range_sum({node.index}, {expr_to_str(node.func)})",
             _ATOM,
         )
 
@@ -215,12 +248,12 @@ def _emit(node: ir.Expr) -> tuple[str, int]:
         return repr(node.value), _ATOM
 
     if isinstance(node, ir.Placeholder):
-        return "None  # placeholder", _ATOM
+        return _note("placeholder"), _ATOM
 
     if isinstance(node, ir.Unsupported):
-        return f"None  # TODO unsupported: {node.note}", _ATOM
+        return _note(f"TODO unsupported: {node.note}"), _ATOM
 
-    return f"None  # TODO unknown node: {type(node).__name__}", _ATOM
+    return _note(f"TODO unknown node: {type(node).__name__}"), _ATOM
 
 
 def _is_int_literal(node: ir.Expr) -> bool:

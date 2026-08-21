@@ -2,7 +2,7 @@
 import math
 import matplotlib.pyplot as plt
 
-from mcad2py.runtime import sin, cos, mc_max, mc_min, power, col, matrix, transpose, vec_set, augment, matcol, rows, last, matelem, reverse, csort, GrubbsClassic, trim, linterp, lspline, pspline, cspline, interp, polyint, polyiter, polycoeff, rationalint, Thielecoeff, Thiele, predict, Spline2, Binterp, DWS, index_build, range_sum, derivative, arange, sample, static_axis, plot_axis, plot_trace, vectorize
+from mcad2py.runtime import sin, cos, mc_max, mc_min, power, col, matrix, transpose, vec_set, augment, matcol, rows, last, matelem, reverse, csort, GrubbsClassic, trim, linterp, lspline, pspline, cspline, interp, polyint, polyiter, polycoeff, rationalint, Thielecoeff, Thiele, predict, Spline2, Binterp, DWS, index_build, derivative, range_sum, arange, sample, static_axis, plot_axis, plot_trace, vectorize
 from mcad2py.units import ureg
 
 
