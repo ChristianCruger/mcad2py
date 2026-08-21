@@ -49,3 +49,8 @@ print(matelem(A, 0, 0))
 
 B = GrubbsClassic(v * ureg.m, 0.95)
 print(B)
+
+C = Grubbs(augment(v, x), 0.95)
+print(C)
+
+print(matelem(C, 0, 0))

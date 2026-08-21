@@ -720,17 +720,17 @@ schema note for where each number comes from.
 
 ### `references/grubbs.mcdx` (in the same module)
 
-Built for this family alone: 20 values with one outlier at index 19, a clean twin `u`, and 14 echoes.
+Built for this family alone: 20 values with one outlier at index 19, a clean twin `u`, and 16 echoes.
 
 | Test | What it pins |
 |------|--------------|
 | `test_the_sheet_converts_with_no_todo` | Nothing in it is suppressed |
-| `test_every_echo_matches_the_cache` | All 14 echoes to ~1e-11. This is what pins the critical value to **fourteen** digits — the published pages print three |
+| `test_every_echo_matches_the_cache` | All 16 echoes to ~1e-11. This is what pins the critical value to **fourteen** digits — the published pages print three |
 | `test_the_sheet_pins_the_fallback_and_the_nested_pair` | The two readings no page shows, named rather than buried in the sweep: `Grubbs(v, 0.999)` returns the closest point, and `Grubbs(M, 0.95)` returns a nested `(row, col)` column |
 | `test_a_unit_on_the_data_leaves_the_table_bare` | Prime accepts `GrubbsClassic(v·m, 0.95)` and caches plain reals, identical to the unitless call |
 
-**Unconfirmed, and worth a later region.** The cached nested pair is `(0 0)ᵀ`, which reads the same as
-`(row, col)` or as `(col, row)`, and one candidate cannot show what order several would come back in.
-We emit `(row, col)` and column-major order — Mathcad's own storage order, and the order the vector
-case is confirmed to use. A single extra region, `Grubbs(augment(v, x), 0.95) =`, would settle the
-first: its extreme sits at row 0 of column 1.
+| `test_the_nested_pair_is_row_then_column` | `Grubbs(augment(x, v), …)` puts its extreme at (0, 0), which reads the same either way round. `Grubbs(augment(v, x), …)` moves the same point to row 0 of column **1** and caches `(0 1)ᵀ` — so the pair is `(row, col)` |
+
+**Still unconfirmed.** One candidate cannot show what order **several** matrix candidates come back
+in. We emit column-major — Mathcad's own storage order, and the order the vector case is confirmed to
+use.

@@ -980,10 +980,11 @@ the natural guess was wrong on both.
   against their common mean and deviation, not a per-column test. The nested column is what the
   documentation's "nested pairs of indices" means, and `A[0,0]` echoes it as a 2×1 matrix.
 
-Two details there are still **unconfirmed**, because one cached row cannot show them: whether the
-nested pair is `(row, col)` or `(col, row)` — the cached pair is `(0 0)ᵀ`, which reads the same either
-way — and what order several matrix candidates come back in. We emit `(row, col)` and column-major
-order, which is Mathcad's own storage order and matches the ascending order of the vector case.
+The pair is **`(row, col)`**, settled by the sheet's last two regions: `augment(x, v)` puts the
+extreme at (0, 0), which reads the same either way round, so `Grubbs(augment(v, x), 0.95)` moves the
+same point to row 0 of column 1 and caches `(0 1)ᵀ`. One detail is still **unconfirmed** — what order
+*several* matrix candidates come back in. We emit column-major, which is Mathcad's own storage order
+and matches the ascending order of the vector case.
 
 The sheet also confirms that Prime **accepts a unit**: `GrubbsClassic(v·m, 0.95)` caches as plain
 reals identical to the unitless call, since the statistic divides the unit out and an index never had

@@ -190,12 +190,12 @@ def test_a_matrix_is_one_flat_bag_with_nested_index_pairs():
 # references/grubbs.mcdx -- the purpose-built sheet
 # ---------------------------------------------------------------------------
 
-# ``result-id`` 17: ``Grubbs(M, 0.95)``, whose first column holds a *nested*
-# matrix. ``cached_results`` reads only the direct ``<real>`` children of a
-# matrix, so it returns that row's two scalar columns and nothing else -- which
-# is exactly what can be compared. The nested pair itself is region 18, echoed
-# as ``A[0, 0]`` for that reason.
-NESTED = "17"
+# ``result-id`` 17 and 20 -- ``Grubbs(M, 0.95)`` and ``Grubbs(augment(v, x),
+# 0.95)`` -- hold a *nested* matrix in their first column. ``cached_results``
+# reads only the direct ``<real>`` children of a matrix, so it returns those
+# rows' two scalar columns and nothing else, which is exactly what can be
+# compared. Each nested pair is echoed separately (``A[0, 0]``, ``C[0, 0]``).
+NESTED = ("17", "20")
 
 
 @pytest.fixture(scope="module")
@@ -208,7 +208,7 @@ def test_the_sheet_converts_with_no_todo(sheet):
     """Every region of it is supported -- there is nothing left to suppress."""
     src, _, echoed = sheet
     assert "TODO unsupported" not in src
-    assert len(echoed) == 14
+    assert len(echoed) == 16
 
 
 def test_every_echo_matches_the_cache(sheet):
@@ -229,7 +229,7 @@ def test_every_echo_matches_the_cache(sheet):
         ref = refs[region.source.region_id]
         want = np.asarray(cached[ref], dtype=float)
         # The nested row cannot go through ``flat``; compare its scalar columns.
-        got = (np.asarray(echoed[index][0, 1:], dtype=float) if ref == NESTED
+        got = (np.asarray(echoed[index][0, 1:], dtype=float) if ref in NESTED
                else flat(echoed[index]))
         assert got.shape == want.shape, f"echo {index}: {got.shape} vs {want.shape}"
         assert np.allclose(got, want, rtol=1e-11, atol=1e-12), (
@@ -246,6 +246,17 @@ def test_the_sheet_pins_the_fallback_and_the_nested_pair(sheet):
     assert echoed[3][0, 0] == 19.0 and echoed[3][0, 2] > 0
     assert np.allclose(np.asarray(echoed[3], dtype=float), echoed[5].astype(float))
     assert np.asarray(echoed[12]).reshape(-1).tolist() == [0.0, 0.0]
+
+
+def test_the_nested_pair_is_row_then_column(sheet):
+    """``Grubbs(augment(x, v), …)`` puts its extreme at (0, 0), which reads the
+    same either way round. The sheet's last pair of regions settles it:
+    ``augment(v, x)`` moves the same point to row 0 of column **1**, and the
+    cache gives ``(0 1)ᵀ``. So the pair is ``(row, col)``, not ``(col, row)``.
+    """
+    _, _, echoed = sheet
+    assert np.asarray(echoed[14][0, 0]).reshape(-1).tolist() == [0.0, 1.0]
+    assert np.asarray(echoed[15]).reshape(-1).tolist() == [0.0, 1.0]
 
 
 def test_a_unit_on_the_data_leaves_the_table_bare(sheet):
