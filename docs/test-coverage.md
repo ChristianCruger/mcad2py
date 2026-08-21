@@ -771,3 +771,29 @@ These build the IR by hand: a nested placeholder, a nested unsupported node, two
 expression, a top-level note (which must stay byte-identical to before the fix), and that the
 collector does not leak between expressions. No fixture, because the worksheet that surfaced it calls
 several functions it never defines and cannot be executed.
+
+## `tests/test_set_mcdx_value.py` — `references/trig.mcdx` (copied to `tmp_path`)
+
+The write path (`tools/set_mcdx_value.py`). The fixture is copied first: the tool edits in place,
+and a `references/*.mcdx` is read-only for the rest of the suite.
+
+| Test | Pins |
+|------|------|
+| `test_sets_the_number_and_keeps_the_unit` | `theta := 34 deg` -> `45 deg`; the unit survives an edit that names only the number |
+| `test_only_worksheet_xml_changes` | Every other zip part comes through byte-identical — `result.xml` above all, so a stale cache stays visibly stale rather than being half-rewritten |
+| `test_edit_is_minimal` | Exactly two characters differ in `worksheet.xml`. A re-serialized part would pass a value check and still perturb the file |
+| `test_generated_python_carries_the_new_value` | End-to-end: the edited sheet converts and runs, `sin(45 deg)` = 0.7071… . Goes back through the parser the rest of the suite trusts, rather than asserting on XML |
+| `test_unit_can_be_replaced` / `_removed_and_added` | `--unit rad`, `--unit ""`, and re-adding one — the `<ml:apply><ml:scale/>` wrapper is built and unbuilt correctly |
+| `test_negative_value_wraps_in_neg` | A negative value becomes `<ml:apply><ml:neg />…`, not a `-` inside `<ml:real>`. No fixture has a negative literal define, so this is the only cover for that arm |
+| `test_output_leaves_the_input_alone` | `-o` writes a copy and does not touch the source |
+| `test_refuses` (3 cases) | A formula (`A := sin(theta)`), a text region, and a missing region id each raise `Refused`. This is the point of the tool: overwriting a formula with a number would silently delete the sheet's maths |
+| `test_refuses_a_bad_number` | A non-numeric `--value` is caught before anything is written |
+| `test_refuses_a_compound_unit_rename` | `kN/m` has no single name to replace, so `--unit` declines instead of guessing; the number alone is still settable. Uses `Elastic_foundation_eq_line_spring.mcdx`, the only fixture with a compound-unit literal |
+| `test_listing_matches_the_generated_python` | `--list` on `RC_col.mcdx` (28 inputs) offers only real numbers |
+| `test_listing_never_offers_a_formula` | Across `matrices`/`3d_plots`/`difference_eq`, nothing listed re-classifies as a formula |
+
+**What these do not reach.** `tools/recalc_mcdx.py` has **no test** — it needs Mathcad Prime and
+Windows COM, so it cannot run in CI. It was verified by hand on 2026-08-21 against Prime 12.0.0.1:
+`trig.mcdx` with `theta` at 45° recomputed to a cache matching the generated Python's 19 values
+exactly, and at 60° in 6.6 s. If you change its wait loop, re-run that check by hand — a wrong loop
+fails by writing *stale* numbers, which no value comparison against the same file can detect.

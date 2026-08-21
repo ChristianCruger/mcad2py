@@ -41,6 +41,12 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=7", "build>=1.0", "twine>=5"]
+# Drives Mathcad Prime itself through Application Automation (COM), which
+# tools/recalc_mcdx.py uses to make Prime recompute a worksheet whose input a
+# tool changed. It is not part of converting a .mcdx -- the converter never
+# runs Mathcad -- so it stays out of `dependencies`: it needs Prime installed
+# and it is Windows-only. Wanted by the read-mathcad Claude skill's edit path.
+mathcad = ["MathcadPy>=0.5; sys_platform == 'win32'"]
 
 [project.urls]
 Homepage = "https://github.com/ChristianCruger/mcad2py"

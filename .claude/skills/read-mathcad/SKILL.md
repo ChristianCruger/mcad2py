@@ -1,6 +1,6 @@
 ---
 name: read-mathcad
-description: Read and understand a PTC Mathcad Prime worksheet (.mcdx). Use whenever the user references, attaches, or asks about a .mcdx file — to see its definitions, equations, units, and computed values as Python.
+description: Read, understand, and change a PTC Mathcad Prime worksheet (.mcdx). Use whenever the user references, attaches, or asks about a .mcdx file — to see its definitions, equations, units, and computed values as Python, to set an input value in the worksheet itself, or to have Mathcad Prime recompute it.
 ---
 
 # Reading a Mathcad worksheet
@@ -61,6 +61,55 @@ it's assigned separately from the Mathcad variable name and can differ from it (
 un-named output defaults to something like `out`/`out_0`). Only regions the author
 explicitly flagged carry this; most don't. Check MathcadPy's own docs for the exact call
 to set/read a value by alias before using one.
+
+## Changing an input value
+
+Two tools in `tools/` turn the region id above into a write. Use them together —
+editing alone leaves the sheet's cached results stale.
+
+**Warning: never edit a file in `references/`.** Those are test fixtures. Changing one
+shifts every cached number the test suite compares against. Copy it somewhere else first.
+
+### 1. Set the value
+
+```bash
+python tools/set_mcdx_value.py "<file.mcdx>" --list                    # what is settable
+python tools/set_mcdx_value.py "<file.mcdx>" --region 1 --value 45     # theta := 45 deg
+python tools/set_mcdx_value.py "<file.mcdx>" --region 1 --value 45 --dry-run
+```
+
+It edits the file in place; `-o out.mcdx` writes a copy instead. `--unit rad` changes the
+unit too, and `--unit ""` removes it; leave `--unit` off to keep the one that is there.
+
+Only a **literal** definition can be set — `theta := 34 deg`, `n := 5`. The tool refuses a
+formula, a matrix, a range or a function definition rather than overwrite the sheet's math.
+Use `--list` (or `--trace-source`) to see which regions qualify.
+
+### 2. Make Mathcad recompute
+
+The converter never runs Mathcad, so after step 1 the sheet's own
+`mathcad/result.xml` still holds the numbers computed for the **old** input. Do not read
+that cache until it is refreshed.
+
+```bash
+python tools/recalc_mcdx.py "<file.mcdx>"              # in place
+python tools/recalc_mcdx.py "<file.mcdx>" --visible    # watch the Prime window
+```
+
+This needs **Mathcad Prime installed on the machine** and `MathcadPy`
+(`pip install -e ".[mathcad]"`), both Windows-only. If either is missing, say so — do not
+try to fake the recomputed values. The generated Python is still a valid answer on its own:
+it evaluates the new value for real, with units.
+
+The tool waits for Prime's calculation to finish before it saves; a run takes a few seconds
+on a small sheet. Raise `--timeout` for a sheet with a slow solve block.
+
+### 3. Confirm
+
+Convert again and run it, then compare against the refreshed cache. On `trig.mcdx` with
+`theta` moved from 34° to 45°, all 19 values agreed to the last digit. Remember the cache
+stores **base SI**, so `45 deg` reads back as `0.7853981633974483` rad — that is a match,
+not a mismatch.
 
 ## Verifying numbers (optional)
 

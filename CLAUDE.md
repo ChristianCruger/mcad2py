@@ -148,6 +148,19 @@ adding support for a new XML construct.
   header/footer). It rewrites only those parts — `worksheet.xml` and `result.xml` stay
   **byte-identical**, so no cached value or test expectation moves. `--check` is the same scan as a
   report and is wired into CI so a later worksheet can't quietly reintroduce a name.
+- The **write path** is two tools, deliberately separate from the converter (which is read-only) and
+  from each other. [tools/set_mcdx_value.py](tools/set_mcdx_value.py) sets one literal input by the
+  `region-id` that `--trace-source` prints — pure zip surgery, no Mathcad needed, and it **refuses**
+  anything that isn't a literal (a formula, matrix, range or function definition) rather than
+  overwrite a sheet's math. It rewrites `worksheet.xml` only, and inside it only the one number.
+  That leaves `result.xml` **stale**, which is what [tools/recalc_mcdx.py](tools/recalc_mcdx.py)
+  fixes: it drives Prime through MathcadPy's Application Automation to recompute and save. Prime's
+  `Synchronize()` is **asynchronous** — saving straight after it writes back the *old* numbers — and
+  "no `Pending` entry" alone is not a finish test, because an edited-but-unrecalculated sheet already
+  reads fully `Synchronized`. The loop therefore waits for two consecutive byte-identical,
+  `Pending`-free saves. MathcadPy is the `mathcad` extra, not a dependency: Windows-only, and it needs
+  Prime installed. Prime is left running unless the tool launched it (`Dispatch` attaches to a running
+  instance, and quitting it would close the user's other worksheets).
 - Mathcad's `·` is scalar, matrix *and* dot product; [shapes.py](mcad2py/shapes.py) decides which by
   inferring shapes across the whole sheet, and only rewrites to `matmul` when **both** operands are
   provably arrays (never under a vectorize arrow). Give a new array-returning builtin an entry in its
