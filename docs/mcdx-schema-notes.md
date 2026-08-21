@@ -1149,6 +1149,56 @@ knots sit *on* data points, Mathcad's do not); a free-knot Nelder-Mead search on
 squares and the statistic (the cached set is not the least-squares optimum -- 27.18 against an
 attainable 22.06); and a fixed warp `W(j/m)` of the index, which the five sets do not collapse onto.
 
+**The loop model above is wrong on one point, and three purpose-built sheets say how.**
+`spline2D` / `spline2E` / `spline2F` fit one curve -- `f = exp(exp(x/2))`, 60 points, `x` uniform on
+`[0, 10]`, no noise -- at 40 values of `level`. They are *experiments*, not fixtures: they were built
+to expose the move, they are not committed under `references/`, and the numbers below are the whole
+result. Three things came out of them.
+
+*The move repeats at a fixed interval count.* The pseudo-code above allows one move per count. In
+fact several levels stop at the **same** count with **different** knots, so the loop moves, tests,
+moves again. Four 3-interval sets and four 4-interval sets came back, which read as two chains:
+
+```
+m=3   3.3333 6.6667 -> 4.0223 7.2806 -> 4.8233 7.8291 -> 5.6032 8.3291
+m=4   3.2393 6.1336 8.1752 -> 4.3195 7.2257 8.7123 -> 5.4260 8.0475 9.1324 -> 6.4652 8.7034 9.4549
+```
+
+*The move reads only the curve.* `spline2E` fits `f` and its exact mirror `g = exp(exp((10-x)/2))` at
+twelve levels each. At every level `g`'s knots are `10 - reverse(f's knots)` to all cached digits. So
+the rule carries no direction bias and no dependence on the data index -- which rules out anything
+that walks the points in order, and anything seeded from a one-sided sweep.
+
+*The level enters only as a stopping decision.* Levels 0.1, 0.2 and 0.3 return byte-identical knots,
+as do 0.96 through 0.985. The level never reaches the placement arithmetic.
+
+The search order is **not** "first configuration whose `lower` clears the level". Sorting all thirteen
+cached configurations by `lower` gives an interval count of 3, 4, 3, 4, 4, 4, 5, 6, 8, 9 -- it drops
+back to 3 -- and at the top end `lower` itself is non-monotone (8 intervals cache 0.998638, 9 cache
+0.998135, and level 0.99 returns the 9). Ordering the same configurations by their **Durbin-Watson
+statistic** and taking the first with `lower > level` reproduces 20 of the 24 rungs, including the
+drop back to 3 intervals; the four it misses are all above `level = 0.8`, where two different
+5-interval sets are reachable and which one comes back depends on the level. So the path through the
+search is itself level-dependent, and a plain ordered scan will not model it.
+
+Against those six move steps the following were tried and rejected, on top of everything in the
+previous paragraph: equidistributing `|D³f|`, `|D³f|/h`, the **jump** of `D³f` across each knot (de
+Boor's `NEWNOT`), `|D²f|` at midpoints, the RMS of `D²f` over each interval, and the mean residual --
+each to 600 exponents from 0.02 to 3. The best fit is a de Boor jump equidistribution at an exponent
+near 1/3, which lands **0.04 to 0.18** in `x` against interval widths of 2.5 -- seven times closer
+than anything the noisy sheets gave, and still not a rule. The exponent that fits best is not shared:
+the 3-interval steps want 0.46, the 4-interval steps want 0.34.
+
+Two structural facts to build on, if this is picked up again. The sum of squares falls monotonically
+along both chains (to 0.66 of its start over the 3-interval chain, 0.12 over the 4-interval one), so
+the move is a descent step. But it is not gradient descent -- the cosine between the step and the
+negative gradient runs 0.78 down to 0.33 -- and it is not converging on the free-knot optimum, which
+for this curve is degenerate and sits far to the right of every cached set.
+
+A practical note for building the next sheet: only **noise-free** data exercises the move at all. In
+`spline2D` the three signals carrying pseudo-noise all ran straight to 30 intervals and were accepted
+on the **uniform** set, with no move anywhere. The noise-free curve was the one that moved.
+
 **One more side finding, now closed.** An earlier save of `spline2A` had cached a `y` that was our own
 `rnorm` stream at offset 45 -- exactly one whole `rnorm(45, …)` call further on, because Prime had
 drawn the vector twice across the saves. The sheet was re-saved and the stream now starts where it
