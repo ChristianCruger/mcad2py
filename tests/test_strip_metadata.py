@@ -18,7 +18,12 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "tools"))
 
-from strip_mcdx_metadata import inspect, strip  # noqa: E402
+from strip_mcdx_metadata import (  # noqa: E402
+    _KEEP_HEADER_FOOTER,
+    inspect,
+    main,
+    strip,
+)
 
 # The parts the tool may rewrite. Anything else must survive untouched.
 REWRITABLE = {"docProps/core.xml", "mathcad/header.xml", "mathcad/footer.xml"}
@@ -122,6 +127,50 @@ def test_footer_regions_are_emptied(sheet):
     assert b"Project 12345" not in footer
     assert b"<regions />" in footer
     assert footer.startswith(b"<footer") and footer.endswith(b"</footer>")
+
+
+def test_the_header_footer_exemption_keeps_only_that_part(tmp_path):
+    """A fixture for the header/footer feature has to keep its footer, or the
+    strip would delete the very thing its test reads. docProps still goes."""
+    path = tmp_path / "header_footer.mcdx"
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("mathcad/worksheet.xml", WORKSHEET_XML)
+        zf.writestr("docProps/core.xml", CORE_XML)
+        zf.writestr("mathcad/footer.xml", FOOTER_XML)
+    assert path.name in _KEEP_HEADER_FOOTER, "the exemption is by file name"
+
+    assert strip(path) is True
+    parts = _parts(path)
+    assert parts["mathcad/footer.xml"] == FOOTER_XML
+    assert b"DOMAIN" not in parts["docProps/core.xml"]
+
+
+def test_the_exemption_silences_check_for_the_footer_only(tmp_path):
+    """--check must pass on an exempt file, or CI fails on a file that is
+    exempt on purpose -- but it must still report an author."""
+    path = tmp_path / "header_footer.mcdx"
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("mathcad/worksheet.xml", WORKSHEET_XML)
+        zf.writestr("docProps/core.xml", CORE_XML)
+        zf.writestr("mathcad/footer.xml", FOOTER_XML)
+
+    assert [f for f in inspect(path) if "footer" in f] == []
+    assert any("creator" in f for f in inspect(path))
+    assert main(["--check", str(path)]) == 1     # the author is still found
+
+    strip(path)
+    assert inspect(path) == []
+    assert main(["--check", str(path)]) == 0
+
+
+def test_the_flag_exempts_a_sheet_that_is_not_on_the_list(sheet):
+    assert sheet.name not in _KEEP_HEADER_FOOTER
+    assert strip(sheet, keep_header_footer=True) is True
+    parts = _parts(sheet)
+    assert parts["mathcad/footer.xml"] == FOOTER_XML
+    assert b"DOMAIN" not in parts["docProps/core.xml"]
+    assert inspect(sheet, keep_header_footer=True) == []
+    assert any("footer" in f for f in inspect(sheet))
 
 
 def test_inspect_reports_then_reports_clean(sheet):

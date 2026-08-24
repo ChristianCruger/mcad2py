@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 from . import ir
 from .emit.notebook_backend import to_ipynb_string
 from .emit.py_backend import to_python
 from .loader import McdxPackage, load_mcdx
-from .parser.regions import parse_worksheet
+from .parser.regions import ImageResolver, TextResolver, parse_worksheet
 from .text import extract_text
 
 
@@ -28,23 +29,42 @@ def convert_worksheet(pkg: McdxPackage) -> ir.Worksheet:
     ws = parse_worksheet(
         pkg.worksheet_xml,
         text_resolver=text_resolver(pkg.rels),
-        image_resolver=pkg.image,
+        image_resolver=image_resolver(pkg.rels),
         integration_xml=pkg.integration_xml,
         result_xml=pkg.result_xml,
     )
-    if pkg.header_xml:
-        ws.header = parse_worksheet(
-            pkg.header_xml,
-            text_resolver=text_resolver(pkg.header_rels),
-            image_resolver=image_resolver(pkg.header_rels),
-        ).regions
-    if pkg.footer_xml:
-        ws.footer = parse_worksheet(
-            pkg.footer_xml,
-            text_resolver=text_resolver(pkg.footer_rels),
-            image_resolver=image_resolver(pkg.footer_rels),
-        ).regions
+    context = dict(text_resolver=text_resolver, image_resolver=image_resolver)
+    ws.header = _context_regions(pkg.header_xml, pkg.header_rels, "header", **context)
+    ws.footer = _context_regions(pkg.footer_xml, pkg.footer_rels, "footer", **context)
     return ws
+
+
+def _context_regions(
+    xml: str | None,
+    rels: dict[str, str],
+    kind: str,
+    *,
+    text_resolver: Callable[[dict[str, str]], TextResolver],
+    image_resolver: Callable[[dict[str, str]], ImageResolver],
+) -> list[ir.Region]:
+    """Parse a printed header/footer, never letting it break the conversion.
+
+    The document context is decoration: before it was parsed at all, nothing a
+    header contained could stop a sheet converting, and that has to stay true.
+    A construct the parser can't reach here becomes one visible note, the same
+    way an unsupported *region* does -- the point of the TODO convention is
+    that the output still loads.
+    """
+    if not xml:
+        return []
+    try:
+        return parse_worksheet(
+            xml,
+            text_resolver=text_resolver(rels),
+            image_resolver=image_resolver(rels),
+        ).regions
+    except Exception as exc:  # noqa: BLE001 -- any parse failure, see docstring
+        return [ir.UnsupportedRegion(note=f"{kind} could not be parsed: {exc}")]
 
 
 def convert_file(

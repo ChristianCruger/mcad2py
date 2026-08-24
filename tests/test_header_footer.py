@@ -6,9 +6,10 @@ import nbformat
 
 from mcad2py import ir
 from mcad2py.cli import main
-from mcad2py.convert import convert_file, convert_worksheet
+from mcad2py.convert import _context_regions, convert_file, convert_worksheet
 from mcad2py.emit.codegen import context_comment_lines
 from mcad2py.loader import McdxPackage, load_mcdx
+from mcad2py.emit.py_backend import to_python
 from mcad2py.parser.regions import parse_worksheet
 
 REFERENCE = Path(__file__).parent.parent / "references" / "header_footer.mcdx"
@@ -134,3 +135,49 @@ def test_cli_can_exclude_header_and_footer(capsys):
     assert code == 0
     assert "Mathcad header" not in output
     assert "Author: John Smith" not in output
+
+
+def test_a_header_that_cannot_be_parsed_does_not_stop_the_conversion(monkeypatch):
+    """Document context is decoration. Before it was parsed at all, no header
+    could stop a sheet converting -- that has to stay true."""
+    import mcad2py.convert as convert
+
+    def explode(*args, **kwargs):
+        raise ValueError("boom")
+
+    monkeypatch.setattr(convert, "parse_worksheet", explode)
+    regions = _context_regions(
+        "<header />",
+        {},
+        "header",
+        text_resolver=lambda rels: (lambda idref: ""),
+        image_resolver=lambda rels: (lambda idref: None),
+    )
+
+    assert [type(region) for region in regions] == [ir.UnsupportedRegion]
+    assert regions[0].note == "header could not be parsed: boom"
+
+
+def test_a_broken_header_still_yields_a_module_that_loads(monkeypatch):
+    real = convert_worksheet(load_mcdx(REFERENCE))
+    broken = ir.Worksheet(
+        regions=real.regions,
+        header=[ir.UnsupportedRegion(note="header could not be parsed: boom")],
+    )
+    source = to_python(broken)
+
+    assert "header could not be parsed: boom" in source
+    compile(source, "<generated>", "exec")
+
+
+def test_a_missing_header_part_gives_no_context():
+    assert (
+        _context_regions(
+            None,
+            {},
+            "header",
+            text_resolver=lambda rels: (lambda idref: ""),
+            image_resolver=lambda rels: (lambda idref: None),
+        )
+        == []
+    )

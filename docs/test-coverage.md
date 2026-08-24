@@ -422,6 +422,15 @@ The tests require both backends to emit the useful content as non-executable com
 Header math carries a `[display math]` label and does not define worksheet values.
 The page field is omitted, and `--no-header-footer` removes all context from both formats.
 
+A header is decoration, so two tests pin that it can never cost you the worksheet: a parse that
+raises becomes one `ir.UnsupportedRegion` note, and a module carrying that note still compiles.
+
+This is the one fixture [tools/strip_mcdx_metadata.py](../tools/strip_mcdx_metadata.py) must not
+strip: the tool empties `header.xml`/`footer.xml` by default, which would delete everything these
+tests read. It is named in that tool's `_KEEP_HEADER_FOOTER`, so both the strip and the `--check`
+CI guard skip those two parts for it — and only those two. Its `docProps` fields are blanked like
+any other sheet's, so the header text here (`John Smith`, `Mcad test`) is invented on purpose.
+
 
 [tests/test_generated_imports.py](../tests/test_generated_imports.py) is not tied to one fixture: it
 runs over **every** `references/*.mcdx` and asserts that a generated module's imports and its body
