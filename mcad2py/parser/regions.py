@@ -197,6 +197,8 @@ def _parse_region(
             return _parse_math(child)
         if tag == "text":
             return _parse_text(child, text_resolver)
+        if tag == "fieldText":
+            return _parse_field_text(child)
         if tag == "picture":
             return _parse_picture(child, image_resolver)
         if tag == "solveblock":
@@ -211,6 +213,55 @@ def _parse_region(
                 _parse_math(m) for m in child if localname(m.tag) == "math" and len(m)
             ]
     return None
+
+
+def _parse_field_text(elem: ET.Element) -> ir.TextRegion | None:
+    """Keep cached field text, except the paragraphs a page number renders.
+
+    A ``<fieldText>`` holds the text Prime last drew *and* the field that made
+    it -- ``<pageNumber template="Page_@PageNo_of_@PagesTotal" />`` beside a
+    paragraph reading "Page 1 of 2". The number means nothing in Python, but
+    the same region can carry a project name, so only the paragraphs the
+    template accounts for are dropped rather than the whole region.
+
+    A page field with *no* template is the one case that can't be taken apart:
+    which half of the text is dynamic is then unknowable, so the region goes.
+    """
+    page_fields = [
+        child for child in elem.iter() if localname(child.tag) == "pageNumber"
+    ]
+    patterns = [_field_pattern(field.get("template", "")) for field in page_fields]
+    if page_fields and not all(patterns):
+        return None
+
+    kept = []
+    for paragraph in elem.iter():
+        if localname(paragraph.tag) != "Paragraph":
+            continue
+        text = "".join(paragraph.itertext()).strip()
+        if text and not any(p.fullmatch(text) for p in patterns if p):
+            kept.append(text)
+    return ir.TextRegion(text="\n".join(kept)) if kept else None
+
+
+def _field_pattern(template: str) -> "re.Pattern[str] | None":
+    """A regex matching the text ``template`` renders, or None if unusable.
+
+    Prime writes a field as a template with ``@Name`` placeholders and ``_``
+    where a space goes: ``Page_@PageNo_of_@PagesTotal``. Matching the template
+    rather than the English words keeps this working for a sheet written in any
+    language, and keeps a paragraph that merely *mentions* a number.
+    """
+    if not template.strip():
+        return None
+    # A placeholder name is letters only: `\w` would swallow the `_of_` that
+    # separates `@PageNo` from `@PagesTotal` and match the whole tail as one.
+    parts = [
+        r"\S+" if part.startswith("@") else re.escape(part).replace("_", r"\s+")
+        for part in re.split(r"(@[A-Za-z]+)", template)
+        if part
+    ]
+    return re.compile("".join(parts))
 
 
 def _hoist_global_defines(ws: ir.Worksheet) -> None:

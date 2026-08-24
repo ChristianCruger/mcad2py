@@ -3,6 +3,8 @@
 A ``.mcdx`` is a zip archive. The interesting parts:
 
     mathcad/worksheet.xml   -> regions (the math + text layout)
+    mathcad/header.xml      -> header regions (document context)
+    mathcad/footer.xml      -> footer regions (document context)
     mathcad/result.xml      -> cached numeric results (used for verification)
     mathcad/xaml/*.XamlPackage -> text-region content (nested zips)
     mathcad/media/*         -> embedded images (picture regions)
@@ -31,21 +33,29 @@ class McdxPackage:
     media: dict[str, bytes] = field(default_factory=dict)
     # Relationship id (region's ``item-idref``) -> target basename.
     rels: dict[str, str] = field(default_factory=dict)
+    header_xml: str | None = None
+    footer_xml: str | None = None
+    header_rels: dict[str, str] = field(default_factory=dict)
+    footer_rels: dict[str, str] = field(default_factory=dict)
 
     @property
     def has_results(self) -> bool:
         return bool(self.result_xml)
 
-    def text_package(self, idref: str) -> bytes | None:
+    def text_package(
+        self, idref: str, rels: dict[str, str] | None = None
+    ) -> bytes | None:
         """The XamlPackage bytes for a text region's ``item-idref``."""
-        basename = self.rels.get(idref)
+        basename = (self.rels if rels is None else rels).get(idref)
         if basename is None:
             return None
         return self.xaml_packages.get(basename)
 
-    def image(self, idref: str) -> tuple[str, bytes] | None:
+    def image(
+        self, idref: str, rels: dict[str, str] | None = None
+    ) -> tuple[str, bytes] | None:
         """The (basename, bytes) for a picture region's ``item-idref``."""
-        basename = self.rels.get(idref)
+        basename = (self.rels if rels is None else rels).get(idref)
         if basename is None:
             return None
         data = self.media.get(basename)
@@ -84,6 +94,12 @@ def load_mcdx(path: str | Path) -> McdxPackage:
             )
         worksheet_xml = zf.read(worksheet_name).decode("utf-8")
 
+        header_name = _find(names, "mathcad/header.xml")
+        header_xml = zf.read(header_name).decode("utf-8") if header_name else None
+
+        footer_name = _find(names, "mathcad/footer.xml")
+        footer_xml = zf.read(footer_name).decode("utf-8") if footer_name else None
+
         result_name = _find(names, "mathcad/result.xml")
         result_xml = zf.read(result_name).decode("utf-8") if result_name else None
 
@@ -106,14 +122,30 @@ def load_mcdx(path: str | Path) -> McdxPackage:
 
         rels_name = _find(names, "mathcad/_rels/worksheet.xml.rels")
         rels = _parse_rels(zf.read(rels_name).decode("utf-8")) if rels_name else {}
+        header_rels_name = _find(names, "mathcad/_rels/header.xml.rels")
+        header_rels = (
+            _parse_rels(zf.read(header_rels_name).decode("utf-8"))
+            if header_rels_name
+            else {}
+        )
+        footer_rels_name = _find(names, "mathcad/_rels/footer.xml.rels")
+        footer_rels = (
+            _parse_rels(zf.read(footer_rels_name).decode("utf-8"))
+            if footer_rels_name
+            else {}
+        )
 
     return McdxPackage(
         worksheet_xml=worksheet_xml,
+        header_xml=header_xml,
+        footer_xml=footer_xml,
         result_xml=result_xml,
         integration_xml=integration_xml,
         xaml_packages=xaml_packages,
         media=media,
         rels=rels,
+        header_rels=header_rels,
+        footer_rels=footer_rels,
     )
 
 

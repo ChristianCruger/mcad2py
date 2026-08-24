@@ -54,6 +54,13 @@ def _unresolved(source: str) -> set[str]:
     every binding in the module, which is sound here -- generated code never
     shadows a name in an inner scope while relying on an outer one of the same
     name being absent.
+
+    One kind of read is excused: a region **Mathcad itself** couldn't compute is
+    emitted inside a `try`, and its name may be undefined for exactly the reason
+    Mathcad reported (`header_footer.mcdx` reads an `X` that only its *header*
+    defines). Those blocks carry the `# Mathcad reports an error here:` comment
+    that `guard_cached_error` writes, and only those are skipped -- a plain
+    `try` would otherwise become a place a genuinely missing import could hide.
     """
     tree = ast.parse(source)
     bound = set(dir(builtins))
@@ -70,11 +77,33 @@ def _unresolved(source: str) -> set[str]:
             bound.update(a.asname or a.name.split(".")[0] for a in node.names)
         elif isinstance(node, ast.ImportFrom):
             bound.update(a.asname or a.name for a in node.names)
-    return {
-        n.id
-        for n in ast.walk(tree)
-        if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) and n.id not in bound
+    # The line above each `try` that guards a cached error, by line number: the
+    # comment is not in the AST, so it is matched back through the source.
+    lines = source.splitlines()
+    error_guards = {
+        index + 2
+        for index, line in enumerate(lines)
+        if line.startswith("# Mathcad reports an error here:")
     }
+    unguarded_loads: set[str] = set()
+
+    def collect(node: ast.AST, guarded: bool = False) -> None:
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+            if not guarded:
+                unguarded_loads.add(node.id)
+            return
+        if isinstance(node, ast.Try):
+            excused = node.lineno in error_guards
+            for statement in node.body:
+                collect(statement, guarded or excused)
+            for statement in [*node.handlers, *node.orelse, *node.finalbody]:
+                collect(statement, guarded)
+            return
+        for child in ast.iter_child_nodes(node):
+            collect(child, guarded)
+
+    collect(tree)
+    return unguarded_loads - bound
 
 
 @pytest.fixture(scope="module", params=REFERENCES, ids=IDS)
@@ -134,3 +163,20 @@ def test_identifiers_falls_back_when_source_is_unparseable():
     """Unparseable output is a bug elsewhere, but the converter still has to
     produce a file -- an over-broad import list beats a crashed conversion."""
     assert "sort" in _identifiers("y = sort(v")  # unbalanced: tokenize gives up
+
+
+def test_only_a_cached_error_guard_excuses_an_unbound_name():
+    """A region Mathcad itself failed on may read a name that is undefined for
+    exactly the reason Mathcad reported. Every *other* `try` still has to be
+    checked, or a genuinely missing import could hide inside one."""
+    guarded = (
+        "# Mathcad reports an error here: This variable is undefined.\n"
+        "try:\n"
+        "    print(X + 1)\n"
+        "except Exception as _err:\n"
+        "    print('error:', _err)\n"
+    )
+    plain = guarded.split("\n", 1)[1]
+
+    assert _unresolved(guarded) == set()
+    assert _unresolved(plain) == {"X"}

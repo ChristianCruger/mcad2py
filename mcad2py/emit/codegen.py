@@ -1018,6 +1018,51 @@ def _solve_block_body(region: ir.SolveBlock, unknowns: list[str]) -> list[str]:
     return lines
 
 
+# Header regions whose comment carries the `[display math]` label: Mathcad
+# renders these but never evaluates them into the sheet, and a reader has to be
+# told so. A note or a plot is neither math nor prose, so it gets no label --
+# `[display math] TODO unsupported: ...` would claim the note was an equation.
+_DISPLAY_MATH = (
+    ir.Define,
+    ir.MultiAssign,
+    ir.Evaluate,
+    ir.Statement,
+    ir.SymbolicEquation,
+)
+
+
+def context_comment_lines(title: str, regions: list[ir.Region]) -> list[str]:
+    """Render a Mathcad header or footer as non-executable Python comments."""
+    lines = [f"# Mathcad {title}"]
+    for region in regions:
+        prefix = "[display math] " if isinstance(region, _DISPLAY_MATH) else ""
+        for rendered in _context_region_lines(region):
+            for line in rendered.splitlines() or [""]:
+                text = f"{prefix}{line}".rstrip()
+                lines.append(f"# {text}" if text else "#")
+    return lines
+
+
+def _context_region_lines(region: ir.Region) -> list[str]:
+    if isinstance(region, ir.TextRegion):
+        return region.text.splitlines()
+    if isinstance(region, ir.ImageRegion):
+        return [f"[image: {region.name or 'embedded image'}]"]
+    if isinstance(region, ir.Define):
+        return [assignment_line(region)]
+    if isinstance(region, ir.MultiAssign):
+        return multi_assign_lines(region)
+    if isinstance(region, ir.Evaluate):
+        return [expr_to_str(region.value)]
+    if isinstance(region, ir.Statement):
+        return [expr_to_str(region.value)]
+    if isinstance(region, ir.SymbolicEquation):
+        return [expr_to_str(region.equation)]
+    if isinstance(region, ir.UnsupportedRegion):
+        return [f"TODO unsupported: {region.note}"]
+    return [f"{type(region).__name__} region"]
+
+
 # ---------------------------------------------------------------------------
 # Imports needed by a worksheet
 #

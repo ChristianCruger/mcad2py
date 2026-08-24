@@ -34,13 +34,21 @@ mcad2py convert worksheet.mcdx -o out.ipynb
 # Plain Python script
 mcad2py convert worksheet.mcdx -f py           # -> worksheet.py
 mcad2py convert worksheet.mcdx -o - -f py      # to stdout
+
+# Exclude header and footer context
+mcad2py convert worksheet.mcdx --no-header-footer
 ```
+
+The output includes worksheet header and footer content as non-executable comments.
+This content can include project names, authors, dates, and display-only math.
+Dynamic page number fields are omitted.
 
 Or from Python:
 
 ```python
 from mcad2py import convert_file
 print(convert_file("worksheet.mcdx", fmt="py"))
+# Use include_header_footer=False to exclude this context.
 ```
 
 ### Example

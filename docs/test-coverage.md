@@ -412,6 +412,34 @@ parenthesis used to land inside the comment and stop the whole module parsing �
 a visible TODO instead of dropping the region exists to prevent (`print_lines`).
 
 
+## `tests/test_header_footer.py` — `references/header_footer.mcdx`
+
+Pins the separate `header.xml` and `footer.xml` package parts and their relationship maps.
+The fixture has three header text regions, four header math regions, and one footer text region.
+It also has a dynamic page number field.
+
+The tests require both backends to emit the useful content as non-executable comments.
+Header math carries a `[display math]` label and does not define worksheet values.
+The page field is omitted, and `--no-header-footer` removes all context from both formats.
+
+The label belongs to math alone — a separate test pins that a note and a plot go unlabelled, since
+`[display math] TODO unsupported: …` would claim the note was an equation.
+
+The page field is dropped a paragraph at a time, not a region at a time: two synthetic footers pin
+that a project name beside the page number survives, and that a `<pageNumber>` with no `template`
+still takes its region with it. `_field_pattern` is tested on a German template, because the match
+is built from the template rather than from the English words.
+
+A header is decoration, so two tests pin that it can never cost you the worksheet: a parse that
+raises becomes one `ir.UnsupportedRegion` note, and a module carrying that note still compiles.
+
+This is the one fixture [tools/strip_mcdx_metadata.py](../tools/strip_mcdx_metadata.py) must not
+strip: the tool empties `header.xml`/`footer.xml` by default, which would delete everything these
+tests read. It is named in that tool's `_KEEP_HEADER_FOOTER`, so both the strip and the `--check`
+CI guard skip those two parts for it — and only those two. Its `docProps` fields are blanked like
+any other sheet's, so the header text here (`John Smith`, `Mcad test`) is invented on purpose.
+
+
 [tests/test_generated_imports.py](../tests/test_generated_imports.py) is not tied to one fixture: it
 runs over **every** `references/*.mcdx` and asserts that a generated module's imports and its body
 agree, in both directions. That invariant is new. `header_lines` used to *predict* which runtime
@@ -427,6 +455,13 @@ seven dead imports the old predictor had been emitting: `import numpy as np` in 
 `min`/`max` are reductions (they emit `mc_min`/`mc_max`, so no bare `np.` is ever written), and
 `sample` in three whose only plots are parametric (both axes data vectors, so no `sample(lambda …)`).
 Nothing was found *missing*, which is the reassuring half of the result.
+
+One read is excused: a region **Mathcad itself** couldn't compute may name something that is
+undefined for exactly the reason Mathcad reported — `header_footer.mcdx` reads an `X` that only its
+*header* defines, and Mathcad errors on it too. The excuse is keyed to the
+`# Mathcad reports an error here:` comment `guard_cached_error` writes above the `try`, not to
+`try`/`except Exception` in general: any other guarded block is still checked, or a genuinely missing
+import could hide inside one. A unit test pins both halves of that.
 
 [tests/test_reference_artifacts.py](../tests/test_reference_artifacts.py) is the other fixture-wide
 guard: every committed `references/*.py` and `*.ipynb` must equal a fresh conversion of its worksheet.

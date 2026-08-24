@@ -18,9 +18,15 @@ untouched. It is metadata surgery, not a re-save.
     python tools/strip_mcdx_metadata.py references/*.mcdx
     python tools/strip_mcdx_metadata.py --check references/*.mcdx   # report only
     python tools/strip_mcdx_metadata.py --author "A. Engineer" sheet.mcdx
+    python tools/strip_mcdx_metadata.py --keep-header-footer sheet.mcdx
 
 ``--check`` exits non-zero if anything identifying is left, which makes it
 usable as a pre-commit or CI guard.
+
+``--keep-header-footer`` leaves the printed header and footer alone -- for a
+worksheet whose header *is* the thing under test (see ``_KEEP_HEADER_FOOTER``).
+The docProps fields are still blanked, so it is an exemption for one part, not
+for the file.
 
 Note this does *not* touch the sheet's visible content: text regions, variable
 names and comments are yours to review. It also cannot rewrite what is already
@@ -59,6 +65,14 @@ _CORE_FIELDS = (
 # is far safer than blanking text nodes inside the nested XAML.
 _REGIONS = re.compile(rb"<regions\b(?:(?!/>)[^>])*>.*?</regions>|<regions\s*/>", re.S)
 
+# Worksheets whose header/footer is deliberately kept, by file name. A fixture
+# for the header/footer feature has to *have* one, so the default strip would
+# delete the very thing its test reads -- and --check would then fail CI on a
+# file that is exempt on purpose. Content in these must be invented, never a
+# real project or company; only the header/footer parts are exempt, and
+# docProps is blanked as for any other sheet. Keep the list tiny.
+_KEEP_HEADER_FOOTER = frozenset({"header_footer.mcdx"})
+
 # Parts scanned by --check.
 _SENSITIVE = {"docProps/core.xml": _CORE_FIELDS}
 
@@ -67,7 +81,12 @@ def _localname(tag: str) -> str:
     return tag.rsplit("}", 1)[-1]
 
 
-def inspect(path: Path) -> list[str]:
+def keeps_header_footer(path: Path, keep: bool = False) -> bool:
+    """True if ``path``'s printed header/footer is exempt from stripping."""
+    return keep or path.name in _KEEP_HEADER_FOOTER
+
+
+def inspect(path: Path, keep_header_footer: bool = False) -> list[str]:
     """Identifying values still present in ``path``, as ``part: field=value``."""
     import xml.etree.ElementTree as ET
 
@@ -82,6 +101,8 @@ def inspect(path: Path) -> list[str]:
                 value = (elem.text or "").strip()
                 if value and _localname(elem.tag) in fields:
                     findings.append(f"{part}: {_localname(elem.tag)}={value!r}")
+        if keeps_header_footer(path, keep_header_footer):
+            return findings
         for part in ("mathcad/header.xml", "mathcad/footer.xml"):
             if part not in names:
                 continue
@@ -111,7 +132,7 @@ def _blank_core_fields(data: bytes, author: str = "") -> bytes:
     return data
 
 
-def strip(path: Path, author: str = "") -> bool:
+def strip(path: Path, author: str = "", keep_header_footer: bool = False) -> bool:
     """Rewrite ``path``'s metadata parts in place. True if anything changed.
 
     The archive is rebuilt into a temporary file and moved over the original
@@ -121,13 +142,14 @@ def strip(path: Path, author: str = "") -> bool:
     with zipfile.ZipFile(path) as zf:
         entries = [(item, zf.read(item.filename)) for item in zf.infolist()]
 
+    keep = keeps_header_footer(path, keep_header_footer)
     changed = False
     rewritten: list[tuple[zipfile.ZipInfo, bytes]] = []
     for item, data in entries:
         name = item.filename
         if name == "docProps/core.xml":
             new = _blank_core_fields(data, author)
-        elif name in ("mathcad/header.xml", "mathcad/footer.xml"):
+        elif name in ("mathcad/header.xml", "mathcad/footer.xml") and not keep:
             new = _REGIONS.sub(b"<regions />", data, count=1)
         else:
             new = data  # includes docProps/app.xml -- see the note above
@@ -184,6 +206,12 @@ def main(argv: list[str] | None = None) -> int:
         "exit 1 if any is found",
     )
     parser.add_argument(
+        "--keep-header-footer",
+        action="store_true",
+        help="leave the printed header and footer in place (docProps is still "
+        "blanked); implied for the worksheets named in _KEEP_HEADER_FOOTER",
+    )
+    parser.add_argument(
         "--author",
         default="",
         help="value for creator/lastModifiedBy (default: empty)",
@@ -196,7 +224,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"error: no such file: {path}", file=sys.stderr)
             return 2
         if args.check:
-            findings = inspect(path)
+            findings = inspect(path, args.keep_header_footer)
             found_any = found_any or bool(findings)
             if findings:
                 print(f"{path.name}:")
@@ -205,9 +233,13 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 print(f"{path.name}: clean")
         else:
-            before = inspect(path)
-            strip(path, author=args.author)
-            after = inspect(path)
+            before = inspect(path, args.keep_header_footer)
+            strip(
+                path,
+                author=args.author,
+                keep_header_footer=args.keep_header_footer,
+            )
+            after = inspect(path, args.keep_header_footer)
             status = "clean" if not after else f"still has {len(after)} field(s)"
             print(f"{path.name}: stripped {len(before)} field(s) -> {status}")
             found_any = found_any or bool(after)

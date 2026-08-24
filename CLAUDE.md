@@ -100,6 +100,16 @@ adding support for a new XML construct.
   is that someone can act on it. An echo is built through `print_lines`, which lifts such a note
   onto its own line: `print(None  # TODO …)` would close its parenthesis *inside* the comment and stop
   the module parsing, which is the one outcome the convention exists to prevent.
+- Header and footer regions are document context, not worksheet scope. `convert_worksheet` parses
+  `header.xml` and `footer.xml` with their own relationship maps into `Worksheet.header` / `.footer`;
+  both backends emit their text and math as comments by default (`--no-header-footer` excludes them).
+  Header math — and *only* math — is labelled `[display math]` and never executes; a note or a plot
+  gets no label, since `[display math] TODO unsupported: …` would claim the note was an equation.
+  A dynamic page field is omitted paragraph by paragraph, through the regex `_field_pattern` builds
+  from the `<pageNumber template=…>`: the same region can carry a project name beside the number.
+  Both parses go through `_context_regions`, which catches **any** exception and leaves one
+  `# TODO unsupported` note in its place: the context is decoration, and before it was parsed at all
+  nothing a header held could stop a sheet converting.
 - Mathcad's `≡` (`<ml:globalDefine>`) binds over the **whole** sheet, so `_hoist_global_defines` moves
   those regions to the top before every other pass. It's the one construct that breaks reading order.
 - A region **Mathcad itself** couldn't compute (`result.xml` holds an `<engineError>` — `mode(v)` with
@@ -147,7 +157,12 @@ adding support for a new XML construct.
   (`docProps/core.xml`'s `creator`/`lastModifiedBy`, `docProps/app.xml`'s `Company`, and the printed
   header/footer). It rewrites only those parts — `worksheet.xml` and `result.xml` stay
   **byte-identical**, so no cached value or test expectation moves. `--check` is the same scan as a
-  report and is wired into CI so a later worksheet can't quietly reintroduce a name.
+  report and is wired into CI so a later worksheet can't quietly reintroduce a name. A fixture whose
+  header/footer *is* the thing under test would be gutted by that strip, so the tool takes
+  `--keep-header-footer`, and names such worksheets in `_KEEP_HEADER_FOOTER` (currently just
+  `header_footer.mcdx`) so the CI glob passes without an exemption flag. The exemption covers those two
+  parts only — `docProps` is blanked as for any other sheet — so anything in an exempt header must be
+  invented, never a real project or company.
 - The **write path** is two tools, deliberately separate from the converter (which is read-only) and
   from each other. [tools/set_mcdx_value.py](tools/set_mcdx_value.py) sets one literal input by the
   `region-id` that `--trace-source` prints — pure zip surgery, no Mathcad needed, and it **refuses**
