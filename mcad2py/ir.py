@@ -788,6 +788,8 @@ class UnsupportedRegion(Region):
 @dataclass
 class Worksheet:
     regions: list[Region] = field(default_factory=list)
+    header: list[Region] = field(default_factory=list)
+    footer: list[Region] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------

@@ -45,6 +45,12 @@ def main(argv: list[str] | None = None) -> int:
         help="annotate each statement with its Mathcad worksheet region id "
         "(and original name, if renamed).",
     )
+    conv.add_argument(
+        "--no-header-footer",
+        dest="include_header_footer",
+        action="store_false",
+        help="exclude Mathcad header and footer context from the output.",
+    )
 
     args = parser.parse_args(argv)
     if args.command == "convert":
@@ -56,7 +62,12 @@ def main(argv: list[str] | None = None) -> int:
 def _run_convert(args: argparse.Namespace) -> int:
     fmt = args.format or _infer_format(args.output)
     try:
-        result = convert_file(args.input, fmt=fmt, trace_source=args.trace_source)
+        result = convert_file(
+            args.input,
+            fmt=fmt,
+            trace_source=args.trace_source,
+            include_header_footer=args.include_header_footer,
+        )
     except (OSError, ValueError) as exc:
         # The loader raises these with user-facing messages (missing file, not a
         # zip, no worksheet.xml), so print the message rather than a traceback.

@@ -100,6 +100,10 @@ adding support for a new XML construct.
   is that someone can act on it. An echo is built through `print_lines`, which lifts such a note
   onto its own line: `print(None  # TODO …)` would close its parenthesis *inside* the comment and stop
   the module parsing, which is the one outcome the convention exists to prevent.
+- Header and footer regions are document context, not worksheet scope. `convert_worksheet` parses
+  `header.xml` and `footer.xml` with their own relationship maps into `Worksheet.header` / `.footer`;
+  both backends emit their text and math as comments by default (`--no-header-footer` excludes them).
+  Header math is labelled `[display math]` and never executes. Dynamic page fields are omitted.
 - Mathcad's `≡` (`<ml:globalDefine>`) binds over the **whole** sheet, so `_hoist_global_defines` moves
   those regions to the top before every other pass. It's the one construct that breaks reading order.
 - A region **Mathcad itself** couldn't compute (`result.xml` holds an `<engineError>` — `mode(v)` with

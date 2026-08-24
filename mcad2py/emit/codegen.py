@@ -1018,6 +1018,38 @@ def _solve_block_body(region: ir.SolveBlock, unknowns: list[str]) -> list[str]:
     return lines
 
 
+def context_comment_lines(title: str, regions: list[ir.Region]) -> list[str]:
+    """Render a Mathcad header or footer as non-executable Python comments."""
+    lines = [f"# Mathcad {title}"]
+    for region in regions:
+        display_math = not isinstance(region, (ir.TextRegion, ir.ImageRegion))
+        for rendered in _context_region_lines(region):
+            for line in rendered.splitlines() or [""]:
+                prefix = "[display math] " if display_math else ""
+                lines.append(f"# {prefix}{line}" if prefix or line else "#")
+    return lines
+
+
+def _context_region_lines(region: ir.Region) -> list[str]:
+    if isinstance(region, ir.TextRegion):
+        return region.text.splitlines()
+    if isinstance(region, ir.ImageRegion):
+        return [f"[image: {region.name or 'embedded image'}]"]
+    if isinstance(region, ir.Define):
+        return [assignment_line(region)]
+    if isinstance(region, ir.MultiAssign):
+        return multi_assign_lines(region)
+    if isinstance(region, ir.Evaluate):
+        return [expr_to_str(region.value)]
+    if isinstance(region, ir.Statement):
+        return [expr_to_str(region.value)]
+    if isinstance(region, ir.SymbolicEquation):
+        return [expr_to_str(region.equation)]
+    if isinstance(region, ir.UnsupportedRegion):
+        return [f"TODO unsupported: {region.note}"]
+    return [f"{type(region).__name__} region"]
+
+
 # ---------------------------------------------------------------------------
 # Imports needed by a worksheet
 #

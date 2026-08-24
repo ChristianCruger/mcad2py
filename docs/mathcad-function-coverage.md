@@ -128,7 +128,7 @@ r12 worksheet before mapping anything.
 | **King Rule** for definite integrals (symbolic) | Engine | ⛔ symbolic-engine internals. Changes which closed forms Prime prints, not the worksheet XML | no action |
 | **Calculus-operator improvements** — more cases for `limit`, range-summation, indefinite integral | Engine | ⬜ the *operators* are what matters: we emit `summation` and `integral`, but an indefinite integral and a `limit` operator have no IR node yet | limit and indefinite integral unsupported |
 | **2D native plot** titles, axis titles, gridlines, legend | Application | 🟡 formatting attributes on an xy plot region. We render the traces; a legend and a title are a small `matplotlib` addition once the attributes are read | attributes not parsed |
-| Header / footer customization, hide solve-block labels | Usability | ⛔ document presentation | no action |
+| Header / footer customization, hide solve-block labels | Usability | 🟢 useful document context | header/footer text and display math emitted as comments; page fields omitted |
 | Find and replace identifiers with subscripts | Usability | ⛔ authoring only | no action |
 | Performance work; back end moved from .NET Framework to .NET | — | ⛔ runtime only | no action |
 

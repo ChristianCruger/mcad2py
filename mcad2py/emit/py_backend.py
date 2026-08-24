@@ -6,6 +6,7 @@ from .. import ir
 from .codegen import (
     assignment_line,
     combobox_assign_lines,
+    context_comment_lines,
     declaration_lines,
     echo_expr,
     expr_to_str,
@@ -24,7 +25,12 @@ from .codegen import (
 )
 
 
-def to_python(ws: ir.Worksheet, *, trace_source: bool = False) -> str:
+def to_python(
+    ws: ir.Worksheet,
+    *,
+    trace_source: bool = False,
+    include_header_footer: bool = True,
+) -> str:
     # The body is rendered first: the header's imports are read off the text it
     # will sit above, rather than predicted from the IR (see `header_lines`).
     body: list[str] = []
@@ -42,9 +48,14 @@ def to_python(ws: ir.Worksheet, *, trace_source: bool = False) -> str:
         body += out
 
     lines: list[str] = ['"""Auto-generated from a Mathcad worksheet by mcad2py."""']
+    if include_header_footer and ws.header:
+        lines += ["", *context_comment_lines("header", ws.header), ""]
     lines += header_lines(ws, "\n".join(body))
     lines.append("")
-    return "\n".join(lines + body) + "\n"
+    lines += body
+    if include_header_footer and ws.footer:
+        lines += ["", *context_comment_lines("footer", ws.footer)]
+    return "\n".join(lines) + "\n"
 
 
 def _guarded(lines: list[str], region: ir.Region) -> list[str]:

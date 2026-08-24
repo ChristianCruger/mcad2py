@@ -197,6 +197,8 @@ def _parse_region(
             return _parse_math(child)
         if tag == "text":
             return _parse_text(child, text_resolver)
+        if tag == "fieldText":
+            return _parse_field_text(child)
         if tag == "picture":
             return _parse_picture(child, image_resolver)
         if tag == "solveblock":
@@ -211,6 +213,19 @@ def _parse_region(
                 _parse_math(m) for m in child if localname(m.tag) == "math" and len(m)
             ]
     return None
+
+
+def _parse_field_text(elem: ET.Element) -> ir.TextRegion | None:
+    """Keep cached field text, except dynamic page numbers."""
+    if any(localname(child.tag) == "pageNumber" for child in elem.iter()):
+        return None
+    paragraphs = [
+        "".join(paragraph.itertext()).strip()
+        for paragraph in elem.iter()
+        if localname(paragraph.tag) == "Paragraph"
+    ]
+    text = "\n".join(paragraph for paragraph in paragraphs if paragraph)
+    return ir.TextRegion(text=text) if text else None
 
 
 def _hoist_global_defines(ws: ir.Worksheet) -> None:

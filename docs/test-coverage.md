@@ -412,6 +412,17 @@ parenthesis used to land inside the comment and stop the whole module parsing â€
 a visible TODO instead of dropping the region exists to prevent (`print_lines`).
 
 
+## `tests/test_header_footer.py` â€” `references/header_footer.mcdx`
+
+Pins the separate `header.xml` and `footer.xml` package parts and their relationship maps.
+The fixture has three header text regions, four header math regions, and one footer text region.
+It also has a dynamic page number field.
+
+The tests require both backends to emit the useful content as non-executable comments.
+Header math carries a `[display math]` label and does not define worksheet values.
+The page field is omitted, and `--no-header-footer` removes all context from both formats.
+
+
 [tests/test_generated_imports.py](../tests/test_generated_imports.py) is not tied to one fixture: it
 runs over **every** `references/*.mcdx` and asserts that a generated module's imports and its body
 agree, in both directions. That invariant is new. `header_lines` used to *predict* which runtime

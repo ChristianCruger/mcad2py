@@ -4,6 +4,22 @@ Detailed, confirmed notes on how PTC Mathcad Prime's `.mcdx` XML (`worksheet50`/
 this project's IR ([mcad2py/ir.py](../mcad2py/ir.py)). Referenced from [CLAUDE.md](../CLAUDE.md) —
 read this file when parsing a new schema construct or debugging a parser edge case.
 
+## Headers and footers (`header_footer.mcdx`)
+
+Prime stores headers and footers in `mathcad/header.xml` and `mathcad/footer.xml`.
+Each part has its own relationship file and relationship ID scope:
+`mathcad/_rels/header.xml.rels` and `mathcad/_rels/footer.xml.rels`.
+Text regions point to the usual `mathcad/xaml/*.XamlPackage` files.
+
+Both parts use the worksheet region structure and can contain `<text>` and `<math>` regions.
+Header math is presentation content. It does not define values used by the worksheet body.
+The converter parses it into separate `Worksheet.header` and `Worksheet.footer` lists.
+The backends emit it as `[display math]` comments, not executable code.
+
+A dynamic page field is `<fieldText>` with a `<pageNumber>` child.
+Its cached text, such as `Page 1 of 2`, describes Mathcad pages only.
+The region parser omits this field. It keeps other `<fieldText>` values as text context.
+
 - Namespaces: `ws=worksheet50`, `ml=math50`, `u=units10`, `p=provenance10`.
 - `<region top= left=>` → sort by position. `<math resultRef=N>` links to `result.xml`.
 - `<region><Area><regions>…` = a **collapsible area** (a container region, not math) — flattened away;

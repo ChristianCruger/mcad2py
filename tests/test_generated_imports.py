@@ -45,7 +45,7 @@ def _split(source: str) -> tuple[set[str], str]:
 
 
 def _unresolved(source: str) -> set[str]:
-    """Names the module reads but never binds or imports -- i.e. would `NameError`.
+    """Unguarded names the module reads but never binds or imports.
 
     Deliberately built with `ast` rather than the emitter's own tokenizer, so
     this is an *independent* check: the tests below that compare the import line
@@ -70,11 +70,29 @@ def _unresolved(source: str) -> set[str]:
             bound.update(a.asname or a.name.split(".")[0] for a in node.names)
         elif isinstance(node, ast.ImportFrom):
             bound.update(a.asname or a.name for a in node.names)
-    return {
-        n.id
-        for n in ast.walk(tree)
-        if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) and n.id not in bound
-    }
+    unguarded_loads: set[str] = set()
+
+    def collect(node: ast.AST, guarded: bool = False) -> None:
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+            if not guarded:
+                unguarded_loads.add(node.id)
+            return
+        if isinstance(node, ast.Try):
+            catches_exception = any(
+                isinstance(handler.type, ast.Name)
+                and handler.type.id == "Exception"
+                for handler in node.handlers
+            )
+            for statement in node.body:
+                collect(statement, guarded or catches_exception)
+            for statement in [*node.handlers, *node.orelse, *node.finalbody]:
+                collect(statement, guarded)
+            return
+        for child in ast.iter_child_nodes(node):
+            collect(child, guarded)
+
+    collect(tree)
+    return unguarded_loads - bound
 
 
 @pytest.fixture(scope="module", params=REFERENCES, ids=IDS)

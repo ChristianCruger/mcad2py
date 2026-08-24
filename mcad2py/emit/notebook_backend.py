@@ -15,6 +15,7 @@ from .. import ir
 from .codegen import (
     assignment_line,
     combobox_assign_lines,
+    context_comment_lines,
     declaration_lines,
     echo_expr,
     expr_to_str,
@@ -32,7 +33,12 @@ from .codegen import (
 )
 
 
-def to_notebook(ws: ir.Worksheet, *, trace_source: bool = False) -> nbformat.NotebookNode:
+def to_notebook(
+    ws: ir.Worksheet,
+    *,
+    trace_source: bool = False,
+    include_header_footer: bool = True,
+) -> nbformat.NotebookNode:
     nb = nbformat.v4.new_notebook()
 
     # The region cells come first: the header cell's imports are read off the
@@ -53,18 +59,41 @@ def to_notebook(ws: ir.Worksheet, *, trace_source: bool = False) -> nbformat.Not
         body.append(cell)
 
     source = "\n".join(c.source for c in body if c.cell_type == "code")
-    nb["cells"] = [
+    cells = [
         nbformat.v4.new_markdown_cell(
             "*Auto-generated from a Mathcad worksheet by mcad2py.*"
         ),
-        nbformat.v4.new_code_cell("\n".join(header_lines(ws, source))),
-        *body,
     ]
+    if include_header_footer and ws.header:
+        cells.append(
+            nbformat.v4.new_code_cell(
+                "\n".join(context_comment_lines("header", ws.header))
+            )
+        )
+    cells += [nbformat.v4.new_code_cell("\n".join(header_lines(ws, source))), *body]
+    if include_header_footer and ws.footer:
+        cells.append(
+            nbformat.v4.new_code_cell(
+                "\n".join(context_comment_lines("footer", ws.footer))
+            )
+        )
+    nb["cells"] = cells
     return nb
 
 
-def to_ipynb_string(ws: ir.Worksheet, *, trace_source: bool = False) -> str:
-    return nbformat.writes(to_notebook(ws, trace_source=trace_source))
+def to_ipynb_string(
+    ws: ir.Worksheet,
+    *,
+    trace_source: bool = False,
+    include_header_footer: bool = True,
+) -> str:
+    return nbformat.writes(
+        to_notebook(
+            ws,
+            trace_source=trace_source,
+            include_header_footer=include_header_footer,
+        )
+    )
 
 
 def _render_region(region: ir.Region) -> nbformat.NotebookNode | None:
