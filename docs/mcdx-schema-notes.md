@@ -18,7 +18,20 @@ The backends emit it as `[display math]` comments, not executable code.
 
 A dynamic page field is `<fieldText>` with a `<pageNumber>` child.
 Its cached text, such as `Page 1 of 2`, describes Mathcad pages only.
-The region parser omits this field. It keeps other `<fieldText>` values as text context.
+The `<pageNumber>` element sits beside `<text>`, not inside the paragraph it renders.
+It carries the recipe as an attribute: `template="Page_@PageNo_of_@PagesTotal"`.
+An `@Name` token is a placeholder, and `_` is a space.
+A placeholder name holds letters only, so `_of_` is a literal, not part of `@PageNo`.
+
+`_field_pattern` turns that template into a regex, and the parser drops only the
+paragraphs it matches. The same region can hold a project name beside the page
+number, and dropping the whole region would take the name with it. Matching the
+template, rather than the English words, also works for a sheet in any language.
+
+A `<pageNumber>` with no `template` is the one case the parser cannot take apart,
+because which half of the text is dynamic is then unknowable. It drops that region.
+Every other `<fieldText>` value is kept as text context — note that a date or a
+file-name field keeps the value Prime last **cached**, which can be stale.
 
 - Namespaces: `ws=worksheet50`, `ml=math50`, `u=units10`, `p=provenance10`.
 - `<region top= left=>` → sort by position. `<math resultRef=N>` links to `result.xml`.

@@ -1018,15 +1018,28 @@ def _solve_block_body(region: ir.SolveBlock, unknowns: list[str]) -> list[str]:
     return lines
 
 
+# Header regions whose comment carries the `[display math]` label: Mathcad
+# renders these but never evaluates them into the sheet, and a reader has to be
+# told so. A note or a plot is neither math nor prose, so it gets no label --
+# `[display math] TODO unsupported: ...` would claim the note was an equation.
+_DISPLAY_MATH = (
+    ir.Define,
+    ir.MultiAssign,
+    ir.Evaluate,
+    ir.Statement,
+    ir.SymbolicEquation,
+)
+
+
 def context_comment_lines(title: str, regions: list[ir.Region]) -> list[str]:
     """Render a Mathcad header or footer as non-executable Python comments."""
     lines = [f"# Mathcad {title}"]
     for region in regions:
-        display_math = not isinstance(region, (ir.TextRegion, ir.ImageRegion))
+        prefix = "[display math] " if isinstance(region, _DISPLAY_MATH) else ""
         for rendered in _context_region_lines(region):
             for line in rendered.splitlines() or [""]:
-                prefix = "[display math] " if display_math else ""
-                lines.append(f"# {prefix}{line}" if prefix or line else "#")
+                text = f"{prefix}{line}".rstrip()
+                lines.append(f"# {text}" if text else "#")
     return lines
 
 

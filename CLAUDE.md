@@ -103,7 +103,10 @@ adding support for a new XML construct.
 - Header and footer regions are document context, not worksheet scope. `convert_worksheet` parses
   `header.xml` and `footer.xml` with their own relationship maps into `Worksheet.header` / `.footer`;
   both backends emit their text and math as comments by default (`--no-header-footer` excludes them).
-  Header math is labelled `[display math]` and never executes. Dynamic page fields are omitted.
+  Header math — and *only* math — is labelled `[display math]` and never executes; a note or a plot
+  gets no label, since `[display math] TODO unsupported: …` would claim the note was an equation.
+  A dynamic page field is omitted paragraph by paragraph, through the regex `_field_pattern` builds
+  from the `<pageNumber template=…>`: the same region can carry a project name beside the number.
   Both parses go through `_context_regions`, which catches **any** exception and leaves one
   `# TODO unsupported` note in its place: the context is decoration, and before it was parsed at all
   nothing a header held could stop a sheet converting.
