@@ -862,3 +862,30 @@ element count and text count disagree, e.g. an empty `<ml:real/>`) has no fixtur
 worksheet here writes one. Prime's own re-layout of a widened region is likewise untested in
 CI: it was confirmed by hand that a math region's `actualWidth` is recomputed by Prime and is
 not something an editor must maintain.
+
+## tests/test_mcdx_backend.py
+
+Covers `mcad2py/emit/mcdx_backend.py`, the first thing in the package that *writes* worksheet
+math (IR -> `math50` XML). Nothing here needs Mathcad: every input is XML Prime itself wrote.
+
+| Test | What it pins |
+|------|------|
+| `test_every_supported_expression_survives_a_round_trip` (per sheet) | Parse -> emit -> parse gives the **identical IR** for every `<ml:apply>` in every fixture. The IR nodes are dataclasses, so `==` compares the whole tree |
+| `test_the_sweep_reaches_real_worksheet_math` | The floor (>1000 expressions) under the sweep above, which would also pass by skipping everything |
+| `test_re_emission_matches_primes_own_bytes` (per sheet) | Stronger than the round trip: the emitted XML equals Prime's, modulo the positional `label-is-contextual`, an omitted `labels="VARIABLE"`, and cosmetic `<ml:parens>`. The two constructs the IR does not carry (`<ml:percent/>`, `split=`/`inline=`) are skipped by name — see the schema note |
+| `test_most_expressions_re_emit_byte_for_byte` | Over 80% are identical byte for byte, parentheses included (954 of 1124 at the time of writing) |
+| `test_writes_a_quantity_the_way_prime_does` | The `<ml:apply><ml:scale/>` shape, spelled out |
+| `test_a_subscripted_name_becomes_a_xaml_span` | The synthesised form, for a name the sheet has never used |
+| `test_harvested_ids_keep_a_names_own_encoding` | Prime writes `m_s` two ways and the parser reads both the same, so a rewrite reuses the sheet's own `<ml:id>` bytes rather than restyling a name |
+| `test_harvest_gives_up_rather_than_guess` / `test_every_sheet_yields_an_id_map` | The positional pairing of text matches to ElementTree nodes holds on every fixture; a disagreement drops the whole map instead of pairing a name with another name's XML |
+| `test_parentheses_are_restored_where_prime_shows_them` (6 cases) | The parenthesising rule, including both associativity directions (`a - (b - c)`, `(a**b)**c`) |
+| `test_refuses_a_literal_prime_would_not_write` (5 cases) | `2j`, `1e-05`, `0x10`, `""`, `1.2.3` — a complex literal has its own `<ml:imag>`, and a rendered float is not a form Prime writes |
+| `test_refuses_a_node_outside_the_subset` / `test_refuses_a_name_mathcad_cannot_display` | The subset is a whitelist. Emitting a half-understood construct into a proprietary format is worse than refusing |
+| `test_emitted_xml_splices_into_a_worksheet_and_converts` | The end-to-end proof, against Prime's own root element: re-emitting region 0 of `plain_concrete_cohesion.mcdx` reproduces the worksheet **byte for byte**, and the generated Python is unchanged. This is what pins the module's one standing assumption — that the `ml:` prefix it writes is the prefix `worksheet.xml` binds |
+| `test_a_changed_expression_reaches_the_generated_python` | The same splice with an operand added: `f_cd = 0.85 * (30 * ureg.MPa / 1.5)`. The write path in miniature, minus the zip surgery and the guards a tool will add |
+
+**What these do not reach.** No Mathcad Prime, so nothing here proves Prime *opens* a rewritten
+sheet — only that our own parser reads it back identically. The byte-for-byte result on region 0
+is the strongest available evidence short of Prime itself. The subset is stage A (numbers, units,
+`+ - * / **`, negation, names); calls, matrices, indices, ranges and programs all raise
+`Unsupported` and are skipped by the sweeps.

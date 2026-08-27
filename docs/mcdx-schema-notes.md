@@ -1340,3 +1340,35 @@ Two cache readings worth keeping:
 * **`interp` extrapolates along the end piece.** `sd_p(vx[0])` — a second derivative taken *at* the
   first knot, so its finite difference reaches outside the data — caches the exact y'' of the end
   polynomial, which only happens if Mathcad continues that polynomial rather than clamping.
+
+## Writing math back: what `worksheet.xml` encodes that the IR does not
+
+Confirmed by re-emitting every `<ml:apply>` in every fixture through
+`mcad2py/emit/mcdx_backend.py` and diffing against Prime's own bytes (954 of 1124 are
+byte-identical; the rest fall into the four classes below). See
+[tests/test_mcdx_backend.py](../tests/test_mcdx_backend.py).
+
+**A subscripted name has two encodings.** Prime writes `f_cd` either as inline XAML
+(`f<pw:Subscript>cd</pw:Subscript>`) or as plain text with a literal underscore
+(`m_s`) — `NM_to_CT.mcdx` and `statistics.mcdx` both use the plain form. `read_identifier`
+reads both to the same string, so the IR cannot tell them apart, and synthesising one would
+restyle a name the author typed the other way. Hence `harvest_ids()`: a rewrite reuses the
+`<ml:id>` bytes the sheet already carries for that `(role, name)`, and only synthesises for a
+name the sheet has never used.
+
+**`label-is-contextual="true"` depends on position, not on the name.** The same unit carries
+it inside an expression and omits it inside a `<ml:unitOverride>`. Some sheets also omit the
+`labels` attribute altogether (`<ml:id xml:space="preserve">C</ml:id>` in `NM_to_CT.mcdx`);
+the parser defaults such an id to `VARIABLE`.
+
+**`<ml:parens>` is cosmetic, and Prime's rule is looser than Python's.** The parser drops it —
+the tree already carries precedence. Prime writes a group only where its *display* would be
+ambiguous, so it leaves parens off `10^-34 * (kg·m²/s)` (a fraction renders unambiguously) but
+puts them on `(RH/100)^3`. Prime also keeps redundant groups the author typed (`k*(c*f_ctd)` in
+`RC_interface.mcdx`). The backend's rule is a strict superset: it can add a group Prime omits,
+never drop one Prime needs.
+
+**Two things a whole-region rewrite loses.** `<ml:percent/>` parses to `x / 100`, so `80%`
+re-emits as `80/100` — the same value, a different display. And `split="true"` / `inline="true"`
+on an operator element are Prime's line-break hints for a long equation; the IR has no field for
+them. Both are why a formula tool should replace the smallest subtree it can, not the region.

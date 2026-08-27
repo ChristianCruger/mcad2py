@@ -49,6 +49,7 @@ When adding features, respect this boundary — parsers produce IR, backends con
 | [emit/codegen.py](mcad2py/emit/codegen.py) | Precedence-aware expression printer; shared by both backends. `header_lines(ws, source)` reads the generated module's imports **off the rendered body** — hence both backends build the body first |
 | [emit/notebook_backend.py](mcad2py/emit/notebook_backend.py) | IR→`.ipynb`; region→cell; bare last line echoes result |
 | [emit/py_backend.py](mcad2py/emit/py_backend.py) | IR→`.py`; evaluations become `print(...)` |
+| [emit/mcdx_backend.py](mcad2py/emit/mcdx_backend.py) | IR→Mathcad `math50` XML — the **write** direction, for a tool that replaces a region's math rather than one number |
 | [convert.py](mcad2py/convert.py) | Orchestration: `convert_file` / `convert_worksheet` |
 
 ## Confirmed Prime schema
@@ -187,6 +188,25 @@ adding support for a new XML construct.
   `Pending`-free saves. MathcadPy is the `mathcad` extra, not a dependency: Windows-only, and it needs
   Prime installed. Prime is left running unless the tool launched it (`Dispatch` attaches to a running
   instance, and quitting it would close the user's other worksheets).
+- Writing a whole **formula** back needs the reverse of the pipeline, and
+  [emit/mcdx_backend.py](mcad2py/emit/mcdx_backend.py) is its first half (stage A): IR → `math50`
+  XML, a backend like the other two. Its subset is a deliberate whitelist — numbers, units,
+  `+ - * / **`, negation, names — and everything else raises `Unsupported`, because emitting a
+  half-understood construct into a proprietary format is worse than refusing. It emits **prefixed
+  text, not ElementTree**, so a write stays byte-minimal and nothing outside the replaced span is
+  re-serialised; the price is that the output is only valid inside a worksheet binding `ml:`,
+  which every `worksheet.xml` does on its root. Three things the fixtures settled: Prime has
+  **two encodings for a subscripted name** (inline XAML, and plain text with an underscore) that
+  the parser reads identically, so a rewrite reuses the sheet's own `<ml:id>` bytes via
+  `harvest_ids()` instead of synthesising and silently restyling; `<ml:parens>` is cosmetic and
+  Prime's rule is looser than Python's, so the backend's rule is a strict **superset** (it can
+  add a group Prime omits, never drop one Prime needs); and two constructs survive no whole-region
+  rewrite — `<ml:percent/>` (parsed as `x / 100`, so `80%` re-emits as `80/100`) and the
+  `split=`/`inline=` line-break hints. Re-emitting every `<ml:apply>` in every fixture reproduces
+  Prime's own bytes for 954 of 1124, and region 0 of `plain_concrete_cohesion.mcdx` round-trips
+  the worksheet byte-identically. Stage B — a `ast`-based Python-source → IR front end and the
+  `tools/set_mcdx_formula.py` that verifies its edit by re-converting the region and comparing —
+  is not written yet.
 - Mathcad's `·` is scalar, matrix *and* dot product; [shapes.py](mcad2py/shapes.py) decides which by
   inferring shapes across the whole sheet, and only rewrites to `matmul` when **both** operands are
   provably arrays (never under a vectorize arrow). Give a new array-returning builtin an entry in its
