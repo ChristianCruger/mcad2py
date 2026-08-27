@@ -832,3 +832,103 @@ Windows COM, so it cannot run in CI. It was verified by hand on 2026-08-21 again
 `trig.mcdx` with `theta` at 45° recomputed to a cache matching the generated Python's 19 values
 exactly, and at 60° in 6.6 s. If you change its wait loop, re-run that check by hand — a wrong loop
 fails by writing *stale* numbers, which no value comparison against the same file can detect.
+
+## `tests/test_set_mcdx_literal.py` — `references/plain_concrete_cohesion.mcdx` (copied to `tmp_path`)
+
+`tools/set_mcdx_literal.py` writes one number *inside* a formula, where `set_mcdx_value.py`
+refuses the region whole. The fixture's region 0 is the smallest useful case:
+`f_cd := 30 MPa / 1.5` holds two numbers of two different kinds. The tool is built for an
+**agent**, so most of what is pinned here is the machinery that makes a wrong index fail
+loudly instead of writing a plausible wrong number.
+
+| Test | Pins |
+|------|------|
+| `test_lists_every_number_with_its_role` | The ordinals an agent will use: `[0] 30 MPa value`, `[1] 1.5 factor`. Document order of the `<ml:real>` nodes is the addressing scheme, so it is pinned explicitly |
+| `test_sets_the_number_inside_the_formula` | The before/after report is the region rendered back to Python — `f_cd = 30 * ureg.MPa / 1.5` -> `/ 1.4`. This is the tool's own verification, run before it writes |
+| `test_only_worksheet_xml_changes` | Every other zip part comes through byte-identical, `result.xml` above all |
+| `test_edit_is_minimal` | Exactly one character differs. The expression tree is untouched, which is the whole premise |
+| `test_executed_python_carries_the_new_number` | End-to-end: `30 MPa / 1.25` runs to 24 MPa. Goes back through the parser rather than asserting on XML |
+| `test_expect_must_match` / `_be_a_number` | `--expect` is the guard that makes a stale index safe; a mismatch refuses before anything is written |
+| `test_index_out_of_range` | The count and the valid range are named in the error, so an agent can recover without guessing |
+| `test_accepts_a_negative_value` | Prime writes a negative straight into `<ml:real>` (every measurement matrix in `statistics.mcdx` does), unlike a top-level literal define, which `set_mcdx_value.py` wraps in `<ml:neg/>`. No wrapper is built here |
+| `test_renames_the_unit_of_a_scaled_number` / `test_unit_needs_a_scaled_number` | `--unit` reaches only the `<ml:scale/>` form, where one unit belongs to one number. In `a / m` the unit belongs to the division |
+| `test_output_leaves_the_input_alone` | `-o` writes a copy and does not touch the source |
+| `test_classifies_and_gates_the_risky_kinds` (4 cases) | An `exponent` (`cm²` in `RC_torsion` r26, a power in `shrinkage` r9), an `index` (`matrices` r17) and a `display-scale` (inside `<ml:unitOverride>`) are each classified and each refused without `--allow-kind`. These change what the formula *means*, and an accidental edit there produces a plausible wrong answer rather than an error |
+| `test_matrix_cells_are_editable` | `statistics.mcdx` r54's 50-cell measurement matrix lists as ordinary editable values, negatives included |
+| `test_every_listed_number_reads_back` | Across `RC_col`/`matrices`/`statistics`, setting a listed number to itself is a byte-level no-op. That is what proves each ordinal addresses the span it claims to — the failure this test caught was `.87` being normalised to `0.87` |
+
+**What these do not reach.** The `<ml:real>`-count guard (the tool refuses a region whose
+element count and text count disagree, e.g. an empty `<ml:real/>`) has no fixture — no
+worksheet here writes one. Prime's own re-layout of a widened region is likewise untested in
+CI: it was confirmed by hand that a math region's `actualWidth` is recomputed by Prime and is
+not something an editor must maintain.
+
+## tests/test_mcdx_backend.py
+
+Covers `mcad2py/emit/mcdx_backend.py`, the first thing in the package that *writes* worksheet
+math (IR -> `math50` XML). Nothing here needs Mathcad: every input is XML Prime itself wrote.
+
+| Test | What it pins |
+|------|------|
+| `test_every_supported_expression_survives_a_round_trip` (per sheet) | Parse -> emit -> parse gives the **identical IR** for every `<ml:apply>` in every fixture. The IR nodes are dataclasses, so `==` compares the whole tree |
+| `test_the_sweep_reaches_real_worksheet_math` | The floor (>1000 expressions) under the sweep above, which would also pass by skipping everything |
+| `test_re_emission_matches_primes_own_bytes` (per sheet) | Stronger than the round trip: the emitted XML equals Prime's, modulo the positional `label-is-contextual`, an omitted `labels="VARIABLE"`, and cosmetic `<ml:parens>`. The two constructs the IR does not carry (`<ml:percent/>`, `split=`/`inline=`) are skipped by name — see the schema note |
+| `test_most_expressions_re_emit_byte_for_byte` | Over 80% are identical byte for byte, parentheses included (996 of 1124 at the time of writing) |
+| `test_writes_a_quantity_the_way_prime_does` | The `<ml:apply><ml:scale/>` shape, spelled out |
+| `test_a_subscripted_name_becomes_a_xaml_span` | The synthesised form, for a name the sheet has never used |
+| `test_harvested_ids_keep_a_names_own_encoding` | Prime writes `m_s` two ways and the parser reads both the same, so a rewrite reuses the sheet's own `<ml:id>` bytes rather than restyling a name |
+| `test_harvest_gives_up_rather_than_guess` / `test_every_sheet_yields_an_id_map` | The positional pairing of text matches to ElementTree nodes holds on every fixture; a disagreement drops the whole map instead of pairing a name with another name's XML |
+| `test_parentheses_are_restored_where_prime_shows_them` (6 cases) | The parenthesising rule, including both associativity directions (`a - (b - c)`, `(a**b)**c`) |
+| `test_refuses_a_literal_prime_would_not_write` (5 cases) | `2j`, `1e-05`, `0x10`, `""`, `1.2.3` — a complex literal has its own `<ml:imag>`, and a rendered float is not a form Prime writes |
+| `test_refuses_a_node_outside_the_subset` / `test_refuses_a_name_mathcad_cannot_display` | The subset is a whitelist. Emitting a half-understood construct into a proprietary format is worse than refusing |
+| `test_emitted_xml_splices_into_a_worksheet_and_converts` | The end-to-end proof, against Prime's own root element: re-emitting region 0 of `plain_concrete_cohesion.mcdx` reproduces the worksheet **byte for byte**, and the generated Python is unchanged. This is what pins the module's one standing assumption — that the `ml:` prefix it writes is the prefix `worksheet.xml` binds |
+| `test_a_changed_expression_reaches_the_generated_python` | The same splice with an operand added: `f_cd = 0.85 * (30 * ureg.MPa / 1.5)`. The write path in miniature, minus the zip surgery and the guards a tool will add |
+
+**What these do not reach.** No Mathcad Prime runs in CI, so nothing here proves Prime *opens* a
+rewritten sheet — only that our own parser reads it back identically. That gap was closed once by
+hand: a sheet this backend wrote opened, calculated and re-saved in Prime, and its save differed
+from ours only in the region width Prime recomputes. See the schema note. The subset is stage A (numbers, units,
+`+ - * / **`, negation, names); calls, matrices, indices, ranges and programs all raise
+`Unsupported` and are skipped by the sweeps.
+
+## tests/test_python_expr.py
+
+Covers `mcad2py/parser/python_expr.py`, the write path's front end (Python source -> IR). Stage A
+proved IR -> XML against Prime's bytes; this is the mirror proof on the other half.
+
+| Test | What it pins |
+|------|------|
+| `test_generated_python_reads_back_to_the_same_ir` (per sheet) | Print every writable expression in every fixture with the ordinary code generator, read the text back, and require the **identical IR**. The round trip an agent actually performs — read the sheet as Python, type Python back |
+| `test_the_sweep_is_almost_total` | 1112 of 1113 exact. The one refusal is `power(z, i)`, whose `z` is bound by an enclosing lambda and so is not a name the *sheet* defines; a lambda body is out of the write path's reach anyway |
+| `test_reads_the_subset` (7 cases) | `.87` keeps its leading dot, `-3` folds into one `<ml:real>` rather than a `<ml:neg/>` wrapper, `30 * ureg.MPa` becomes a `Quantity`, and `power(a, b)` reads back as a power (what codegen prints for a fractional exponent) |
+| `test_a_number_keeps_the_text_it_was_typed_as` | `repr(float(...))` would rewrite bytes for no gain, and setting a number to what it already was must be a no-op |
+| `test_refuses_what_it_cannot_write` (6 cases) | A call, an index, a boolean, `%`, a string, a syntax error. The subset is a whitelist on both halves of the write path |
+| `test_refuses_a_name_the_sheet_does_not_use` / `test_a_unit_must_also_be_one_the_sheet_uses` | `sanitize()` has no inverse, so a name is resolved through the sheet's own symbol table or not at all |
+| `test_reconcile_keeps_a_scale_a_scale` | `30 * ureg.MPa` prints the same whether the sheet wrote `<ml:scale/>` or `<ml:mult/>`; the sheet's form is kept in both directions |
+| `test_reconcile_only_keeps_what_still_matches` | Changing one operand leaves the other branch as the sheet's own node — asserted by identity, not equality |
+| `test_reconcile_gives_up_on_a_different_shape` | A genuinely different formula is taken as written |
+| `test_symbol_table_keys_are_the_generated_python` | The table's key is literally what the code generator printed, including for transliterated Greek names |
+
+## tests/test_set_mcdx_formula.py
+
+Covers `tools/set_mcdx_formula.py`, the fourth write tool and the only one that changes the maths.
+
+| Test | What it pins |
+|------|------|
+| `test_reads_the_formula_in_a_region` / `test_the_span_is_the_value_only` | The replaced span is the *value* subtree: inside `<ml:eval>`, past any wrapping `<ml:parens>`, never the `<ml:define>`. The target name, the unit override and the result format keep their own bytes |
+| `test_replaces_the_formula` | The before/after report is the region rendered back to Python, the tool's own verification run before it writes |
+| `test_executed_python_carries_the_new_formula` | End-to-end: `f_cd` moves from 20 MPa to 17 MPa through the real parser and Pint |
+| `test_can_bring_in_another_name_from_the_sheet` | A formula may grow a term; the result still runs (21 MPa) |
+| `test_only_worksheet_xml_changes` / `test_everything_outside_the_formula_is_untouched` | Every other zip part is byte-identical, and so is every byte of `worksheet.xml` outside the value span |
+| `test_expect_must_match` / `test_expect_ignores_only_whitespace` | `--expect` is the guard that makes a stale read safe; spacing is not worth a refusal |
+| `test_refuses_what_it_cannot_write` (3 cases) | A call, an unknown name, a syntax error — refused while still text |
+| `test_refuses_a_region_that_is_not_a_formula` / `test_refuses_an_unknown_region` | A text note and a missing region id both name the problem |
+| `test_writing_a_formula_back_unchanged_is_a_no_op` (5 sheets) | **The strongest property available without Mathcad.** Every accepted region goes out through the code generator, back through the front end and out through the XML backend, and must land on the bytes Prime wrote |
+| `test_the_no_op_sweep_reaches_most_writable_regions` | The floor: 331 regions across every fixture pass that round trip end to end |
+| `test_refuses_a_region_it_cannot_reproduce` | `shrinkage.mcdx` region 9 holds `RH / 100%`, which would come back as `100/100`. The guard is generic — re-emit what is already there and compare — so it also catches the `split=` line-break hints and an author's redundant bracket |
+
+**What these do not reach.** No Mathcad Prime runs in CI, so nothing here proves Prime *opens* a
+rewritten sheet; the byte-for-byte no-op sweep is the strongest evidence short of Prime itself,
+and one sheet written by this tool was confirmed by hand in Prime (see the schema note). The writable subset
+is numbers, units, `+ - * / **`, negation and names the sheet already uses — no calls, matrices,
+indices, ranges or programs, and no *new* Mathcad identifier.

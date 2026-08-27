@@ -85,6 +85,55 @@ Only a **literal** definition can be set — `theta := 34 deg`, `n := 5`. The to
 formula, a matrix, a range or a function definition rather than overwrite the sheet's math.
 Use `--list` (or `--trace-source`) to see which regions qualify.
 
+### 1b. A number *inside* a formula
+
+When the number you want is part of an expression — the `1.5` in `f_cd := 30 MPa / 1.5` —
+`set_mcdx_value.py` refuses the region. Use `set_mcdx_literal.py` instead. It leaves the
+expression tree alone and replaces one number in it.
+
+```bash
+python tools/set_mcdx_literal.py "<file.mcdx>" --region 0 --list --json
+python tools/set_mcdx_literal.py "<file.mcdx>" --region 0 --index 1 --expect 1.5 --value 1.4
+```
+
+Always run `--list` first: it gives each number an `index`, its current value, its unit and
+its **kind**. `--expect` is required and states the number you believe sits at that index —
+a wrong index then stops the run instead of changing the wrong number. The tool converts the
+region to Python before and after, and prints both lines, so you can check the edit landed
+where you meant.
+
+Three kinds are gated behind `--allow-kind`, because they change what the formula *means*
+rather than what it is worth: `exponent` (a power, or a unit's `cm²`), `index` (a subscript)
+and `display-scale` (a number in the unit override). Do not pass `--allow-kind` unless the
+user asked for that specific change.
+
+`--unit kPa` renames the unit of a scaled number such as `30 MPa`. It cannot add or remove a
+unit inside a formula — that reshapes the tree, so do it in Prime.
+
+Prefer `set_mcdx_value.py` whenever the region is a plain input. Reach for this tool only
+when the number is inside an expression.
+
+### 1c. A whole formula
+
+To change the maths itself — add a factor, swap a term — use `set_mcdx_formula.py`. Write the new
+formula as **the same Python the converter prints**, which is what you already read.
+
+```bash
+python tools/set_mcdx_formula.py "<file.mcdx>" --region 0 --list --json
+python tools/set_mcdx_formula.py "<file.mcdx>" --region 0     --expect "30 * ureg.MPa / 1.5" --value "0.85 * 30 * ureg.MPa / 1.5"
+```
+
+Run `--list` first: it prints each region's current formula and marks the ones outside the writable
+subset. `--expect` is required and states the formula you believe is there.
+
+The subset is small on purpose: numbers, units, `+ - * / **`, negation, and **names the sheet
+already uses**. A call (`tan(phi)`), a matrix, an index, or a new name is refused. The tool also
+refuses a region it cannot reproduce byte for byte — one holding a `%` sign, a line break inside
+the equation, or a redundant bracket — rather than restyle maths your edit does not touch.
+
+Reach for the tools in this order: `set_mcdx_value.py` for a plain input, `set_mcdx_literal.py` for
+one number inside a formula, and this one only when the *shape* of the formula changes.
+
 ### 2. Make Mathcad recompute
 
 The converter never runs Mathcad, so after step 1 the sheet's own

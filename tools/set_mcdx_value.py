@@ -33,14 +33,21 @@ evaluates the new value for real.
 from __future__ import annotations
 
 import argparse
-import os
 import re
 import sys
-import tempfile
-import zipfile
 from pathlib import Path
 
-_WORKSHEET = "mathcad/worksheet.xml"
+from _mcdx_edit import (
+    BARE_UNIT as _BARE_UNIT,
+    UNIT_TEMPLATE as _UNIT_TEMPLATE,
+    Refused,
+    element_span as _element_span,
+    find_region as _find_region,
+    format_number as _format_number,
+    read_worksheet as _read_worksheet,
+    rewrite_zip as _rewrite_zip,
+)
+
 
 # A worksheet real. Prime writes plain decimal text here (the E-notation in
 # result.xml is a different part with a different writer).
@@ -61,53 +68,6 @@ _LITERAL_FORMS = (
         r'(?P<unit>.*)</ml:apply>\Z', re.S)),
     ("plain", re.compile(r'\A<ml:real>(?P<num>[^<]*)</ml:real>\Z', re.S)),
 )
-
-# A unit expression we can rename: one bare unit identifier. A compound one
-# (<ml:apply><ml:div/>...) has no single name to replace, so --unit refuses it.
-_BARE_UNIT = re.compile(r'\A<ml:id labels="UNIT"(?P<attrs>[^>]*)>(?P<name>[^<]*)</ml:id>\Z')
-
-_UNIT_TEMPLATE = (
-    '<ml:id labels="UNIT" label-is-contextual="true" xml:space="preserve">{}</ml:id>'
-)
-
-
-class Refused(Exception):
-    """The requested edit is not a safe literal write."""
-
-
-def _element_span(text: str, tag: str, start: int) -> tuple[int, int]:
-    """Span of the ``tag`` element beginning at ``start``, counting nesting.
-
-    ``<region>`` nests (a collapsible ``<area>`` holds more regions) and so
-    does ``<ml:apply>``, so a non-greedy ``.*?</tag>`` would stop at the first
-    inner close tag and silently truncate the element.
-    """
-    open_re = re.compile(rf"<{re.escape(tag)}(\s[^>]*)?(/?)>")
-    close = f"</{tag}>"
-    depth = 0
-    pos = start
-    while pos < len(text):
-        opening = open_re.search(text, pos)
-        closing = text.find(close, pos)
-        if opening and (closing == -1 or opening.start() < closing):
-            if opening.group(2) != "/":  # not self-closing
-                depth += 1
-            pos = opening.end()
-            continue
-        if closing == -1:
-            break
-        depth -= 1
-        pos = closing + len(close)
-        if depth == 0:
-            return start, pos
-    raise Refused(f"malformed XML: <{tag}> at offset {start} is never closed")
-
-
-def _find_region(ws: str, region_id: int) -> tuple[int, int]:
-    match = re.search(rf'<region region-id="{region_id}"[\s>]', ws)
-    if not match:
-        raise Refused(f"no region with region-id={region_id} in {_WORKSHEET}")
-    return _element_span(ws, "region", match.start())
 
 
 def _split_rhs(region: str) -> tuple[int, int]:
@@ -156,19 +116,6 @@ def _classify(rhs: str):
     raise Refused(
         "the right-hand side is not a literal number -- refusing to overwrite it.\n"
         f"    {snippet}")
-
-
-def _format_number(text: str) -> str:
-    """Validate ``text`` as a real and return the text Prime should store."""
-    try:
-        value = float(text)
-    except ValueError as exc:
-        raise Refused(f"--value {text!r} is not a number") from exc
-    if value != value or value in (float("inf"), float("-inf")):
-        raise Refused(f"--value {text!r} is not a finite number")
-    # Pass the typed text through where it is already a clean decimal, so
-    # "45" stays "45" and "0.1" does not become "0.1000000000000000055".
-    return text.strip() if re.fullmatch(r"-?\d+(\.\d+)?", text.strip()) else repr(value)
 
 
 def _build_rhs(form: str, match: re.Match, value: str, unit: str | None) -> str:
@@ -245,39 +192,11 @@ def set_value(ws: str, region_id: int, value: str, unit: str | None = None) -> s
 def rewrite(path: Path, out: Path, region_id: int, value: str,
             unit: str | None = None) -> tuple[str, str]:
     """Edit ``path`` into ``out``. Returns the before/after value descriptions."""
-    with zipfile.ZipFile(path) as zf:
-        if _WORKSHEET not in zf.namelist():
-            raise Refused(f"{path} has no {_WORKSHEET} -- is it a .mcdx?")
-        entries = [(item, zf.read(item.filename)) for item in zf.infolist()]
-
-    ws = next(data for item, data in entries
-              if item.filename == _WORKSHEET).decode("utf-8")
+    ws = _read_worksheet(path)
     before = describe(ws, region_id)
     new_ws = set_value(ws, region_id, value, unit)
     after = describe(new_ws, region_id)
-
-    # Write beside the destination and move into place, so an interrupted run
-    # cannot leave a half-written worksheet where a good one was.
-    fd, tmp_name = tempfile.mkstemp(suffix=".mcdx", dir=out.parent)
-    os.close(fd)
-    tmp = Path(tmp_name)
-    try:
-        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
-            for item, data in entries:
-                payload = new_ws.encode("utf-8") if item.filename == _WORKSHEET else data
-                info = zipfile.ZipInfo(item.filename, date_time=item.date_time)
-                info.compress_type = item.compress_type
-                info.external_attr = item.external_attr
-                zout.writestr(info, payload)
-        os.replace(tmp, out)
-    except PermissionError as exc:
-        tmp.unlink(missing_ok=True)
-        raise Refused(
-            f"{out}: could not be written ({exc}). Close it in Mathcad Prime and "
-            "run again -- the original is untouched.") from exc
-    except BaseException:
-        tmp.unlink(missing_ok=True)
-        raise
+    _rewrite_zip(path, out, new_ws)
     return before, after
 
 
@@ -307,8 +226,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         if args.list:
-            with zipfile.ZipFile(args.file) as zf:
-                ws = zf.read(_WORKSHEET).decode("utf-8")
+            ws = _read_worksheet(args.file)
             rows = settable(ws)
             if not rows:
                 print(f"{args.file.name}: no settable literal regions")
@@ -321,8 +239,7 @@ def main(argv: list[str] | None = None) -> int:
 
         out = args.output or args.file
         if args.dry_run:
-            with zipfile.ZipFile(args.file) as zf:
-                ws = zf.read(_WORKSHEET).decode("utf-8")
+            ws = _read_worksheet(args.file)
             before = describe(ws, args.region)
             after = describe(set_value(ws, args.region, args.value, args.unit),
                              args.region)

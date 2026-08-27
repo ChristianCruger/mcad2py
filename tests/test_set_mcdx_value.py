@@ -49,9 +49,10 @@ def test_sets_the_number_and_keeps_the_unit(sheet):
 
 
 def test_only_worksheet_xml_changes(sheet):
-    original = {item.filename: data for item, data in
-                ((i, zipfile.ZipFile(sheet).read(i.filename))
-                 for i in zipfile.ZipFile(sheet).infolist())}
+    # Close the handles before rewriting: on Windows an open handle makes the
+    # tool's os.replace fail, which would be a flaky test rather than a bug.
+    with zipfile.ZipFile(sheet) as zf:
+        original = {name: zf.read(name) for name in zf.namelist()}
     rewrite(sheet, sheet, region_id=1, value="45")
     with zipfile.ZipFile(sheet) as zf:
         for name in zf.namelist():
