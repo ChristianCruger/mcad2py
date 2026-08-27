@@ -58,6 +58,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from _mcdx_edit import (  # noqa: E402
     BARE_UNIT,
     Refused,
+    python_lines,
     find_region,
     format_number,
     read_worksheet,
@@ -262,27 +263,6 @@ def _set_unit(region: str, target: Literal, unit: str) -> str:
             "not supported inside a formula.")
     replacement = f'<ml:id labels="UNIT"{bare.group("attrs")}>{unit}</ml:id>'
     return region[:end] + replacement + region[end + len(existing):]
-
-
-def python_lines(ws: str, pkg, region_id: int) -> list[str]:
-    """The generated Python for one region, for the before/after report.
-
-
-    This is the real check that the edit produced valid maths: it goes back
-    through the parser the rest of the project trusts, rather than trusting
-    the XML surgery.
-    """
-    from mcad2py.convert import convert_worksheet
-    from mcad2py.emit.py_backend import _render_region
-
-    worksheet = convert_worksheet(dataclasses.replace(pkg, worksheet_xml=ws))
-    for region in worksheet.regions:
-        if region.source is not None and region.source.region_id == region_id:
-            lines = [line for line in _render_region(region) if line.strip()]
-            return lines or ["(no code)"]
-    raise Refused(
-        f"region {region_id} did not survive conversion -- the edit is not being "
-        "written. This is a bug in the tool; report the worksheet.")
 
 
 def rewrite(path: Path, out: Path, region_id: int, index: int, expect: str,

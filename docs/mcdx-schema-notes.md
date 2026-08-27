@@ -1372,3 +1372,28 @@ never drop one Prime needs.
 re-emits as `80/100` — the same value, a different display. And `split="true"` / `inline="true"`
 on an operator element are Prime's line-break hints for a long equation; the IR has no field for
 them. Both are why a formula tool should replace the smallest subtree it can, not the region.
+
+### The generated Python is lossy in two ways a rewrite must handle
+
+Found while building the write path's front end
+([mcad2py/parser/python_expr.py](../mcad2py/parser/python_expr.py)). Both are cases where two
+different Mathcad constructs print the *same* Python, so text alone cannot say which the author
+used:
+
+* **`<ml:scale/>` vs `<ml:mult/>`.** `30 * ureg.MPa` is either a number carrying a unit (Prime
+  draws `30 MPa`) or a multiplication (`30·MPa`). Across the fixtures the discriminator is the
+  left operand: 147 of the 158 scales have a plain `<ml:real>` there, and **no** `<ml:mult/>`
+  has a literal on the left with a bare unit on the right. So the front end reads a literal
+  times a unit as a scale — and `reconcile()` then restores the sheet's own choice wherever the
+  two print alike, which covers the 11 scales whose value is a matrix or an expression.
+* **`labels="*"`.** A worksheet converted from `.xmcd` labels its names `*` rather than
+  `VARIABLE`; the generated Python is identical either way.
+
+`reconcile()` states the rule once: **where two nodes print the same Python, the sheet's own node
+wins.** Below that it descends in step through matching structure, so an edit to one operand keeps
+every untouched branch's exact node.
+
+Prime's parens are also looser than Python's in a second way beyond the note above: it *draws* a
+scaled quantity as juxtaposition and a division as a stacked fraction, and puts a group around
+neither — except a fraction under a power (`(RH/100)³`), where it does. Emitting on that rule takes
+byte-identical re-emission from 954 to 996 of 1124.

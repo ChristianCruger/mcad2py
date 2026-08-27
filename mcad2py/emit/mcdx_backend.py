@@ -161,8 +161,8 @@ class _Writer:
             return f"<ml:parens>{inner}</ml:parens>", ATOM_PREC
 
         if isinstance(node, ir.Quantity):
-            value = self.wrap(node.value, _MUL_PREC)
-            unit = self.wrap(node.unit, _MUL_PREC)
+            value = self.wrap(node.value, _MUL_PREC, parent_op="scale")
+            unit = self.wrap(node.unit, _MUL_PREC, parent_op="scale")
             return f"<ml:apply><ml:scale />{value}{unit}</ml:apply>", _MUL_PREC
 
         if isinstance(node, ir.BinOp):
@@ -171,7 +171,7 @@ class _Writer:
         if isinstance(node, ir.UnaryOp):
             if node.op != "neg":
                 raise Unsupported(f"unary {node.op!r} is outside the subset")
-            operand = self.wrap(node.operand, UNARY_PREC)
+            operand = self.wrap(node.operand, UNARY_PREC, parent_op="neg")
             return f"<ml:apply><ml:neg />{operand}</ml:apply>", UNARY_PREC
 
         raise Unsupported(f"{type(node).__name__} is outside the subset")
@@ -185,20 +185,31 @@ class _Writer:
         # needs a group at equal precedence; every other operator is the
         # mirror of that.
         right_assoc = node.op == "pow"
-        left = self.wrap(node.left, prec, tighter=right_assoc)
-        right = self.wrap(node.right, prec, tighter=not right_assoc)
+        left = self.wrap(node.left, prec, tighter=right_assoc, parent_op=node.op)
+        right = self.wrap(node.right, prec, tighter=not right_assoc,
+                          parent_op=node.op)
         return f"<ml:apply><ml:{tag} />{left}{right}</ml:apply>", prec
 
-    def wrap(self, node: ir.Expr, parent_prec: int, *, tighter: bool = False) -> str:
-        """``node``'s XML, in ``<ml:parens>`` if Python would need parentheses.
+    def wrap(self, node: ir.Expr, parent_prec: int, *, tighter: bool = False,
+             parent_op: str | None = None) -> str:
+        """``node``'s XML, in ``<ml:parens>`` if Prime would show a group.
 
         ``tighter`` marks the operand that must bind strictly tighter than its
-        parent -- the right of ``a - b``, the left of ``a ** b``. The rule is
-        a superset of Prime's own: Prime leaves out a group its *display* makes
-        unambiguous (a fraction), so this can add a parenthesis Prime would
-        not, but never drops one it needs.
+        parent -- the right of ``a - b``, the left of ``a ** b``.
+
+        Two shapes need no group whatever the precedence says, because Prime
+        does not *draw* them in line: a scaled quantity is juxtaposition
+        (``30 MPa``), and a division is a stacked fraction. Both are read
+        unambiguously without brackets, and Prime writes none -- except for a
+        fraction under a power, where it does (``(RH/100)³``). Everywhere else
+        the rule stays a superset of Prime's: it can add a group Prime omits,
+        never drop one Prime needs.
         """
         text, prec = self.emit(node)
+        if isinstance(node, ir.Quantity):
+            return text
+        if isinstance(node, ir.BinOp) and node.op == "div" and parent_op != "pow":
+            return text
         if prec < parent_prec or (tighter and prec == parent_prec):
             return f"<ml:parens>{text}</ml:parens>"
         return text

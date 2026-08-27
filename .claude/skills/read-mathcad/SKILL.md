@@ -113,6 +113,27 @@ unit inside a formula — that reshapes the tree, so do it in Prime.
 Prefer `set_mcdx_value.py` whenever the region is a plain input. Reach for this tool only
 when the number is inside an expression.
 
+### 1c. A whole formula
+
+To change the maths itself — add a factor, swap a term — use `set_mcdx_formula.py`. Write the new
+formula as **the same Python the converter prints**, which is what you already read.
+
+```bash
+python tools/set_mcdx_formula.py "<file.mcdx>" --region 0 --list --json
+python tools/set_mcdx_formula.py "<file.mcdx>" --region 0     --expect "30 * ureg.MPa / 1.5" --value "0.85 * 30 * ureg.MPa / 1.5"
+```
+
+Run `--list` first: it prints each region's current formula and marks the ones outside the writable
+subset. `--expect` is required and states the formula you believe is there.
+
+The subset is small on purpose: numbers, units, `+ - * / **`, negation, and **names the sheet
+already uses**. A call (`tan(phi)`), a matrix, an index, or a new name is refused. The tool also
+refuses a region it cannot reproduce byte for byte — one holding a `%` sign, a line break inside
+the equation, or a redundant bracket — rather than restyle maths your edit does not touch.
+
+Reach for the tools in this order: `set_mcdx_value.py` for a plain input, `set_mcdx_literal.py` for
+one number inside a formula, and this one only when the *shape* of the formula changes.
+
 ### 2. Make Mathcad recompute
 
 The converter never runs Mathcad, so after step 1 the sheet's own

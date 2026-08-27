@@ -873,7 +873,7 @@ math (IR -> `math50` XML). Nothing here needs Mathcad: every input is XML Prime 
 | `test_every_supported_expression_survives_a_round_trip` (per sheet) | Parse -> emit -> parse gives the **identical IR** for every `<ml:apply>` in every fixture. The IR nodes are dataclasses, so `==` compares the whole tree |
 | `test_the_sweep_reaches_real_worksheet_math` | The floor (>1000 expressions) under the sweep above, which would also pass by skipping everything |
 | `test_re_emission_matches_primes_own_bytes` (per sheet) | Stronger than the round trip: the emitted XML equals Prime's, modulo the positional `label-is-contextual`, an omitted `labels="VARIABLE"`, and cosmetic `<ml:parens>`. The two constructs the IR does not carry (`<ml:percent/>`, `split=`/`inline=`) are skipped by name — see the schema note |
-| `test_most_expressions_re_emit_byte_for_byte` | Over 80% are identical byte for byte, parentheses included (954 of 1124 at the time of writing) |
+| `test_most_expressions_re_emit_byte_for_byte` | Over 80% are identical byte for byte, parentheses included (996 of 1124 at the time of writing) |
 | `test_writes_a_quantity_the_way_prime_does` | The `<ml:apply><ml:scale/>` shape, spelled out |
 | `test_a_subscripted_name_becomes_a_xaml_span` | The synthesised form, for a name the sheet has never used |
 | `test_harvested_ids_keep_a_names_own_encoding` | Prime writes `m_s` two ways and the parser reads both the same, so a rewrite reuses the sheet's own `<ml:id>` bytes rather than restyling a name |
@@ -889,3 +889,44 @@ sheet — only that our own parser reads it back identically. The byte-for-byte 
 is the strongest available evidence short of Prime itself. The subset is stage A (numbers, units,
 `+ - * / **`, negation, names); calls, matrices, indices, ranges and programs all raise
 `Unsupported` and are skipped by the sweeps.
+
+## tests/test_python_expr.py
+
+Covers `mcad2py/parser/python_expr.py`, the write path's front end (Python source -> IR). Stage A
+proved IR -> XML against Prime's bytes; this is the mirror proof on the other half.
+
+| Test | What it pins |
+|------|------|
+| `test_generated_python_reads_back_to_the_same_ir` (per sheet) | Print every writable expression in every fixture with the ordinary code generator, read the text back, and require the **identical IR**. The round trip an agent actually performs — read the sheet as Python, type Python back |
+| `test_the_sweep_is_almost_total` | 1112 of 1113 exact. The one refusal is `power(z, i)`, whose `z` is bound by an enclosing lambda and so is not a name the *sheet* defines; a lambda body is out of the write path's reach anyway |
+| `test_reads_the_subset` (7 cases) | `.87` keeps its leading dot, `-3` folds into one `<ml:real>` rather than a `<ml:neg/>` wrapper, `30 * ureg.MPa` becomes a `Quantity`, and `power(a, b)` reads back as a power (what codegen prints for a fractional exponent) |
+| `test_a_number_keeps_the_text_it_was_typed_as` | `repr(float(...))` would rewrite bytes for no gain, and setting a number to what it already was must be a no-op |
+| `test_refuses_what_it_cannot_write` (6 cases) | A call, an index, a boolean, `%`, a string, a syntax error. The subset is a whitelist on both halves of the write path |
+| `test_refuses_a_name_the_sheet_does_not_use` / `test_a_unit_must_also_be_one_the_sheet_uses` | `sanitize()` has no inverse, so a name is resolved through the sheet's own symbol table or not at all |
+| `test_reconcile_keeps_a_scale_a_scale` | `30 * ureg.MPa` prints the same whether the sheet wrote `<ml:scale/>` or `<ml:mult/>`; the sheet's form is kept in both directions |
+| `test_reconcile_only_keeps_what_still_matches` | Changing one operand leaves the other branch as the sheet's own node — asserted by identity, not equality |
+| `test_reconcile_gives_up_on_a_different_shape` | A genuinely different formula is taken as written |
+| `test_symbol_table_keys_are_the_generated_python` | The table's key is literally what the code generator printed, including for transliterated Greek names |
+
+## tests/test_set_mcdx_formula.py
+
+Covers `tools/set_mcdx_formula.py`, the fourth write tool and the only one that changes the maths.
+
+| Test | What it pins |
+|------|------|
+| `test_reads_the_formula_in_a_region` / `test_the_span_is_the_value_only` | The replaced span is the *value* subtree: inside `<ml:eval>`, past any wrapping `<ml:parens>`, never the `<ml:define>`. The target name, the unit override and the result format keep their own bytes |
+| `test_replaces_the_formula` | The before/after report is the region rendered back to Python, the tool's own verification run before it writes |
+| `test_executed_python_carries_the_new_formula` | End-to-end: `f_cd` moves from 20 MPa to 17 MPa through the real parser and Pint |
+| `test_can_bring_in_another_name_from_the_sheet` | A formula may grow a term; the result still runs (21 MPa) |
+| `test_only_worksheet_xml_changes` / `test_everything_outside_the_formula_is_untouched` | Every other zip part is byte-identical, and so is every byte of `worksheet.xml` outside the value span |
+| `test_expect_must_match` / `test_expect_ignores_only_whitespace` | `--expect` is the guard that makes a stale read safe; spacing is not worth a refusal |
+| `test_refuses_what_it_cannot_write` (3 cases) | A call, an unknown name, a syntax error — refused while still text |
+| `test_refuses_a_region_that_is_not_a_formula` / `test_refuses_an_unknown_region` | A text note and a missing region id both name the problem |
+| `test_writing_a_formula_back_unchanged_is_a_no_op` (5 sheets) | **The strongest property available without Mathcad.** Every accepted region goes out through the code generator, back through the front end and out through the XML backend, and must land on the bytes Prime wrote |
+| `test_the_no_op_sweep_reaches_most_writable_regions` | The floor: 331 regions across every fixture pass that round trip end to end |
+| `test_refuses_a_region_it_cannot_reproduce` | `shrinkage.mcdx` region 9 holds `RH / 100%`, which would come back as `100/100`. The guard is generic — re-emit what is already there and compare — so it also catches the `split=` line-break hints and an author's redundant bracket |
+
+**What these do not reach.** No Mathcad Prime, so nothing proves Prime *opens* a rewritten sheet;
+the byte-for-byte no-op sweep is the strongest evidence short of Prime itself. The writable subset
+is numbers, units, `+ - * / **`, negation and names the sheet already uses — no calls, matrices,
+indices, ranges or programs, and no *new* Mathcad identifier.

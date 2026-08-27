@@ -38,6 +38,7 @@ When adding features, respect this boundary — parsers produce IR, backends con
 | [loader.py](mcad2py/loader.py) | Unzip `.mcdx`; return `worksheet.xml`, `result.xml`, XAML text packages, rels map |
 | [parser/namespaces.py](mcad2py/parser/namespaces.py) | Namespace constants; `localname()` strips `{ns}` — **match on local name, not full URI** (Prime bumps version numbers) |
 | [parser/expressions.py](mcad2py/parser/expressions.py) | Recursive XML→IR walk; identifier reading (subscripts/Greek), `sanitize()` |
+| [parser/python_expr.py](mcad2py/parser/python_expr.py) | Python source→IR, via `ast` — the **write** path's front end; names resolve through a `symbol_table` built from the sheet |
 | [parser/regions.py](mcad2py/parser/regions.py) | Worksheet→ordered regions; **sort by (top, left)** for reading order; collapsible `<Area>`s flattened away (their coords are area-relative) |
 | [ir.py](mcad2py/ir.py) | Backend-agnostic node dataclasses |
 | [shapes.py](mcad2py/shapes.py) | Post-parse IR pass: infers each name's shape across the sheet so Mathcad's one `·` splits into scalar `*` vs. `matmul` |
@@ -164,7 +165,7 @@ adding support for a new XML construct.
   `header_footer.mcdx`) so the CI glob passes without an exemption flag. The exemption covers those two
   parts only — `docProps` is blanked as for any other sheet — so anything in an exempt header must be
   invented, never a real project or company.
-- The **write path** is three tools, deliberately separate from the converter (which is read-only) and
+- The **write path** is four tools, deliberately separate from the converter (which is read-only) and
   from each other; the zip/region surgery they share lives in
   [tools/_mcdx_edit.py](tools/_mcdx_edit.py). [tools/set_mcdx_value.py](tools/set_mcdx_value.py) sets one literal input by the
   `region-id` that `--trace-source` prints — pure zip surgery, no Mathcad needed, and it **refuses**
@@ -203,10 +204,27 @@ adding support for a new XML construct.
   add a group Prime omits, never drop one Prime needs); and two constructs survive no whole-region
   rewrite — `<ml:percent/>` (parsed as `x / 100`, so `80%` re-emits as `80/100`) and the
   `split=`/`inline=` line-break hints. Re-emitting every `<ml:apply>` in every fixture reproduces
-  Prime's own bytes for 954 of 1124, and region 0 of `plain_concrete_cohesion.mcdx` round-trips
-  the worksheet byte-identically. Stage B — a `ast`-based Python-source → IR front end and the
-  `tools/set_mcdx_formula.py` that verifies its edit by re-converting the region and comparing —
-  is not written yet.
+  Prime's own bytes for 996 of 1124, and region 0 of `plain_concrete_cohesion.mcdx` round-trips
+  the worksheet byte-identically. Two shapes needed a looser parens rule than Python's to reach
+  that: Prime *draws* a scaled quantity as juxtaposition and a division as a stacked fraction, so
+  neither needs a group — except a fraction under a power, where Prime writes one.
+- Stage B closes the loop: [parser/python_expr.py](mcad2py/parser/python_expr.py) reads the
+  generated Python back to IR with `ast`, and [tools/set_mcdx_formula.py](tools/set_mcdx_formula.py)
+  replaces one region's formula with it. Three decisions carry it. **Names are not un-sanitized** —
+  `sanitize()` has no inverse, so `symbol_table()` maps the *generated Python text* of every name in
+  the sheet back to the node that produced it; a name the sheet never uses is refused, which is also
+  the right answer, since inventing a Mathcad identifier is a separate job. **`reconcile()` keeps
+  what the text cannot say** — Mathcad writes `30 MPa` as either `<ml:scale/>` or `<ml:mult/>` and an
+  `.xmcd`-converted sheet labels names `*` rather than `VARIABLE`, so wherever the new node and the
+  old one print the same Python the *sheet's* node wins, and an edit to one operand cannot restyle
+  the rest. **The tool refuses any region it cannot reproduce byte for byte**: before touching
+  anything it re-emits the formula already there and compares with Prime's bytes, which catches
+  `<ml:percent/>`, the `split=` hints and an author's redundant bracket without enumerating them.
+  It replaces the smallest subtree — inside `<ml:eval>`, past any wrapping `<ml:parens>` — so the
+  target name, the unit override and the result format keep their own bytes, and it verifies by
+  converting the whole edited sheet and comparing the region's expression before it writes.
+  Printing every fixture expression and reading it back gives the identical IR for 1112 of 1113;
+  writing a formula back unchanged is a byte no-op on 331 regions.
 - Mathcad's `·` is scalar, matrix *and* dot product; [shapes.py](mcad2py/shapes.py) decides which by
   inferring shapes across the whole sheet, and only rewrites to `matmul` when **both** operands are
   provably arrays (never under a vectorize arrow). Give a new array-returning builtin an entry in its
