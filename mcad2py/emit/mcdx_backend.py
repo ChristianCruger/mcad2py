@@ -161,7 +161,7 @@ class _Writer:
             return f"<ml:parens>{inner}</ml:parens>", ATOM_PREC
 
         if isinstance(node, ir.Quantity):
-            value = self.wrap(node.value, _MUL_PREC, parent_op="scale")
+            value = self.scale_value(node.value)
             unit = self.wrap(node.unit, _MUL_PREC, parent_op="scale")
             return f"<ml:apply><ml:scale />{value}{unit}</ml:apply>", _MUL_PREC
 
@@ -189,6 +189,25 @@ class _Writer:
         right = self.wrap(node.right, prec, tighter=not right_assoc,
                           parent_op=node.op)
         return f"<ml:apply><ml:{tag} />{left}{right}</ml:apply>", prec
+
+    def scale_value(self, node: ir.Expr) -> str:
+        """The value slot of a ``<ml:scale/>``, grouped where Prime groups it.
+
+        A scale is drawn as juxtaposition (``30 MPa``), so anything drawn *in
+        line* has to be bracketed or it reads as part of the product:
+        ``(0.85 · 30) MPa``. Anything Prime draws two-dimensionally does not --
+        a power is a superscript, a division is a stacked fraction -- and the
+        fixtures hold exactly those two unbracketed.
+
+        Confirmed by Prime itself: it added this group when it re-saved a sheet
+        this backend had written without one.
+        """
+        text, _prec = self.emit(node)
+        if isinstance(node, (ir.Number, ir.Name, ir.UnitRef, ir.Quantity, ir.Parens)):
+            return text
+        if isinstance(node, ir.BinOp) and node.op in ("pow", "div"):
+            return text
+        return f"<ml:parens>{text}</ml:parens>"
 
     def wrap(self, node: ir.Expr, parent_prec: int, *, tighter: bool = False,
              parent_op: str | None = None) -> str:

@@ -199,9 +199,10 @@ adding support for a new XML construct.
   which every `worksheet.xml` does on its root. Three things the fixtures settled: Prime has
   **two encodings for a subscripted name** (inline XAML, and plain text with an underscore) that
   the parser reads identically, so a rewrite reuses the sheet's own `<ml:id>` bytes via
-  `harvest_ids()` instead of synthesising and silently restyling; `<ml:parens>` is cosmetic and
-  Prime's rule is looser than Python's, so the backend's rule is a strict **superset** (it can
-  add a group Prime omits, never drop one Prime needs); and two constructs survive no whole-region
+  `harvest_ids()` instead of synthesising and silently restyling; `<ml:parens>` is cosmetic *except
+  where Prime draws in line* — its rule is looser than Python's around a fraction or a superscript
+  but **stricter** inside a `<ml:scale/>`, whose value slot needs a group for an inline product
+  (`(0.85·30) MPa`), which Prime added itself when re-saving a sheet this backend wrote; and two constructs survive no whole-region
   rewrite — `<ml:percent/>` (parsed as `x / 100`, so `80%` re-emits as `80/100`) and the
   `split=`/`inline=` line-break hints. Re-emitting every `<ml:apply>` in every fixture reproduces
   Prime's own bytes for 996 of 1124, and region 0 of `plain_concrete_cohesion.mcdx` round-trips

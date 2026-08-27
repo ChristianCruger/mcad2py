@@ -1397,3 +1397,26 @@ Prime's parens are also looser than Python's in a second way beyond the note abo
 scaled quantity as juxtaposition and a division as a stacked fraction, and puts a group around
 neither — except a fraction under a power (`(RH/100)³`), where it does. Emitting on that rule takes
 byte-identical re-emission from 954 to 996 of 1124.
+
+### Confirmed against Prime itself
+
+A worksheet written by `tools/set_mcdx_formula.py` was opened, calculated and re-saved in Mathcad
+Prime. It opened with no repair prompt and calculated correctly (`f_cd` moved from 20 MPa to
+17 MPa). Prime's save changed exactly two things in the edited region, and nothing anywhere else:
+
+* **`actualWidth`** was recomputed (173.17 -> 222.65). A math region's width is Prime's to
+  maintain, so an editor must not try to.
+* **`<ml:parens>` was added around the value slot of the `<ml:scale/>`.** A scale is drawn as
+  juxtaposition, so an inline product in its value slot has to be bracketed or it reads as part of
+  the product: Prime shows `(0.85 · 30) MPa`. This corrects the earlier claim that the backend's
+  parens rule was a strict superset of Prime's — here Prime needed a group the backend omitted.
+  `_Writer.scale_value` now brackets anything drawn in line, and leaves alone what Prime draws
+  two-dimensionally (a power is a superscript, a division a stacked fraction) — which is exactly
+  the set the fixtures hold unbracketed in that slot. With the fix the edited region is
+  byte-identical to Prime's own save apart from the width.
+
+One more thing the round trip pinned, and a trap for any write tool: **saving in Prime before
+calculating writes the stale result and still marks it `Synchronized`**. The pre-calculation save
+holds `<ml:real>20</ml:real>` under `calculation-status="Synchronized"`; only after *Calculate
+Sheet* does it read 17. That is the same asynchrony `tools/recalc_mcdx.py` waits out, confirmed
+here from the UI rather than from automation.

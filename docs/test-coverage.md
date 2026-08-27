@@ -884,9 +884,10 @@ math (IR -> `math50` XML). Nothing here needs Mathcad: every input is XML Prime 
 | `test_emitted_xml_splices_into_a_worksheet_and_converts` | The end-to-end proof, against Prime's own root element: re-emitting region 0 of `plain_concrete_cohesion.mcdx` reproduces the worksheet **byte for byte**, and the generated Python is unchanged. This is what pins the module's one standing assumption — that the `ml:` prefix it writes is the prefix `worksheet.xml` binds |
 | `test_a_changed_expression_reaches_the_generated_python` | The same splice with an operand added: `f_cd = 0.85 * (30 * ureg.MPa / 1.5)`. The write path in miniature, minus the zip surgery and the guards a tool will add |
 
-**What these do not reach.** No Mathcad Prime, so nothing here proves Prime *opens* a rewritten
-sheet — only that our own parser reads it back identically. The byte-for-byte result on region 0
-is the strongest available evidence short of Prime itself. The subset is stage A (numbers, units,
+**What these do not reach.** No Mathcad Prime runs in CI, so nothing here proves Prime *opens* a
+rewritten sheet — only that our own parser reads it back identically. That gap was closed once by
+hand: a sheet this backend wrote opened, calculated and re-saved in Prime, and its save differed
+from ours only in the region width Prime recomputes. See the schema note. The subset is stage A (numbers, units,
 `+ - * / **`, negation, names); calls, matrices, indices, ranges and programs all raise
 `Unsupported` and are skipped by the sweeps.
 
@@ -926,7 +927,8 @@ Covers `tools/set_mcdx_formula.py`, the fourth write tool and the only one that 
 | `test_the_no_op_sweep_reaches_most_writable_regions` | The floor: 331 regions across every fixture pass that round trip end to end |
 | `test_refuses_a_region_it_cannot_reproduce` | `shrinkage.mcdx` region 9 holds `RH / 100%`, which would come back as `100/100`. The guard is generic — re-emit what is already there and compare — so it also catches the `split=` line-break hints and an author's redundant bracket |
 
-**What these do not reach.** No Mathcad Prime, so nothing proves Prime *opens* a rewritten sheet;
-the byte-for-byte no-op sweep is the strongest evidence short of Prime itself. The writable subset
+**What these do not reach.** No Mathcad Prime runs in CI, so nothing here proves Prime *opens* a
+rewritten sheet; the byte-for-byte no-op sweep is the strongest evidence short of Prime itself,
+and one sheet written by this tool was confirmed by hand in Prime (see the schema note). The writable subset
 is numbers, units, `+ - * / **`, negation and names the sheet already uses — no calls, matrices,
 indices, ranges or programs, and no *new* Mathcad identifier.
