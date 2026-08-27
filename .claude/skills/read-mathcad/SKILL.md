@@ -85,6 +85,34 @@ Only a **literal** definition can be set — `theta := 34 deg`, `n := 5`. The to
 formula, a matrix, a range or a function definition rather than overwrite the sheet's math.
 Use `--list` (or `--trace-source`) to see which regions qualify.
 
+### 1b. A number *inside* a formula
+
+When the number you want is part of an expression — the `1.5` in `f_cd := 30 MPa / 1.5` —
+`set_mcdx_value.py` refuses the region. Use `set_mcdx_literal.py` instead. It leaves the
+expression tree alone and replaces one number in it.
+
+```bash
+python tools/set_mcdx_literal.py "<file.mcdx>" --region 0 --list --json
+python tools/set_mcdx_literal.py "<file.mcdx>" --region 0 --index 1 --expect 1.5 --value 1.4
+```
+
+Always run `--list` first: it gives each number an `index`, its current value, its unit and
+its **kind**. `--expect` is required and states the number you believe sits at that index —
+a wrong index then stops the run instead of changing the wrong number. The tool converts the
+region to Python before and after, and prints both lines, so you can check the edit landed
+where you meant.
+
+Three kinds are gated behind `--allow-kind`, because they change what the formula *means*
+rather than what it is worth: `exponent` (a power, or a unit's `cm²`), `index` (a subscript)
+and `display-scale` (a number in the unit override). Do not pass `--allow-kind` unless the
+user asked for that specific change.
+
+`--unit kPa` renames the unit of a scaled number such as `30 MPa`. It cannot add or remove a
+unit inside a formula — that reshapes the tree, so do it in Prime.
+
+Prefer `set_mcdx_value.py` whenever the region is a plain input. Reach for this tool only
+when the number is inside an expression.
+
 ### 2. Make Mathcad recompute
 
 The converter never runs Mathcad, so after step 1 the sheet's own

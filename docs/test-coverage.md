@@ -832,3 +832,33 @@ Windows COM, so it cannot run in CI. It was verified by hand on 2026-08-21 again
 `trig.mcdx` with `theta` at 45° recomputed to a cache matching the generated Python's 19 values
 exactly, and at 60° in 6.6 s. If you change its wait loop, re-run that check by hand — a wrong loop
 fails by writing *stale* numbers, which no value comparison against the same file can detect.
+
+## `tests/test_set_mcdx_literal.py` — `references/plain_concrete_cohesion.mcdx` (copied to `tmp_path`)
+
+`tools/set_mcdx_literal.py` writes one number *inside* a formula, where `set_mcdx_value.py`
+refuses the region whole. The fixture's region 0 is the smallest useful case:
+`f_cd := 30 MPa / 1.5` holds two numbers of two different kinds. The tool is built for an
+**agent**, so most of what is pinned here is the machinery that makes a wrong index fail
+loudly instead of writing a plausible wrong number.
+
+| Test | Pins |
+|------|------|
+| `test_lists_every_number_with_its_role` | The ordinals an agent will use: `[0] 30 MPa value`, `[1] 1.5 factor`. Document order of the `<ml:real>` nodes is the addressing scheme, so it is pinned explicitly |
+| `test_sets_the_number_inside_the_formula` | The before/after report is the region rendered back to Python — `f_cd = 30 * ureg.MPa / 1.5` -> `/ 1.4`. This is the tool's own verification, run before it writes |
+| `test_only_worksheet_xml_changes` | Every other zip part comes through byte-identical, `result.xml` above all |
+| `test_edit_is_minimal` | Exactly one character differs. The expression tree is untouched, which is the whole premise |
+| `test_executed_python_carries_the_new_number` | End-to-end: `30 MPa / 1.25` runs to 24 MPa. Goes back through the parser rather than asserting on XML |
+| `test_expect_must_match` / `_be_a_number` | `--expect` is the guard that makes a stale index safe; a mismatch refuses before anything is written |
+| `test_index_out_of_range` | The count and the valid range are named in the error, so an agent can recover without guessing |
+| `test_accepts_a_negative_value` | Prime writes a negative straight into `<ml:real>` (every measurement matrix in `statistics.mcdx` does), unlike a top-level literal define, which `set_mcdx_value.py` wraps in `<ml:neg/>`. No wrapper is built here |
+| `test_renames_the_unit_of_a_scaled_number` / `test_unit_needs_a_scaled_number` | `--unit` reaches only the `<ml:scale/>` form, where one unit belongs to one number. In `a / m` the unit belongs to the division |
+| `test_output_leaves_the_input_alone` | `-o` writes a copy and does not touch the source |
+| `test_classifies_and_gates_the_risky_kinds` (4 cases) | An `exponent` (`cm²` in `RC_torsion` r26, a power in `shrinkage` r9), an `index` (`matrices` r17) and a `display-scale` (inside `<ml:unitOverride>`) are each classified and each refused without `--allow-kind`. These change what the formula *means*, and an accidental edit there produces a plausible wrong answer rather than an error |
+| `test_matrix_cells_are_editable` | `statistics.mcdx` r54's 50-cell measurement matrix lists as ordinary editable values, negatives included |
+| `test_every_listed_number_reads_back` | Across `RC_col`/`matrices`/`statistics`, setting a listed number to itself is a byte-level no-op. That is what proves each ordinal addresses the span it claims to — the failure this test caught was `.87` being normalised to `0.87` |
+
+**What these do not reach.** The `<ml:real>`-count guard (the tool refuses a region whose
+element count and text count disagree, e.g. an empty `<ml:real/>`) has no fixture — no
+worksheet here writes one. Prime's own re-layout of a widened region is likewise untested in
+CI: it was confirmed by hand that a math region's `actualWidth` is recomputed by Prime and is
+not something an editor must maintain.

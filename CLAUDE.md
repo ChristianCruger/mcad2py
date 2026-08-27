@@ -163,12 +163,23 @@ adding support for a new XML construct.
   `header_footer.mcdx`) so the CI glob passes without an exemption flag. The exemption covers those two
   parts only — `docProps` is blanked as for any other sheet — so anything in an exempt header must be
   invented, never a real project or company.
-- The **write path** is two tools, deliberately separate from the converter (which is read-only) and
-  from each other. [tools/set_mcdx_value.py](tools/set_mcdx_value.py) sets one literal input by the
+- The **write path** is three tools, deliberately separate from the converter (which is read-only) and
+  from each other; the zip/region surgery they share lives in
+  [tools/_mcdx_edit.py](tools/_mcdx_edit.py). [tools/set_mcdx_value.py](tools/set_mcdx_value.py) sets one literal input by the
   `region-id` that `--trace-source` prints — pure zip surgery, no Mathcad needed, and it **refuses**
   anything that isn't a literal (a formula, matrix, range or function definition) rather than
   overwrite a sheet's math. It rewrites `worksheet.xml` only, and inside it only the one number.
-  That leaves `result.xml` **stale**, which is what [tools/recalc_mcdx.py](tools/recalc_mcdx.py)
+  [tools/set_mcdx_literal.py](tools/set_mcdx_literal.py) takes the case it refuses — one `<ml:real>`
+  *inside* a formula (the `1.5` in `f_cd := 30 MPa / 1.5`) — leaving the expression tree untouched.
+  Its contract is built for an **agent**: numbers are addressed by their ordinal in the region,
+  `--expect` is required so a stale ordinal fails loudly rather than writing a plausible wrong
+  number, and the region is rendered back to Python before *and* after so the edit is verified
+  before anything is written. Each number carries a **kind**; `exponent`, `index` and
+  `display-scale` are gated behind `--allow-kind`, because they change what the formula *means*
+  rather than what it is worth. Two things the fixtures taught it: Prime writes a negative straight
+  into `<ml:real>` (no `<ml:neg/>` wrapper, unlike a top-level define), and it writes `.87` with a
+  leading dot — so `format_number` passes that form through rather than normalising bytes for no gain.
+  Either tool leaves `result.xml` **stale**, which is what [tools/recalc_mcdx.py](tools/recalc_mcdx.py)
   fixes: it drives Prime through MathcadPy's Application Automation to recompute and save. Prime's
   `Synchronize()` is **asynchronous** — saving straight after it writes back the *old* numbers — and
   "no `Pending` entry" alone is not a finish test, because an edited-but-unrecalculated sheet already
