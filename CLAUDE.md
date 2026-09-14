@@ -123,6 +123,17 @@ adding support for a new XML construct.
   (`data[2] :=`), an offset (`guess[i+1] :=`), or a matrix of such slots — is a **difference equation**
   (`ir.Recurrence`), which Mathcad evaluates *sequentially* and which emits a loop inside a `def` so its
   index stays local to the recurrence.
+- `--no-prints` (opt-in, `.py` output only) renders every inline-evaluation echo as a
+  `# = <expr>` comment instead of a `print(...)` call — `# shown in Mathcad` where the echo is
+  just the name the line assigns, since the expression would repeat it. The script still
+  computes; it shows nothing, so it is for *reading* a sheet, not for checking its numbers.
+  A notebook has cell output of its own, so the flag is **refused** there rather than silently
+  ignored. Two consequences fall out of existing conventions rather than needing new code: the
+  import list is read off the emitted *code* (`_identifiers` tokenizes comments away), so a
+  helper nothing but an echo used — `disp`, typically — correctly stops being imported; and a
+  region whose only statement was that print leaves `guard_cached_error` with a comment for a
+  body, where a `try` would be a `SyntaxError`, so the guard degrades to its note alone.
+
 - `--trace-source` (opt-in, default off) annotates each generated statement with
   `# mcdx region <id>` — the originating `<region>`'s `region-id` in `worksheet.xml` — plus any
   renamed target's original Mathcad name (`# mcdx region 12, "σ_c" -> sigma_c`) and, if the region

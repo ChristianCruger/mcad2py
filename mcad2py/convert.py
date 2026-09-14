@@ -73,12 +73,17 @@ def convert_file(
     fmt: str = "notebook",
     trace_source: bool = False,
     include_header_footer: bool = True,
+    prints: bool = True,
 ) -> str:
     """Convert a ``.mcdx`` file to source. ``fmt`` is ``"notebook"`` or ``"py"``.
 
     ``trace_source`` annotates each generated statement with a back-reference
     to its originating Mathcad worksheet region (see ``--trace-source``).
     ``include_header_footer`` preserves document context as comments.
+    ``prints`` applies to ``fmt="py"`` only: with ``False`` each inline
+    evaluation becomes a ``# = <expr>`` comment instead of a ``print(...)``.
+    A notebook shows results through its own cell output, so it has no
+    equivalent -- passing ``False`` with ``fmt="notebook"`` is an error.
     """
     pkg = load_mcdx(path)
     ws = convert_worksheet(pkg)
@@ -87,8 +92,11 @@ def convert_file(
             ws,
             trace_source=trace_source,
             include_header_footer=include_header_footer,
+            prints=prints,
         )
     if fmt == "notebook":
+        if not prints:
+            raise ValueError("prints=False applies to the 'py' format only")
         return to_ipynb_string(
             ws,
             trace_source=trace_source,

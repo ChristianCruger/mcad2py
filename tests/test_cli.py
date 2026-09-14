@@ -121,3 +121,52 @@ def test_public_api():
     assert set(mcad2py.__all__) == {"convert_file", "convert_worksheet", "__version__"}
     assert callable(mcad2py.convert_file)
     assert callable(mcad2py.convert_worksheet)
+
+
+# ---------------------------------------------------------------------------
+# --no-prints
+# ---------------------------------------------------------------------------
+
+
+def test_no_prints_turns_every_echo_into_a_comment(capsys):
+    """The script still computes; it just shows nothing.
+
+    Mathcad's inline ``=`` is a display, so the comment has to stay -- a reader
+    (or an agent) needs to know which regions the sheet shows, and in which
+    unit. What it must not do is drop a region or change the arithmetic.
+    """
+    assert main(["convert", str(REFERENCE), "-f", "py", "-o", "-"]) == 0
+    with_prints = capsys.readouterr().out
+
+    assert main(["convert", str(REFERENCE), "-f", "py", "-o", "-", "--no-prints"]) == 0
+    without = capsys.readouterr().out
+
+    assert "print(" in with_prints
+    assert "print(" not in without
+    assert "# = disp(f_cd, ureg.MPa)" in without
+    # An echo that is the bare name just assigned says nothing the line above
+    # doesn't, so it collapses to the bare fact that Mathcad shows it.
+    assert "mu = tan(phi)  # shown in Mathcad" in without
+
+    # Same statements either way: only the echo lines differ. The import list is
+    # read off the emitted *code* (comments are tokenized away), so a helper used
+    # by nothing but an echo -- `disp` here -- correctly stops being imported.
+    def statements(text: str) -> list[str]:
+        return [
+            line.split("  #")[0]
+            for line in text.splitlines()
+            if line
+            and not line.lstrip().startswith(("#", "import ", "from "))
+            and not line.startswith("print(")
+        ]
+
+    assert statements(without) == statements(with_prints)
+    assert "disp" not in without.split("\n\n")[0]
+
+
+def test_no_prints_is_refused_for_a_notebook(capsys):
+    """A notebook shows results through its own cell output, so the flag has no
+    meaning there -- say so rather than writing a notebook that shows nothing."""
+    code = main(["convert", str(REFERENCE), "-f", "notebook", "-o", "-", "--no-prints"])
+    assert code == 1
+    assert "--no-prints applies to .py output only" in capsys.readouterr().err

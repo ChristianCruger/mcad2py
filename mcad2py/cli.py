@@ -46,6 +46,14 @@ def main(argv: list[str] | None = None) -> int:
         "(and original name, if renamed).",
     )
     conv.add_argument(
+        "--no-prints",
+        dest="prints",
+        action="store_false",
+        help="(.py output only) show each inline evaluation as a '# = <expr>' "
+        "comment instead of a print(...) call; the script then computes but "
+        "shows nothing.",
+    )
+    conv.add_argument(
         "--no-header-footer",
         dest="include_header_footer",
         action="store_false",
@@ -61,12 +69,20 @@ def main(argv: list[str] | None = None) -> int:
 
 def _run_convert(args: argparse.Namespace) -> int:
     fmt = args.format or _infer_format(args.output)
+    if not args.prints and fmt != "py":
+        print(
+            "error: --no-prints applies to .py output only "
+            "(a notebook shows results through its own cell output)",
+            file=sys.stderr,
+        )
+        return 1
     try:
         result = convert_file(
             args.input,
             fmt=fmt,
             trace_source=args.trace_source,
             include_header_footer=args.include_header_footer,
+            prints=args.prints,
         )
     except (OSError, ValueError) as exc:
         # The loader raises these with user-facing messages (missing file, not a
