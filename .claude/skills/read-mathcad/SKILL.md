@@ -15,11 +15,17 @@ Convert it to a `.py` script and read that (it preserves region order, comments,
 and inline-evaluation results):
 
 ```bash
-python -m mcad2py.cli convert "<path/to/file.mcdx>" -o - -f py
+python -m mcad2py.cli convert "<path/to/file.mcdx>" -o - -f py --no-prints
 ```
 
-This prints the script to stdout. Read it top-to-bottom: `:=` becomes assignment, Mathcad's
-inline `=` becomes a `print(... .to(unit))`, text regions become `# comments`.
+This prints the script to stdout. Read it top-to-bottom: `:=` becomes assignment, text regions
+become `# comments`.
+
+Mathcad's inline `=` is a *display*, not a computation. `--no-prints` shows it as a comment
+(`# = disp(c, ureg.MPa)`, or `# shown in Mathcad` when the value is the name just assigned)
+instead of a `print(...)` call, which keeps one region on one line and is much easier to read.
+Drop the flag when you intend to **run** the script: the prints are then the only way to see
+the numbers.
 
 To produce a notebook the user can run instead:
 
@@ -30,7 +36,8 @@ python -m mcad2py.cli convert "<path/to/file.mcdx>"   # writes <file>.ipynb
 ## Interpreting the output
 
 - `x = 30 * ureg.MPa / 1.5` — a definition with units (Pint `ureg`).
-- `x.to(ureg.MPa)` / `print(x.to(ureg.MPa))` — Mathcad showed this result inline.
+- `x.to(ureg.MPa)` / `print(x.to(ureg.MPa))` / `# = x.to(ureg.MPa)` — Mathcad showed this
+  result inline; the comment form is what `--no-prints` emits.
 - `tan(phi)`, `sin(...)`, `cot(...)` — angle-aware helpers from
   `mcad2py.runtime` (accept `deg` or `rad`), matching Mathcad trig.
 - `math.pi` is `π`; Greek/subscripted names are transliterated (`β`->`beta`, `f_cd`).
@@ -167,6 +174,18 @@ To confirm computed values, run the generated script — it executes with real P
 ```bash
 python -m mcad2py.cli convert "<file.mcdx>" -f py > /tmp/sheet.py && python /tmp/sheet.py
 ```
+
+Convert **without** `--no-prints` here. The script's stdout is the only place you can see the
+computed values; with the flag it computes correctly and shows nothing.
+
+To ask for a few named values instead of reading the whole output, run the script as a module
+and read its namespace — this works either way, and is the better choice on a long sheet:
+
+```bash
+python -c "import runpy; ns = runpy.run_path('/tmp/sheet.py'); print(ns['c_eff'], ns['f_cd'])"
+```
+
+Use the **Python** name (the one the listing shows), not the Mathcad name.
 
 The original file's cached results live inside it at `mathcad/result.xml` (unzip the
 `.mcdx`) if you need to compare against what Mathcad itself computed.

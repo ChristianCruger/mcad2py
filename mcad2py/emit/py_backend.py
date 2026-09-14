@@ -8,6 +8,7 @@ from .codegen import (
     combobox_assign_lines,
     context_comment_lines,
     declaration_lines,
+    echo_comment_lines,
     echo_expr,
     expr_to_str,
     grid_plot_lines,
@@ -30,12 +31,20 @@ def to_python(
     *,
     trace_source: bool = False,
     include_header_footer: bool = True,
+    prints: bool = True,
 ) -> str:
+    """Render the worksheet as a script.
+
+    With ``prints=False`` every inline-evaluation echo becomes a ``# = <expr>``
+    comment instead of a ``print(...)`` call, which reads far better as a source
+    listing. The script then computes but shows nothing -- so use it to *read* a
+    sheet, not to check its numbers.
+    """
     # The body is rendered first: the header's imports are read off the text it
     # will sit above, rather than predicted from the IR (see `header_lines`).
     body: list[str] = []
     for region in ws.regions:
-        out = _guarded(_render_region(region), region)
+        out = _guarded(_render_region(region, prints=prints), region)
         if trace_source and out:
             comment = source_comment(region)
             if comment is not None:
@@ -64,7 +73,32 @@ def _guarded(lines: list[str], region: ir.Region) -> list[str]:
     return lines[:lead] + guard_cached_error(lines[lead:], region)
 
 
-def _render_region(region: ir.Region) -> list[str]:
+def _echo_lines(
+    echo: str, prints: bool, *, target: str | None = None
+) -> list[str]:
+    if prints:
+        return print_lines(echo)
+    return echo_comment_lines(echo, target=target)
+
+
+def _append_echo(out: list[str], region: ir.Region, prints: bool) -> list[str]:
+    """Add the region's echo, if it has one, below the statement it belongs to.
+
+    Without prints the echo is a comment, so it rides on the end of the
+    statement line instead of taking one of its own -- one region, one line.
+    """
+    echo = echo_expr(region)
+    if echo is None:
+        return out
+    target = getattr(region, "target", None)
+    lines = _echo_lines(echo, prints, target=getattr(target, "py", None))
+    if not prints and len(lines) == 1:
+        out[-1] = f"{out[-1]}  {lines[0]}"
+        return out
+    return out + lines
+
+
+def _render_region(region: ir.Region, *, prints: bool = True) -> list[str]:
     if isinstance(region, ir.TextRegion):
         return [""] + [f"# {line}" for line in region.text.splitlines()]
 
@@ -73,38 +107,26 @@ def _render_region(region: ir.Region) -> list[str]:
 
     if isinstance(region, ir.Define):
         out = ["", assignment_line(region)]
-        echo = echo_expr(region)
-        if echo is not None:
-            out.extend(print_lines(echo))
-        return out
+        return _append_echo(out, region, prints)
 
     if isinstance(region, ir.MultiAssign):
         out = ["", *multi_assign_lines(region)]
-        echo = echo_expr(region)
-        if echo is not None:
-            out.extend(print_lines(echo))
-        return out
+        return _append_echo(out, region, prints)
 
     if isinstance(region, ir.ComboBoxAssign):
         return ["", *combobox_assign_lines(region)]
 
     if isinstance(region, ir.IndexAssign):
         out = ["", index_assign_line(region)]
-        echo = echo_expr(region)
-        if echo is not None:
-            out.extend(print_lines(echo))
-        return out
+        return _append_echo(out, region, prints)
 
     if isinstance(region, ir.Recurrence):
         out = ["", *recurrence_lines(region)]
-        echo = echo_expr(region)
-        if echo is not None:
-            out.extend(print_lines(echo))
-        return out
+        return _append_echo(out, region, prints)
 
     if isinstance(region, ir.Evaluate):
         echo = echo_expr(region)
-        return ["", *print_lines(echo)] if echo is not None else []
+        return ["", *_echo_lines(echo, prints)] if echo is not None else []
 
     if isinstance(region, ir.Statement):
         return ["", expr_to_str(region.value)]
@@ -122,7 +144,7 @@ def _render_region(region: ir.Region) -> list[str]:
         return ["", expr_to_str(region.equation)]
 
     if isinstance(region, ir.SymbolicEval):
-        return ["", *print_lines(symbolic_eval_expr(region))]
+        return ["", *_echo_lines(symbolic_eval_expr(region), prints)]
 
     if isinstance(region, ir.SolveBlock):
         return ["", *solve_block_lines(region)]
@@ -137,8 +159,11 @@ def _render_region(region: ir.Region) -> list[str]:
         # The Python it would have been, commented out. A downstream note reads
         # "needs b, left undefined above", which is only actionable once you can
         # see what ``b`` was.
-        would_be = [f"# {line}" if line else "#"
-                    for line in _render_region(region.original)] if region.original else []
+        would_be = (
+            [f"# {line}" if line else "#"
+             for line in _render_region(region.original, prints=prints)]
+            if region.original else []
+        )
         while would_be and would_be[0] == "#":
             would_be.pop(0)
         return ["", *would_be, f"# TODO unsupported region: {region.note}"]

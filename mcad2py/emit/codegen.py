@@ -657,6 +657,25 @@ def print_lines(echo: str) -> list[str]:
     return [f"print({echo})"]
 
 
+def echo_comment_lines(echo: str, *, target: str | None = None) -> list[str]:
+    """The same echo as a comment: ``# = <expr>``, for ``--no-prints``.
+
+    Mathcad's inline ``=`` is a display, not a computation, so a reader (or an
+    agent) still needs to know *which* regions the sheet shows and in which
+    unit. Dropping the echo outright would lose that, and would leave an
+    evaluate-only region with nothing at all.
+
+    ``target`` is the name just assigned, if any. When the echo is that bare
+    name the expression carries nothing the line above doesn't already say, so
+    the comment states only that Mathcad shows the value.
+    """
+    expr, marker, note = echo.rpartition("  # ")
+    if not (marker and note.startswith(("TODO", "placeholder"))):
+        expr, note = echo, None
+    body = "# shown in Mathcad" if expr == target else f"# = {expr}"
+    return [f"# {note}", body] if note else [body]
+
+
 def echo_expr(region: ir.Region) -> str | None:
     """The expression to display for an evaluated region, or None.
 
@@ -726,6 +745,12 @@ def guard_cached_error(lines: list[str], region: ir.Region) -> list[str]:
     """
     if not region.cached_error or not lines:
         return lines
+    if not any(line.strip() and not line.lstrip().startswith("#") for line in lines):
+        # Nothing left to run -- ``--no-prints`` turned the region's only
+        # statement into a comment. A ``try`` with a comment for a body is a
+        # SyntaxError, and there is no longer anything that can raise, so the
+        # note alone carries what Mathcad reported.
+        return [f"# Mathcad reports an error here: {region.cached_error}", *lines]
     body = [f"    {line}" if line else line for line in lines]
     return [
         f"# Mathcad reports an error here: {region.cached_error}",
