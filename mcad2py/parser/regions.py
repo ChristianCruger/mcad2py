@@ -17,6 +17,7 @@ from .expressions import (
     parse_expr,
     read_identifier,
     sanitize,
+    unlabelled_scale_units,
 )
 from .namespaces import localname
 
@@ -884,6 +885,13 @@ def _detect_domain(
 
 
 def _parse_solveblock(elem: ET.Element) -> ir.Region:
+    # A solve block is numeric, so an unlabelled scale unit (``0.4 mm`` typed
+    # into a constraint) is the unit -- see ``unlabelled_scale_units``.
+    with unlabelled_scale_units():
+        return _parse_solveblock_body(elem)
+
+
+def _parse_solveblock_body(elem: ET.Element) -> ir.Region:
     """Parse a ``<solveblock>``: guess values, constraints, and the solver.
 
     Sub-regions are tagged ``solve-block-category`` = ``guess-value`` /
@@ -896,6 +904,7 @@ def _parse_solveblock(elem: ET.Element) -> ir.Region:
     command = "find"
     display_unit: ir.Expr | None = None
     params: list[str] = []
+    evaluate = False
 
     regions_elem = next((c for c in elem if localname(c.tag) == "regions"), None)
     for sub in regions_elem if regions_elem is not None else []:
@@ -914,6 +923,9 @@ def _parse_solveblock(elem: ET.Element) -> ir.Region:
                 constraints.append(eq)
         elif category == "solver":
             command, unknowns, targets, display_unit, params = _parse_solver(inner)
+            # ``<ml:define>`` holding ``<ml:eval>``: the sheet shows the result.
+            parts = list(inner)
+            evaluate = len(parts) > 1 and localname(parts[1].tag) == "eval"
 
     if not targets:
         return ir.UnsupportedRegion(note="solve block (no solver region)")
@@ -925,6 +937,7 @@ def _parse_solveblock(elem: ET.Element) -> ir.Region:
         command=command,
         display_unit=display_unit,
         params=params,
+        evaluate=evaluate,
     )
 
 
@@ -946,6 +959,9 @@ def _parse_solver(
     if localname(target_elem.tag) == "function":
         fname, params = _parse_function_header(target_elem)
         targets = [fname]
+    elif localname(target_elem.tag) == "id":
+        # A single unknown: ``x := find(x)``, the target a bare name.
+        targets = [_parse_target(target_elem)]
     else:
         targets = [_parse_target(c) for c in target_elem if localname(c.tag) == "id"]
 

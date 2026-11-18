@@ -161,7 +161,11 @@ def _render_region(region: ir.Region) -> nbformat.NotebookNode | None:
         return nbformat.v4.new_code_cell(symbolic_eval_expr(region))
 
     if isinstance(region, ir.SolveBlock):
-        return nbformat.v4.new_code_cell("\n".join(solve_block_lines(region)))
+        lines = solve_block_lines(region)
+        echo = echo_expr(region)
+        if echo is not None:
+            lines.append(echo)  # bare last line -> inline result, like Mathcad "="
+        return nbformat.v4.new_code_cell("\n".join(lines))
 
     if isinstance(region, ir.Plot):
         return nbformat.v4.new_code_cell("\n".join(plot_lines(region)))

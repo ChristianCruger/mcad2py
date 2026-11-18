@@ -127,6 +127,7 @@ def _residuals_e_1_k_1(_x):
         M_int(e, k) - (M_ext),
     ]
 e_1, k_1 = solve_block(_residuals_e_1_k_1, [e, k])
+print([e_1, k_1])
 
 # check:
 

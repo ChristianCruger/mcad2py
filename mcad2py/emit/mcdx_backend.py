@@ -130,6 +130,10 @@ def harvest_ids(worksheet_xml: str) -> dict[tuple[str, str], str]:
         # <ml:unitOverride> carries no ``label-is-contextual``.
         if key not in found or "label-is-contextual" in text:
             found[key] = text
+        # An unlabelled id is also kept under its own key, for a unit the
+        # parser read from one (``UnitRef.unlabelled``).
+        if node.get("labels") is None:
+            found.setdefault(("", name), text)
     return found
 
 
@@ -150,6 +154,8 @@ class _Writer:
             return f"<ml:real>{_number(node.value)}</ml:real>", ATOM_PREC
 
         if isinstance(node, ir.UnitRef):
+            if node.unlabelled and ("", node.name) in self.ids:
+                return self.ids[("", node.name)], ATOM_PREC
             return self.unit(node.name), ATOM_PREC
 
         if isinstance(node, ir.Name):
