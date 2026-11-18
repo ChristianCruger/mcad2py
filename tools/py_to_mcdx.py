@@ -64,6 +64,29 @@ _FUNC_BACK.update({"math.exp": "exp", "math.log": "ln", "math.sqrt": "sqrt"})
 
 _UNIT_BACK = {py: mc for mc, py in UNIT_ALIASES.items()}
 
+# Runtime helpers that are *codegen idioms*, not Mathcad builtins: each one
+# stands for an operator or a region shape, so a same-name call would be wrong.
+_IDIOMS = {
+    "disp", "index_build", "index_build_2d", "vec_set", "elementwise", "solve_block",
+    "integral", "summation", "range_sum", "derivative", "sample", "plot_domain",
+    "plot_axis", "plot_trace", "nth_root", "power", "col", "matrix", "arange",
+    "matelem", "matcol", "transpose", "vectorize", "total", "matmul", "mc_min",
+    "mc_max", "determinant", "cross",
+}
+
+
+def _runtime_names() -> set[str]:
+    import mcad2py.runtime as runtime  # noqa: PLC0415
+    return {n for n in dir(runtime)
+            if not n.startswith("_") and callable(getattr(runtime, n))} - _IDIOMS
+
+
+_RUNTIME_SAME_NAME = _runtime_names()
+
+# Calls the parser makes from an operator element rather than a named builtin.
+_OPERATOR_CALLS = {"matrow": "matrow", "abs": "absval", "determinant": "determinant",
+                   "cross": "crossProduct"}
+
 _OPS = {ast.Add: "add", ast.Sub: "sub", ast.Mult: "mul", ast.Div: "div", ast.Pow: "pow"}
 
 
@@ -100,9 +123,44 @@ class Reader:
             if isinstance(inner, ir.Number) and not inner.value.startswith("-"):
                 return ir.Number("-" + inner.value)
             return ir.UnaryOp(op="neg", operand=inner)
+        if isinstance(node, ast.Subscript) and not isinstance(node.slice, ast.Tuple):
+            return ir.Index(base=self.expr(node.value), index=self.expr(node.slice))
         if isinstance(node, ast.Call) and not node.keywords:
             head = ast.unparse(node.func)
+            if head == "matrix" and node.args and all(
+                    isinstance(a, ast.List) for a in node.args):
+                rows = [[self.expr(e) for e in a.elts] for a in node.args]
+                if len({len(r) for r in rows}) != 1:
+                    raise Refused(f"line {node.lineno}: a matrix with ragged rows")
+                # IR elements are column-major, as Prime stores them.
+                return ir.MatrixLiteral(rows=len(rows), cols=len(rows[0]),
+                                        elements=[r[j] for j in range(len(rows[0]))
+                                                  for r in rows])
             args = [self.expr(a) for a in node.args]
+            if head == "col" and args:
+                return ir.MatrixLiteral(rows=len(args), cols=1, elements=args)
+            if head == "arange" and len(args) == 3:
+                step = args[2]
+                if isinstance(step, ir.Number) and step.value == "1":
+                    step = None  # the implicit step: ``1 .. n``
+                return ir.Range(start=args[0], stop=args[1], step=step)
+            if head == "matelem" and len(args) == 3:
+                return ir.Index2D(base=args[0], row=args[1], col=args[2])
+            if head == "matcol" and len(args) == 2:
+                return ir.MatCol(base=args[0], index=args[1])
+            if head == "transpose" and len(args) == 1:
+                return ir.Transpose(operand=args[0])
+            if head == "vectorize" and len(args) == 1:
+                return ir.Vectorize(operand=args[0])
+            if head == "total" and len(args) == 1:
+                return ir.VectorSum(operand=args[0])
+            if head == "matmul" and len(args) == 2:
+                # The shape pass's split of Mathcad's one ``·``; undo it.
+                return ir.BinOp(op="mul", left=args[0], right=args[1])
+            if head in ("mc_min", "mc_max"):
+                return ir.Call(func=head[3:], args=args)
+            if head in ("determinant", "cross"):
+                return ir.Call(func=head, args=args)
             if head == "nth_root" and len(args) == 2:
                 degree = args[1]
                 square = isinstance(degree, ir.Number) and degree.value == "2"
@@ -111,6 +169,9 @@ class Reader:
                 return ir.BinOp(op="pow", left=args[0], right=args[1])
             if head in _FUNC_BACK:
                 return ir.Call(func=_FUNC_BACK[head], args=args)
+            if head in _RUNTIME_SAME_NAME:
+                # A builtin with no FUNCTIONS entry keeps its Mathcad name.
+                return ir.Call(func=head, args=args)
         raise Refused(f"line {node.lineno}: {ast.unparse(node)!r} is outside the subset")
 
     def shown(self, stmt: ast.stmt) -> tuple[ir.Expr, ir.Expr | None] | None:
@@ -156,6 +217,37 @@ def comment_blocks(text: str) -> list[tuple[int, list[str]]]:
     return [(line, paras) for line, paras in blocks if any(p.strip() for p in paras)]
 
 
+def expr_text(node: ir.Expr) -> str:
+    from mcad2py.emit.codegen import expr_to_str  # noqa: PLC0415
+    return expr_to_str(node)
+
+
+def index_build(reader: Reader, stmt: ast.stmt) -> ir.IndexAssign | None:
+    """``X = index_build(i, lambda i: expr)`` -> Mathcad ``X[i] := expr``.
+
+    The two-subscript ``index_build_2d(i, j, lambda i, j: expr)`` is ``X[i, j]``.
+    """
+    if not (isinstance(stmt, ast.Assign) and len(stmt.targets) == 1
+            and isinstance(stmt.targets[0], ast.Name)
+            and isinstance(stmt.value, ast.Call)):
+        return None
+    call = stmt.value
+    head = ast.unparse(call.func)
+    arity = {"index_build": 1, "index_build_2d": 2}.get(head)
+    if arity is None or len(call.args) != arity + 1:
+        return None
+    indices, fn = call.args[:arity], call.args[arity]
+    params = [a.arg for a in fn.args.args] if isinstance(fn, ast.Lambda) else []
+    if not (all(isinstance(x, ast.Name) for x in indices)
+            and params == [x.id for x in indices]):
+        raise Refused(f"line {stmt.lineno}: {head} must take a lambda over its own "
+                      "range variables")
+    names = [reader.expr(x) for x in indices]
+    return ir.IndexAssign(target=reader.expr(stmt.targets[0]), index=names[0],
+                          value=reader.expr(fn.body),
+                          col_index=names[1] if arity == 2 else None)
+
+
 def read_python(text: str) -> list[ir.Region]:
     tree = ast.parse(text)
     reader = Reader(text)
@@ -171,7 +263,16 @@ def read_python(text: str) -> list[ir.Region]:
             regions.append(ir.TextRegion(text="\n".join(paras)))
             continue
         stmt = body[i]
-        if (isinstance(stmt, ast.Assign) and len(stmt.targets) == 1
+        if (built := index_build(reader, stmt)) is not None:
+            nxt = reader.shown(body[i + 1]) if i + 1 < len(body) else None
+            # A 1-D build echoes ``X[i]``; a 2-D one echoes the whole matrix.
+            echo = (built.target.py if built.col_index is not None
+                    else f"{built.target.py}[{built.index.py}]")
+            if nxt and expr_text(nxt[0]) == echo:
+                built.evaluate, built.display_unit = True, nxt[1]
+                i += 1
+            regions.append(built)
+        elif (isinstance(stmt, ast.Assign) and len(stmt.targets) == 1
                 and isinstance(stmt.targets[0], ast.Name)):
             target = reader.expr(stmt.targets[0])
             define = ir.Define(target=target, value=reader.expr(stmt.value))
@@ -196,6 +297,8 @@ def read_python(text: str) -> list[ir.Region]:
 
 class Writer(mb._Writer):
     def emit(self, node):
+        if isinstance(node, ir.Call) and node.func in _OPERATOR_CALLS:
+            return self.apply(_OPERATOR_CALLS[node.func], *node.args)
         if isinstance(node, ir.Call):
             head = mb.ID_TEMPLATE.format(role="FUNCTION", body=mb._escape(node.func))
             args = [self.emit(a)[0] for a in node.args]
@@ -205,7 +308,47 @@ class Writer(mb._Writer):
             degree = "<ml:placeholder />" if node.degree is None else self.emit(node.degree)[0]
             return (f"<ml:apply><ml:nthRoot />{degree}{self.emit(node.operand)[0]}</ml:apply>",
                     mb.ATOM_PREC)
+        if isinstance(node, ir.MatrixLiteral):
+            cells = "".join(self.emit(e)[0] for e in node.elements)
+            return (f'<ml:matrix rows="{node.rows}" cols="{node.cols}">{cells}</ml:matrix>',
+                    mb.ATOM_PREC)
+        if isinstance(node, ir.Range):
+            start, stop = self.emit(node.start)[0], self.emit(node.stop)[0]
+            if node.step is None:
+                return f"<ml:range>{start}{stop}</ml:range>", mb.ATOM_PREC
+            # Mathcad states a step as the *second* value, ``a, a + s .. b``; the
+            # parser turned that into ``s = next - a``, so undo it when it can.
+            step = node.step
+            if (isinstance(step, ir.BinOp) and step.op == "sub"
+                    and expr_text(step.right) == expr_text(node.start)):
+                nxt = step.left
+            else:
+                nxt = ir.BinOp(op="add", left=node.start, right=step)
+            return (f"<ml:range><ml:sequence>{start}{self.emit(nxt)[0]}</ml:sequence>"
+                    f"{stop}</ml:range>", mb.ATOM_PREC)
+        if isinstance(node, ir.Index):
+            return self.apply("indexer", node.base, node.index)
+        if isinstance(node, ir.Index2D):
+            seq = f"<ml:sequence>{self.emit(node.row)[0]}{self.emit(node.col)[0]}</ml:sequence>"
+            return (f"<ml:apply><ml:indexer />{self.emit(node.base)[0]}{seq}</ml:apply>",
+                    mb.ATOM_PREC)
+        if isinstance(node, ir.MatCol):
+            return self.apply("matcol", node.base, node.index)
+        if isinstance(node, ir.Transpose):
+            return self.apply("transpose", node.operand)
+        if isinstance(node, ir.Vectorize):
+            return self.apply("vectorize", node.operand)
+        if isinstance(node, ir.VectorSum):
+            # A bare Σ: no bound variable, no bounds.
+            return ("<ml:apply><ml:summation /><ml:lambda><ml:boundVars><ml:placeholder />"
+                    f"</ml:boundVars>{self.emit(node.operand)[0]}</ml:lambda>"
+                    "<ml:upperBound><ml:placeholder /></ml:upperBound></ml:apply>",
+                    mb.ATOM_PREC)
         return super().emit(node)
+
+    def apply(self, tag: str, *operands: ir.Expr) -> tuple[str, int]:
+        inner = "".join(self.emit(o)[0] for o in operands)
+        return f"<ml:apply><ml:{tag} />{inner}</ml:apply>", mb.ATOM_PREC
 
 
 def override_xml(writer: Writer, unit: ir.Expr | None) -> str:
@@ -261,6 +404,17 @@ def region_xml(region: ir.Region, rid: int, top: float, writer: Writer) -> str:
         width = text_width(region.text.split("\n"))
         return (f'<region region-id="{rid}" width="{width}" top="{top}" left="38.4">'
                 f'<text item-idref="Rtext{rid}">{FLOW_DOC}</text></region>')
+    if isinstance(region, ir.IndexAssign):
+        target = (writer.emit(ir.Index(base=region.target, index=region.index))[0]
+                  if region.col_index is None else
+                  writer.emit(ir.Index2D(base=region.target, row=region.index,
+                                         col=region.col_index))[0])
+        value = writer.emit(region.value)[0]
+        if region.evaluate:
+            value = f"<ml:eval>{value}{override_xml(writer, region.display_unit)}</ml:eval>"
+        math = f"<ml:define>{target}{value}</ml:define>"
+        return (f'<region region-id="{rid}" top="{top}" left="38.4">'
+                f'<math resultRef="{rid}">{math}</math></region>')
     if isinstance(region, ir.Define):
         target = writer.emit(region.target)[0]
         value = writer.emit(region.value)[0]
