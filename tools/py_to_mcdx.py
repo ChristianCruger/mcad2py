@@ -10,8 +10,11 @@ The input is the *flat* dialect ``mcad2py convert -f py`` writes:
 * ``print(name)`` / ``print(disp(name[, unit]))`` straight after it
                                          -> that definition also shows ``=``
 * ``print(expr)`` on its own             -> an evaluation ``expr =``
-* ``# comment`` lines                    -> skipped (text regions need XAML)
+* a block of ``# comment`` lines         -> a text region, one paragraph per line
 * imports and the module docstring       -> skipped
+
+A comment *after* code on the same line (``# mcdx region 3`` from
+``--trace-source``) is not text and is ignored.
 
 Expressions: numbers, ``ureg.<unit>``, names, ``+ - * / **``, negation, the
 calls ``f(x, ...)`` of a Mathcad builtin, ``nth_root(x, n)``, ``math.pi``,
@@ -26,7 +29,9 @@ from __future__ import annotations
 
 import argparse
 import ast
+import io
 import sys
+import tokenize
 import zipfile
 from pathlib import Path
 
@@ -123,15 +128,48 @@ class Reader:
         return self.expr(arg), None
 
 
+def comment_blocks(text: str) -> list[tuple[int, list[str]]]:
+    """``(first line, [paragraph, ...])`` for each run of whole-line comments.
+
+    A run ends at a blank line or at code, which is how the backends separate
+    one text region from the next. A comment that shares its line with code is
+    an annotation, not text.
+    """
+    blocks: list[tuple[int, list[str]]] = []
+    last_line = -2
+    code_lines: set[int] = set()
+    tokens = list(tokenize.generate_tokens(io.StringIO(text).readline))
+    for tok in tokens:
+        if tok.type not in (tokenize.COMMENT, tokenize.NL, tokenize.NEWLINE,
+                            tokenize.INDENT, tokenize.DEDENT, tokenize.ENDMARKER):
+            code_lines.update(range(tok.start[0], tok.end[0] + 1))
+    for tok in tokens:
+        if tok.type != tokenize.COMMENT or tok.start[0] in code_lines:
+            continue
+        line = tok.start[0]
+        body = tok.string[1:].removeprefix(" ").rstrip()
+        if blocks and line == last_line + 1:
+            blocks[-1][1].append(body)
+        else:
+            blocks.append((line, [body]))
+        last_line = line
+    return [(line, paras) for line, paras in blocks if any(p.strip() for p in paras)]
+
+
 def read_python(text: str) -> list[ir.Region]:
     tree = ast.parse(text)
     reader = Reader(text)
     body = [s for s in tree.body if not isinstance(s, (ast.Import, ast.ImportFrom))]
     if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
         body = body[1:]  # docstring
+    texts = comment_blocks(text)
     regions: list[ir.Region] = []
     i = 0
-    while i < len(body):
+    while i < len(body) or texts:
+        if texts and (i >= len(body) or texts[0][0] < body[i].lineno):
+            _line, paras = texts.pop(0)
+            regions.append(ir.TextRegion(text="\n".join(paras)))
+            continue
         stmt = body[i]
         if (isinstance(stmt, ast.Assign) and len(stmt.targets) == 1
                 and isinstance(stmt.targets[0], ast.Name)):
@@ -175,7 +213,54 @@ def override_xml(writer: Writer, unit: ir.Expr | None) -> str:
     return f"<ml:unitOverride>{inner}</ml:unitOverride>"
 
 
+# What Prime writes inline for a text region; the real content lives in the
+# XamlPackage the ``item-idref`` names.
+FLOW_DOC = ('<FlowDocument FontFamily="Tahoma" FontStyle="Normal" FontWeight="Normal" '
+            'FontSize="14.6666666666667" Foreground="#FF000000" Background="#00FFFFFF" '
+            'TextAlignment="Left" xml:lang="en-us" Typography.Variants="Normal" '
+            'xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" />')
+
+_XAML_NS = "http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+
+
+def xaml_package(paragraphs: list[str]) -> bytes:
+    """A FlowDocument XamlPackage: a zip in the zip, one ``Document.xaml``."""
+    paras = "".join(
+        f'<Paragraph><Run>{mb._escape(p)}</Run></Paragraph>' if p else "<Paragraph />"
+        for p in paragraphs)
+    doc = (f'<Section xmlns="{_XAML_NS}" xml:space="preserve" TextAlignment="Left" '
+           'xml:lang="en-us" FontFamily="Tahoma" FontSize="14.6666666666667" '
+           f'Foreground="#FF000000">{paras}</Section>')
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("[Content_Types].xml", _XML + (
+            '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+            '<Default Extension="xaml" ContentType="application/vnd.ms-wpf.xaml+xml" />'
+            '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml" />'
+            '</Types>'))
+        zf.writestr("_rels/.rels", _XML + (
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Type="http://schemas.microsoft.com/wpf/2005/10/xaml/entry" '
+            'Target="/Xaml/Document.xaml" Id="R0" /></Relationships>'))
+        zf.writestr("Xaml/Document.xaml", doc)
+    return buf.getvalue()
+
+
+# Text a region is this wide before it wraps, in px; about 7 px per character
+# of 11 pt Tahoma.
+TEXT_MIN_WIDTH, TEXT_MAX_WIDTH, CHAR_WIDTH = 200, 600, 7.5
+
+
+def text_width(paragraphs: list[str]) -> float:
+    longest = max((len(p) for p in paragraphs), default=0)
+    return max(TEXT_MIN_WIDTH, min(TEXT_MAX_WIDTH, round(longest * CHAR_WIDTH)))
+
+
 def region_xml(region: ir.Region, rid: int, top: float, writer: Writer) -> str:
+    if isinstance(region, ir.TextRegion):
+        width = text_width(region.text.split("\n"))
+        return (f'<region region-id="{rid}" width="{width}" top="{top}" left="38.4">'
+                f'<text item-idref="Rtext{rid}">{FLOW_DOC}</text></region>')
     if isinstance(region, ir.Define):
         target = writer.emit(region.target)[0]
         value = writer.emit(region.value)[0]
@@ -243,11 +328,38 @@ ROW = 38.4  # one grid row in Prime's default layout, in device-independent px
 PRESENTATION = Path(__file__).with_name("mcdx_template") / "presentation.xml"
 
 
-def build(regions: list[ir.Region]) -> dict[str, str]:
+def rows(region: ir.Region) -> float:
+    """Grid rows ``region`` takes, including the gap below it."""
+    if isinstance(region, ir.TextRegion):
+        lines = sum(1 + len(p) * CHAR_WIDTH // TEXT_MAX_WIDTH
+                    for p in region.text.split("\n"))
+        return 0.5 + 0.5 * lines
+    return 1.5
+
+
+def build(regions: list[ir.Region]) -> dict[str, str | bytes]:
     writer = Writer({})
-    body = "".join(region_xml(r, i, ROW * (2 + 1.5 * i), writer)
-                   for i, r in enumerate(regions))
-    parts = dict(PARTS)
+    body, top, rels = [], 2 * ROW, []
+    parts: dict[str, str | bytes] = dict(PARTS)
+    math_id = 0
+    for rid, region in enumerate(regions):
+        if isinstance(region, ir.TextRegion):
+            target = f"/mathcad/xaml/FlowDocument{rid}.XamlPackage"
+            parts[target.lstrip("/")] = xaml_package(region.text.split("\n"))
+            rels.append('<Relationship Type="http://schemas.openxmlformats.org/officeDocument/'
+                        f'2006/relationships/flowDocument" Target="{target}" Id="Rtext{rid}" />')
+            body.append(region_xml(region, rid, round(top, 4), writer))
+        else:
+            # resultRef numbers the math regions only, as Prime does.
+            body.append(region_xml(region, rid, round(top, 4), writer)
+                        .replace(f'resultRef="{rid}"', f'resultRef="{math_id}"'))
+            math_id += 1
+        top += rows(region) * ROW
+    if rels:
+        parts["mathcad/_rels/worksheet.xml.rels"] = _XML + (
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            + "".join(rels) + "</Relationships>")
+    body = "".join(body)
     parts["mathcad/settings/presentation.xml"] = PRESENTATION.read_text(encoding="utf-8-sig")
     parts["[Content_Types].xml"] = parts["[Content_Types].xml"].replace(
         "</Types>",
@@ -257,10 +369,10 @@ def build(regions: list[ir.Region]) -> dict[str, str]:
     return parts
 
 
-def write_mcdx(parts: dict[str, str], out: Path) -> None:
+def write_mcdx(parts: dict[str, str | bytes], out: Path) -> None:
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
-        for name, text in parts.items():
-            zf.writestr(name, text.encode("utf-8"))
+        for name, data in parts.items():
+            zf.writestr(name, data if isinstance(data, bytes) else data.encode("utf-8"))
 
 
 def main(argv: list[str] | None = None) -> int:
