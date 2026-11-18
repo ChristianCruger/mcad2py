@@ -92,16 +92,59 @@ _OPS = {ast.Add: "add", ast.Sub: "sub", ast.Mult: "mul", ast.Div: "div", ast.Pow
 
 def mathcad_name(py: str) -> str:
     """``sigma_c`` -> ``σ_c``: the inverse of sanitize() by convention."""
-    head, sep, sub = py.partition("_")
+    # A trailing ``_`` is sanitize()'s guard against a Python keyword or
+    # builtin (``lambda_``, ``range_``); Mathcad cannot end a name in one.
+    head, sep, sub = py.rstrip("_").partition("_")
     head = _GREEK_BACK.get(head, head)
     return head + sep + sub
+
+
+_CMP = {ast.Lt: "lt", ast.Gt: "gt", ast.LtE: "le", ast.GtE: "ge", ast.Eq: "eq",
+        ast.NotEq: "ne"}
 
 
 class Reader:
     def __init__(self, text: str):
         self.text = text
+        # Python name -> Mathcad name of every user function defined so far.
+        # A call to one is labelled VARIABLE, which is how Prime tells it from
+        # a builtin.
+        self.functions: dict[str, str] = {}
 
     def expr(self, node: ast.expr) -> ir.Expr:
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return ir.Str(node.value)
+        if isinstance(node, ast.Compare):
+            # ``a <= e < b`` is Mathcad's chained comparison, which the parser
+            # reads left-nested: ((a <= e) < b).
+            left = self.expr(node.left)
+            for op, right in zip(node.ops, node.comparators):
+                if type(op) not in _CMP:
+                    break
+                left = ir.BinOp(op=_CMP[type(op)], left=left, right=self.expr(right))
+            else:
+                return left
+        if isinstance(node, ast.BoolOp):
+            op = "and_" if isinstance(node.op, ast.And) else "or_"
+            out = self.expr(node.values[0])
+            for v in node.values[1:]:
+                out = ir.BinOp(op=op, left=out, right=self.expr(v))
+            return out
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+            return ir.UnaryOp(op="not_", operand=self.expr(node.operand))
+        if isinstance(node, ast.IfExp):
+            # ``a if c else b`` is a one-line Mathcad program.
+            branches = [(self.expr(node.test), self.expr(node.body))]
+            rest = node.orelse
+            while isinstance(rest, ast.IfExp):
+                branches.append((self.expr(rest.test), self.expr(rest.body)))
+                rest = rest.orelse
+            branches.append((None, self.expr(rest)))
+            return ir.Program(branches=branches)
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                and node.func.id in self.functions and not node.keywords):
+            return ir.Call(func=node.func.id, args=[self.expr(a) for a in node.args],
+                           role="VARIABLE")
         if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)) \
                 and not isinstance(node.value, bool):
             return ir.Number(ast.get_source_segment(self.text, node) or repr(node.value))
@@ -173,6 +216,9 @@ class Reader:
                 # A builtin with no FUNCTIONS entry keeps its Mathcad name.
                 return ir.Call(func=head, args=args)
         raise Refused(f"line {node.lineno}: {ast.unparse(node)!r} is outside the subset")
+
+    def program(self, fn: ast.FunctionDef) -> ir.Expr:
+        return ProgramReader(self).read(fn)
 
     def shown(self, stmt: ast.stmt) -> tuple[ir.Expr, ir.Expr | None] | None:
         """``print(x)`` / ``print(disp(x[, unit]))`` -> (x, unit)."""
@@ -248,6 +294,108 @@ def index_build(reader: Reader, stmt: ast.stmt) -> ir.IndexAssign | None:
                           col_index=names[1] if arity == 2 else None)
 
 
+def is_elementwise_line(stmt: ast.stmt) -> bool:
+    return (isinstance(stmt, ast.Assign) and len(stmt.targets) == 1
+            and isinstance(stmt.targets[0], ast.Name)
+            and ast.unparse(stmt.value) == f"elementwise({stmt.targets[0].id})")
+
+
+class ProgramReader:
+    """A ``def`` body -> Mathcad program IR (the inverse of codegen's two forms).
+
+    ``_program_def`` prints a single if/elif chain whose branches each return
+    one value, with a final bare ``return`` for the else: that is an
+    :class:`ir.Program`. Anything else is an imperative
+    :class:`ir.ProgramBlock`.
+    """
+
+    def __init__(self, reader: Reader):
+        self.r = reader
+
+    def read(self, fn: ast.FunctionDef) -> ir.Expr:
+        body = list(fn.body)
+        # ``X = None`` pre-declares a name the block builds with vec_set.
+        while (body and isinstance(body[0], ast.Assign)
+               and isinstance(body[0].value, ast.Constant) and body[0].value.value is None):
+            body.pop(0)
+        chain = self.if_chain(body)
+        if chain is not None:
+            return ir.Program(branches=chain)
+        return self.block(body, fn.lineno)
+
+    def if_chain(self, body: list[ast.stmt]):
+        if not body or not isinstance(body[0], ast.If) or len(body) > 2:
+            return None
+        if len(body) == 2 and not isinstance(body[1], ast.Return):
+            return None
+        branches = []
+        node: ast.stmt | None = body[0]
+        while isinstance(node, ast.If):
+            if len(node.body) != 1 or not isinstance(node.body[0], ast.Return):
+                return None
+            branches.append((self.r.expr(node.test), self.r.expr(node.body[0].value)))
+            if not node.orelse:
+                node = None
+            elif len(node.orelse) == 1 and isinstance(node.orelse[0], ast.If):
+                node = node.orelse[0]
+            else:
+                return None  # an ``else:`` block is the statement form
+        if len(body) == 2:
+            branches.append((None, self.r.expr(body[1].value)))
+        return branches
+
+    def block(self, stmts: list[ast.stmt], line: int) -> ir.ProgramBlock:
+        if len(stmts) == 1 and isinstance(stmts[0], ast.Pass):
+            stmts = []
+        return ir.ProgramBlock(statements=[self.stmt(s) for s in stmts])
+
+    def stmt(self, s: ast.stmt) -> ir.Stmt:
+        r = self.r
+        if isinstance(s, ast.Assign) and len(s.targets) == 1:
+            target, value = s.targets[0], s.value
+            if (isinstance(value, ast.Call) and isinstance(target, ast.Name)
+                    and ast.unparse(value.func) in ("vec_set", "col_set")
+                    and len(value.args) == 3 and ast.unparse(value.args[0]) == target.id):
+                base = r.expr(target)
+                where, new = value.args[1], r.expr(value.args[2])
+                if ast.unparse(value.func) == "col_set":
+                    return ir.LocalAssign(target=ir.MatCol(base=base, index=r.expr(where)),
+                                          value=new)
+                if isinstance(where, ast.Tuple) and len(where.elts) == 2:
+                    return ir.LocalAssign(
+                        target=ir.Index2D(base=base, row=r.expr(where.elts[0]),
+                                          col=r.expr(where.elts[1])), value=new)
+                return ir.LocalAssign(target=ir.Index(base=base, index=r.expr(where)),
+                                      value=new)
+            if isinstance(target, ast.Name):
+                return ir.LocalAssign(target=r.expr(target), value=r.expr(value))
+        if isinstance(s, ast.For) and isinstance(s.target, ast.Name) and not s.orelse:
+            return ir.ForLoop(var=r.expr(s.target), iterable=r.expr(s.iter),
+                              body=self.block(s.body, s.lineno))
+        if isinstance(s, ast.If):
+            branches = []
+            node: ast.stmt = s
+            while True:
+                branches.append((r.expr(node.test), self.block(node.body, node.lineno)))
+                if len(node.orelse) == 1 and isinstance(node.orelse[0], ast.If):
+                    node = node.orelse[0]
+                    continue
+                if node.orelse:
+                    branches.append((None, self.block(node.orelse, node.lineno)))
+                break
+            return ir.IfStmt(branches=branches)
+        if isinstance(s, ast.Return) and s.value is not None:
+            return ir.Return(value=r.expr(s.value))
+        if isinstance(s, ast.Expr):
+            return ir.ExprStmt(value=r.expr(s.value))
+        if (isinstance(s, ast.Try) and len(s.handlers) == 1 and not s.orelse
+                and not s.finalbody):
+            return ir.TryCatch(body=self.block(s.body, s.lineno),
+                               handler=self.block(s.handlers[0].body, s.lineno))
+        raise Refused(f"line {s.lineno}: {ast.unparse(s)[:60]!r} has no Mathcad "
+                      "program form")
+
+
 def read_python(text: str) -> list[ir.Region]:
     tree = ast.parse(text)
     reader = Reader(text)
@@ -272,6 +420,39 @@ def read_python(text: str) -> list[ir.Region]:
                 built.evaluate, built.display_unit = True, nxt[1]
                 i += 1
             regions.append(built)
+        elif is_elementwise_line(stmt):
+            pass  # ``f = elementwise(f)``: Mathcad's vectorize arrow implies it
+        elif isinstance(stmt, ast.FunctionDef):
+            name = stmt.name
+            nxt = body[i + 1] if i + 1 < len(body) else None
+            if (not stmt.args.args and name.startswith("_") and isinstance(nxt, ast.Assign)
+                    and ast.unparse(nxt) == f"{name[1:]} = {name}()"):
+                # A nullary helper: ``x := <program>`` for a plain variable.
+                target = reader.expr(ast.Name(id=name[1:]))
+                define = ir.Define(target=target, value=reader.program(stmt))
+                i += 1
+                shown = reader.shown(body[i + 1]) if i + 1 < len(body) else None
+                if shown and isinstance(shown[0], ir.Name) and shown[0].py == target.py:
+                    define.evaluate, define.display_unit = True, shown[1]
+                    i += 1
+                regions.append(define)
+            else:
+                target = ir.Name(py=name, original=mathcad_name(name))
+                reader.functions[name] = target.original
+                params = [a.arg for a in stmt.args.args]
+                regions.append(ir.Define(target=target, value=reader.program(stmt),
+                                         params=params))
+        elif (isinstance(stmt, ast.Assign) and len(stmt.targets) == 1
+                and isinstance(stmt.targets[0], ast.Name)
+                and isinstance(stmt.value, ast.Lambda)):
+            fn = stmt.value
+            if fn.args.vararg or fn.args.kwarg or fn.args.kwonlyargs or fn.args.defaults:
+                raise Refused(f"line {stmt.lineno}: only plain positional parameters")
+            name = stmt.targets[0].id
+            target = ir.Name(py=name, original=mathcad_name(name))
+            reader.functions[name] = target.original  # also for a recursive body
+            regions.append(ir.Define(target=target, value=reader.expr(fn.body),
+                                     params=[a.arg for a in fn.args.args]))
         elif (isinstance(stmt, ast.Assign) and len(stmt.targets) == 1
                 and isinstance(stmt.targets[0], ast.Name)):
             target = reader.expr(stmt.targets[0])
@@ -295,8 +476,41 @@ def read_python(text: str) -> list[ir.Region]:
 # ---------------------------------------------------------------------------
 
 
+_LOGIC_TAGS = {"lt": "lessThan", "gt": "greaterThan", "le": "lessOrEqual",
+               "ge": "greaterOrEqual", "eq": "equal", "ne": "notEqual",
+               "and_": "and", "or_": "or"}
+
+
 class Writer(mb._Writer):
+    def __init__(self, ids, functions: dict[str, str] | None = None):
+        super().__init__(ids)
+        self.functions = functions or {}
+
+    def binop(self, node):
+        tag = _LOGIC_TAGS.get(node.op)
+        if tag is None:
+            return super().binop(node)
+        prec = mb.BINARY_OPS[node.op][1]
+        left = self.wrap(node.left, prec, parent_op=node.op)
+        right = self.wrap(node.right, prec, tighter=True, parent_op=node.op)
+        return f"<ml:apply><ml:{tag} />{left}{right}</ml:apply>", prec
+
     def emit(self, node):
+        if isinstance(node, ir.Str):
+            return f"<ml:str>{mb._escape(node.value)}</ml:str>", mb.ATOM_PREC
+        if isinstance(node, ir.UnaryOp) and node.op == "not_":
+            return self.apply("not", node.operand)
+        if isinstance(node, ir.Program):
+            return self.if_xml(node.branches, block=False), mb.ATOM_PREC
+        if isinstance(node, ir.ProgramBlock):
+            return self.block(node), mb.ATOM_PREC
+        if isinstance(node, ir.Call) and node.role == "VARIABLE":
+            name = ir.Name(py=node.func, original=self.functions.get(
+                node.func, mathcad_name(node.func)))
+            head = self.identifier(name.original, "VARIABLE")
+            args = [self.emit(a)[0] for a in node.args]
+            inner = args[0] if len(args) == 1 else f"<ml:sequence>{''.join(args)}</ml:sequence>"
+            return f"<ml:apply>{head}{inner}</ml:apply>", mb.ATOM_PREC
         if isinstance(node, ir.Call) and node.func in _OPERATOR_CALLS:
             return self.apply(_OPERATOR_CALLS[node.func], *node.args)
         if isinstance(node, ir.Call):
@@ -345,6 +559,57 @@ class Writer(mb._Writer):
                     "<ml:upperBound><ml:placeholder /></ml:upperBound></ml:apply>",
                     mb.ATOM_PREC)
         return super().emit(node)
+
+    # -- programs ---------------------------------------------------------
+
+    def if_xml(self, branches, *, block: bool) -> str:
+        """``<ml:if>`` with ``<ml:elseif>``/``<ml:else>`` inside it.
+
+        ``block`` says each branch body is a ProgramBlock (the statement form)
+        rather than one value expression.
+        """
+        def body(value):
+            inner = self.block_lines(value) if block else self.emit(value)[0]
+            return f"<ml:program>{inner}</ml:program>"
+
+        out = []
+        for i, (test, value) in enumerate(branches):
+            if test is None:
+                out.append(f"<ml:else>{body(value)}</ml:else>")
+                continue
+            arm = (f"<ml:test>{self.emit(test)[0]}</ml:test>"
+                   f"<ml:then>{body(value)}</ml:then>")
+            out.append(arm if i == 0 else f"<ml:elseif>{arm}</ml:elseif>")
+        return f"<ml:if>{''.join(out)}</ml:if>"
+
+    def block(self, block: ir.ProgramBlock) -> str:
+        return f"<ml:program>{self.block_lines(block)}</ml:program>"
+
+    def block_lines(self, block: ir.ProgramBlock) -> str:
+        stmts = block.statements
+        if not stmts:
+            return "<ml:placeholder />"
+        return "".join(self.stmt(s, last=s is stmts[-1]) for s in stmts)
+
+    def stmt(self, s: ir.Stmt, *, last: bool) -> str:
+        if isinstance(s, ir.LocalAssign):
+            return (f"<ml:localDefine>{self.emit(s.target)[0]}{self.emit(s.value)[0]}"
+                    "</ml:localDefine>")
+        if isinstance(s, ir.ForLoop):
+            return (f"<ml:for>{self.emit(s.var)[0]}{self.emit(s.iterable)[0]}"
+                    f"{self.block(s.body)}</ml:for>")
+        if isinstance(s, ir.IfStmt):
+            return self.if_xml(s.branches, block=True)
+        if isinstance(s, ir.Return):
+            # The last line of a block is Mathcad's implicit return; the parser
+            # reads both that and an explicit <ml:return> as Return.
+            value = self.emit(s.value)[0]
+            return value if last else f"<ml:return>{value}</ml:return>"
+        if isinstance(s, ir.ExprStmt):
+            return self.emit(s.value)[0]
+        if isinstance(s, ir.TryCatch):
+            return f"<ml:tryCatch>{self.block(s.body)}{self.block(s.handler)}</ml:tryCatch>"
+        raise mb.Unsupported(f"{type(s).__name__} statement")
 
     def apply(self, tag: str, *operands: ir.Expr) -> tuple[str, int]:
         inner = "".join(self.emit(o)[0] for o in operands)
@@ -415,7 +680,12 @@ def region_xml(region: ir.Region, rid: int, top: float, writer: Writer) -> str:
         math = f"<ml:define>{target}{value}</ml:define>"
         return (f'<region region-id="{rid}" top="{top}" left="38.4">'
                 f'<math resultRef="{rid}">{math}</math></region>')
-    if isinstance(region, ir.Define):
+    if isinstance(region, ir.Define) and region.params:
+        name = writer.identifier(region.target.original, "VARIABLE")
+        bound = "".join(writer.identifier(mathcad_name(p), "VARIABLE") for p in region.params)
+        target = f"<ml:function>{name}<ml:boundVars>{bound}</ml:boundVars></ml:function>"
+        math = f"<ml:define>{target}{writer.emit(region.value)[0]}</ml:define>"
+    elif isinstance(region, ir.Define):
         target = writer.emit(region.target)[0]
         value = writer.emit(region.value)[0]
         if region.evaluate:
@@ -488,11 +758,38 @@ def rows(region: ir.Region) -> float:
         lines = sum(1 + len(p) * CHAR_WIDTH // TEXT_MAX_WIDTH
                     for p in region.text.split("\n"))
         return 0.5 + 0.5 * lines
-    return 1.5
+    value = getattr(region, "value", None)
+    return 0.75 + 0.75 * max(1.0, _lines(value)) if value is not None else 1.5
+
+
+def _lines(node) -> float:
+    """Rough height of an expression in text lines: a program stacks its
+    lines, a matrix its rows. Prime sizes the region itself; this only has to
+    keep the next region clear of it."""
+    if isinstance(node, ir.ProgramBlock):
+        return sum(_stmt_lines(s) for s in node.statements) or 1
+    if isinstance(node, ir.Program):
+        return sum(max(1.0, _lines(v)) for _t, v in node.branches) * 1.2
+    if isinstance(node, ir.MatrixLiteral):
+        return max(1.0, node.rows * 0.8)
+    kids = ir.child_exprs(node) if isinstance(node, ir.Expr) else []
+    return max([1.0, *(_lines(k) for k in kids)])
+
+
+def _stmt_lines(s: ir.Stmt) -> float:
+    if isinstance(s, ir.ForLoop):
+        return 1 + _lines(s.body)
+    if isinstance(s, ir.IfStmt):
+        return sum(_lines(b) for _t, b in s.branches) * 1.2
+    if isinstance(s, ir.TryCatch):
+        return _lines(s.body) + _lines(s.handler) + 1
+    return 1.0
 
 
 def build(regions: list[ir.Region]) -> dict[str, str | bytes]:
-    writer = Writer({})
+    functions = {r.target.py: r.target.original for r in regions
+                 if isinstance(r, ir.Define) and r.params}
+    writer = Writer({}, functions)
     body, top, rels = [], 2 * ROW, []
     parts: dict[str, str | bytes] = dict(PARTS)
     math_id = 0
