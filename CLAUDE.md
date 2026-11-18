@@ -8,6 +8,11 @@ Guidance for working in this repo.
 a **Jupyter notebook** (primary) or a `.py` script. Units are preserved with **Pint**. The end
 goal includes a Claude skill (`.claude/skills/read-mathcad/`) so Claude can read `.mcdx` files.
 
+**Global skill copy:** the skill is also installed as a plain copy at `~/.claude/skills/read-mathcad/`
+(no symlink — no admin rights). After any change under `.claude/skills/read-mathcad/`, refresh the copy:
+delete the global folder first, then `Copy-Item -Recurse .claude/skills/read-mathcad $HOME\.claude\skills\read-mathcad`
+(without the delete, `Copy-Item` nests the new folder inside the old one).
+
 A `.mcdx` is a zip of XML; the math is stored as an expression tree, so conversion walks that
 tree into an IR and emits Python from it.
 
