@@ -5,11 +5,31 @@ from __future__ import annotations
 import builtins
 import keyword
 import xml.etree.ElementTree as ET
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import replace
 
 from .. import ir
 from ..mapping import FUNCTIONS, GREEK, OPERATOR_CALLS, OPERATOR_TAGS
 from .namespaces import localname
+
+# Whether an *unlabelled* ``<ml:id>`` in a scale's unit slot reads as a unit.
+# Prime leaves ``labels`` off a name it never resolved -- a ``0.4 mm`` typed
+# into a solve-block constraint, or into a symbolic equation. Inside a solve
+# block the math is numeric, so the name can only be the unit (as a bare name
+# it is a NameError). A symbolic equation is never evaluated and emits SymPy,
+# where ``mm`` stays a ``Symbol`` -- a Pint unit there would not combine.
+_UNLABELLED_IS_UNIT: ContextVar[bool] = ContextVar("_UNLABELLED_IS_UNIT", default=False)
+
+
+@contextmanager
+def unlabelled_scale_units():
+    """Within the block, read an unlabelled scale unit as a unit (solve blocks)."""
+    token = _UNLABELLED_IS_UNIT.set(True)
+    try:
+        yield
+    finally:
+        _UNLABELLED_IS_UNIT.reset(token)
 
 
 # ---------------------------------------------------------------------------
@@ -237,7 +257,18 @@ def _parse_apply(elem: ET.Element) -> ir.Expr:
         # it in a Quantity would emit ``<value> * None``.
         if localname(rest[1].tag) == "placeholder":
             return value
-        unit = parse_expr(rest[1])
+        # An id with *no* ``labels`` attribute is one Prime never committed (see
+        # ``_UNLABELLED_IS_UNIT``). An explicit VARIABLE stays a variable used
+        # as a scale.
+        unit_elem = rest[1]
+        if (
+            _UNLABELLED_IS_UNIT.get()
+            and localname(unit_elem.tag) == "id"
+            and unit_elem.get("labels") is None
+        ):
+            unit_ref = ir.UnitRef(name=read_identifier(unit_elem), unlabelled=True)
+            return ir.Quantity(value=value, unit=unit_ref)
+        unit = parse_expr(unit_elem)
         return ir.Quantity(value=value, unit=unit)
 
     # nth root: <apply><nthRoot/> <degree-or-placeholder/> <operand/>

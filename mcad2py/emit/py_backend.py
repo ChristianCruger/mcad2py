@@ -147,7 +147,7 @@ def _render_region(region: ir.Region, *, prints: bool = True) -> list[str]:
         return ["", *_echo_lines(symbolic_eval_expr(region), prints)]
 
     if isinstance(region, ir.SolveBlock):
-        return ["", *solve_block_lines(region)]
+        return _append_echo(["", *solve_block_lines(region)], region, prints)
 
     if isinstance(region, ir.Plot):
         return ["", *plot_lines(region)]

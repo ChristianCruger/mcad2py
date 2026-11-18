@@ -77,6 +77,7 @@ def _residuals_epsilon_0_kappa_x_kappa_y(_x):
         M_y(e, kx, ky) - (M_yEd),
     ]
 epsilon_0, kappa_x, kappa_y = solve_block(_residuals_epsilon_0_kappa_x_kappa_y, [e, kx, ky])
+print([epsilon_0, kappa_x, kappa_y])
 
 epsilon = lambda x, y: epsilon_0 + kappa_x * x + kappa_y * y
 

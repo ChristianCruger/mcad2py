@@ -700,6 +700,15 @@ def echo_expr(region: ir.Region) -> str | None:
         if region.display_unit is not None:
             return _display(f"({inner})", region.display_unit)
         return inner
+    if isinstance(region, ir.SolveBlock):
+        # A function-defining block has nothing to show until it is called.
+        if not region.evaluate or region.params:
+            return None
+        targets = [t.py for t in region.targets]
+        base = targets[0] if len(targets) == 1 else "[" + ", ".join(targets) + "]"
+        if region.display_unit is not None:
+            return _display(base if len(targets) == 1 else f"({base})", region.display_unit)
+        return base
     if isinstance(region, ir.IndexAssign):
         if not region.evaluate:
             return None

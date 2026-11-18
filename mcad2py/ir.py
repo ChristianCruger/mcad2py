@@ -41,9 +41,16 @@ class Name(Expr):
 
 @dataclass
 class UnitRef(Expr):
-    """A reference to a unit, e.g. ``MPa`` -> ``ureg.MPa``."""
+    """A reference to a unit, e.g. ``MPa`` -> ``ureg.MPa``.
+
+    ``unlabelled`` marks an ``<ml:id>`` Prime wrote with no ``labels`` at all,
+    read as a unit only because it sat in a scale's unit slot. It changes no
+    Python -- it lets the write backend find that id's own bytes again -- so
+    it takes no part in equality.
+    """
 
     name: str
+    unlabelled: bool = field(default=False, compare=False)
 
 
 @dataclass
@@ -667,6 +674,10 @@ class SolveBlock(Region):
     ``f(a, b) := find(x)`` — in which case ``targets`` holds the single function
     name and the whole solve is emitted inside ``def f(a, b):`` so the
     constraints close over the parameters, returning the solved unknown(s).
+
+    ``evaluate`` is True when the solver region ends in Mathcad's inline ``=``
+    (``σ_s := find(σ) = 251.5 MPa``), so the result is shown, in
+    ``display_unit`` when the sheet overrides it.
     """
 
     guesses: list[Define]
@@ -676,6 +687,7 @@ class SolveBlock(Region):
     command: str = "find"
     display_unit: Expr | None = None
     params: list[str] = field(default_factory=list)
+    evaluate: bool = False
     source: SourceRef | None = None
 
 
