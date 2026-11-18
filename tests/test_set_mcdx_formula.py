@@ -212,7 +212,7 @@ def test_writing_a_formula_back_unchanged_is_a_no_op(name, tmp_path):
 def test_the_no_op_sweep_reaches_most_writable_regions():
     """A floor under the sweep above, across every reference worksheet.
 
-    331 regions pass end to end at the time of writing -- through the code
+    336 regions pass end to end at the time of writing -- through the code
     generator, the front end, the backend and the guard. The floor is what
     stops the sweep quietly shrinking to nothing.
     """

@@ -1398,6 +1398,12 @@ scaled quantity as juxtaposition and a division as a stacked fraction, and puts 
 neither — except a fraction under a power (`(RH/100)³`), where it does. Emitting on that rule takes
 byte-identical re-emission from 954 to 996 of 1124.
 
+The same bar groups the fraction's own **operands**: `(1 + sin ϕ)/(1 − sin ϕ)` is drawn as two
+stacked lines and Prime writes no `<ml:parens>` around either (89 compound operands across the
+fixtures, 2 bracketed by hand). Dropping the group there takes re-emission to 1024 of 1124. Found
+when a sheet built by `tools/py_to_mcdx.py` showed `(2·√k)` in a denominator that the original drew
+bare.
+
 ### Confirmed against Prime itself
 
 A worksheet written by `tools/set_mcdx_formula.py` was opened, calculated and re-saved in Mathcad

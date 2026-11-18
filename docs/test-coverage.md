@@ -873,7 +873,7 @@ math (IR -> `math50` XML). Nothing here needs Mathcad: every input is XML Prime 
 | `test_every_supported_expression_survives_a_round_trip` (per sheet) | Parse -> emit -> parse gives the **identical IR** for every `<ml:apply>` in every fixture. The IR nodes are dataclasses, so `==` compares the whole tree |
 | `test_the_sweep_reaches_real_worksheet_math` | The floor (>1000 expressions) under the sweep above, which would also pass by skipping everything |
 | `test_re_emission_matches_primes_own_bytes` (per sheet) | Stronger than the round trip: the emitted XML equals Prime's, modulo the positional `label-is-contextual`, an omitted `labels="VARIABLE"`, and cosmetic `<ml:parens>`. The two constructs the IR does not carry (`<ml:percent/>`, `split=`/`inline=`) are skipped by name — see the schema note |
-| `test_most_expressions_re_emit_byte_for_byte` | Over 80% are identical byte for byte, parentheses included (996 of 1124 at the time of writing) |
+| `test_most_expressions_re_emit_byte_for_byte` | Over 80% are identical byte for byte, parentheses included (1024 of 1124 at the time of writing) |
 | `test_writes_a_quantity_the_way_prime_does` | The `<ml:apply><ml:scale/>` shape, spelled out |
 | `test_a_subscripted_name_becomes_a_xaml_span` | The synthesised form, for a name the sheet has never used |
 | `test_harvested_ids_keep_a_names_own_encoding` | Prime writes `m_s` two ways and the parser reads both the same, so a rewrite reuses the sheet's own `<ml:id>` bytes rather than restyling a name |
@@ -924,7 +924,7 @@ Covers `tools/set_mcdx_formula.py`, the fourth write tool and the only one that 
 | `test_refuses_what_it_cannot_write` (3 cases) | A call, an unknown name, a syntax error — refused while still text |
 | `test_refuses_a_region_that_is_not_a_formula` / `test_refuses_an_unknown_region` | A text note and a missing region id both name the problem |
 | `test_writing_a_formula_back_unchanged_is_a_no_op` (5 sheets) | **The strongest property available without Mathcad.** Every accepted region goes out through the code generator, back through the front end and out through the XML backend, and must land on the bytes Prime wrote |
-| `test_the_no_op_sweep_reaches_most_writable_regions` | The floor: 331 regions across every fixture pass that round trip end to end |
+| `test_the_no_op_sweep_reaches_most_writable_regions` | The floor: 336 regions across every fixture pass that round trip end to end |
 | `test_refuses_a_region_it_cannot_reproduce` | `shrinkage.mcdx` region 9 holds `RH / 100%`, which would come back as `100/100`. The guard is generic — re-emit what is already there and compare — so it also catches the `split=` line-break hints and an author's redundant bracket |
 
 **What these do not reach.** No Mathcad Prime runs in CI, so nothing here proves Prime *opens* a

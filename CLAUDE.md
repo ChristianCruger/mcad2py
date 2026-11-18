@@ -221,10 +221,11 @@ adding support for a new XML construct.
   (`(0.85·30) MPa`), which Prime added itself when re-saving a sheet this backend wrote; and two constructs survive no whole-region
   rewrite — `<ml:percent/>` (parsed as `x / 100`, so `80%` re-emits as `80/100`) and the
   `split=`/`inline=` line-break hints. Re-emitting every `<ml:apply>` in every fixture reproduces
-  Prime's own bytes for 996 of 1124, and region 0 of `plain_concrete_cohesion.mcdx` round-trips
+  Prime's own bytes for 1024 of 1124, and region 0 of `plain_concrete_cohesion.mcdx` round-trips
   the worksheet byte-identically. Two shapes needed a looser parens rule than Python's to reach
   that: Prime *draws* a scaled quantity as juxtaposition and a division as a stacked fraction, so
-  neither needs a group — except a fraction under a power, where Prime writes one.
+  neither needs a group — except a fraction under a power, where Prime writes one. The fraction's
+  own numerator and denominator need none either: the bar is the group.
 - Stage B closes the loop: [parser/python_expr.py](mcad2py/parser/python_expr.py) reads the
   generated Python back to IR with `ast`, and [tools/set_mcdx_formula.py](tools/set_mcdx_formula.py)
   replaces one region's formula with it. Three decisions carry it. **Names are not un-sanitized** —
@@ -241,7 +242,7 @@ adding support for a new XML construct.
   target name, the unit override and the result format keep their own bytes, and it verifies by
   converting the whole edited sheet and comparing the region's expression before it writes.
   Printing every fixture expression and reading it back gives the identical IR for 1112 of 1113;
-  writing a formula back unchanged is a byte no-op on 331 regions.
+  writing a formula back unchanged is a byte no-op on 336 regions.
 - Mathcad's `·` is scalar, matrix *and* dot product; [shapes.py](mcad2py/shapes.py) decides which by
   inferring shapes across the whole sheet, and only rewrites to `matmul` when **both** operands are
   provably arrays (never under a vectorize arrow). Give a new array-returning builtin an entry in its
