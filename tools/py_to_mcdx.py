@@ -26,7 +26,9 @@ solve blocks (``solve_block`` with its ``_residuals_`` function, also inside a
 ``def``), bare calls (``Seed(1)``), the constants of ``math`` and ``mcad2py.const``,
 symbolic regions (``Eq(a, b)`` alone, ``print(solve(Eq(...), C))``, the plain
 arrow ``print(simplify(x))``; the ``Symbol`` declarations are dropped, and their
-names written unlabelled as Prime does), the ``x / (10**-6)`` display scale, and
+names written unlabelled as Prime does), the ``x / (10**-6)`` display scale, a
+list box (codegen's note and the selected value; its script is rebuilt to give
+that value for that option and an error for the others), and
 codegen's ``try`` guard around a region Mathcad could not compute (dropped:
 Prime finds the error again). Everything else is refused, naming the line.
 
@@ -39,12 +41,15 @@ from __future__ import annotations
 
 import argparse
 import ast
+import base64
+import gzip
 import io
 import itertools
 import re
 import sys
 import tokenize
 import zipfile
+from dataclasses import dataclass
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -774,6 +779,37 @@ def _shows_all(stmt: ast.stmt | None, names: list[ir.Name]) -> bool:
         f"print([{', '.join(n.py for n in names)}])")
 
 
+_CONTROL_NOTE = re.compile(
+    r'Mathcad ListBoxScriptableControl: selected "(?P<chosen>.*)" \(options: (?P<options>.*)\)\.$')
+_CONTROL_TAIL = "Embedded JScript not transpiled; using the cached output value."
+
+
+@dataclass
+class ListBox(ir.Region):
+    """``x := <list box>``. The Python keeps the options, the selection and the
+    selected option's value -- not the script, so not the other values."""
+
+    target: ir.Name
+    value: ir.Expr
+    options: list[str]
+    selected: int
+
+
+def control_notes(texts) -> dict[int, tuple[list[str], int]]:
+    """Codegen's two-line note above a list box's value, by the line the value
+    is on: ``{line: (options, selected index)}``. The notes leave ``texts``."""
+    found = {}
+    for block in list(texts):
+        line, paras = block
+        m = _CONTROL_NOTE.match(paras[0]) if len(paras) == 2 else None
+        if m and paras[1] == _CONTROL_TAIL:
+            options = m["options"].split(", ")
+            if m["chosen"] in options:
+                found[line + 2] = (options, options.index(m["chosen"]))
+                texts.remove(block)
+    return found
+
+
 def read_python(text: str) -> list[ir.Region]:
     tree = ast.parse(text)
     reader = Reader(text)
@@ -783,6 +819,7 @@ def read_python(text: str) -> list[ir.Region]:
     body = unguard(body)
     texts = [(line, paras) for line, paras in comment_blocks(text)
              if not all(p.startswith(_GUARD_NOTE) for p in paras)]
+    controls = control_notes(texts)
     regions: list[ir.Region] = []
     i = 0
     while i < len(body) or texts:
@@ -808,6 +845,12 @@ def read_python(text: str) -> list[ir.Region]:
                 and ast.unparse(stmt.value) == f"Symbol({stmt.targets[0].id!r})"):
             # ``x = Symbol('x')``: the converter declares these itself.
             reader.symbols.add(stmt.targets[0].id)
+        elif (stmt.lineno in controls and isinstance(stmt, ast.Assign)
+                and len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name)):
+            options, selected = controls.pop(stmt.lineno)
+            regions.append(ListBox(target=reader.expr(stmt.targets[0]),
+                                   value=reader.expr(stmt.value),
+                                   options=options, selected=selected))
         elif (sym := reader.symbolic(stmt)) is not None:
             regions.append(sym)
         elif is_elementwise_line(stmt):
@@ -1346,7 +1389,65 @@ def symbolic_xml(region: ir.SymbolicEquation | ir.SymbolicEval, writer: Writer) 
             f"<ml:command>{command}</ml:command></ml:symEval>")
 
 
+def _control_numbers(value: ir.Expr) -> tuple[list[str], int, int]:
+    """The list box's value as numbers: a scalar, or a column vector."""
+    def number(e: ir.Expr) -> str:
+        if isinstance(e, ir.Number) and re.fullmatch(r"-?[0-9.]+([eE][-+]?[0-9]+)?", e.value):
+            return e.value
+        if isinstance(e, ir.UnaryOp) and e.op == "neg":
+            return "-" + number(e.operand)
+        raise Refused(f"a list box value {expr_text(value)!r} is not a number or a column")
+    if isinstance(value, ir.MatrixLiteral) and value.cols == 1:
+        return [number(e) for e in value.elements], value.rows, 1
+    return [number(value)], 0, 0
+
+
+def list_box_xml(region: ListBox, writer: Writer) -> str:
+    """``<ml:ListBoxScriptableControl>`` with a script of our own: the original
+    script is not in the Python. It gives the known value for the selected
+    option, and an error for any other, so a new pick cannot show a wrong number.
+    ``RL`` is the cached output the converter reads; Prime rewrites it."""
+    nums, rows, cols = _control_numbers(region.value)
+    js_value = nums[0] if not rows else "[ " + ", ".join(nums) + " ]"
+    adds = "".join(f'ListBox.AddString("{o}");\r\n' for o in region.options)
+    script = (
+        "// Rebuilt by mcad2py from Python, which keeps the value of the\r\n"
+        "// selected option only. Write the other values in here.\r\n"
+        f"ListBox.ResetContent();\r\n{adds}ListBox.CurSel({region.selected});\r\n\r\n"
+        "function ListBoxEvent_Start(Inputs, Outputs) {\r\n};\r\n\r\n"
+        "function ListBoxEvent_Exec(Inputs, Outputs) {\r\n"
+        f"\tif (ListBox.CurSel() == {region.selected}) {{\r\n"
+        f"\t\tOutputs[0].Value = {js_value}\r\n"
+        "\t} else {\r\n"
+        '\t\tthrow new Error("No value known for " + ListBox.GetText(ListBox.CurSel()))\r\n'
+        "\t}\r\n};\r\n\r\n"
+        "function ListBoxEvent_Stop(Inputs, Outputs) {\r\n};\r\n")
+    packed = base64.b64encode(gzip.compress(script.encode("utf-8"), mtime=0)).decode("ascii")
+    node = itertools.count(1)
+    if rows:
+        cells = " ".join(f"(number {n}:0x{next(node):08x})" for n in nums)
+        rl = f"(op_matrix:0x{next(node):08x} (unboxed {rows}) (unboxed {cols}) (list {cells}))"
+    else:
+        rl = f"(number {nums[0]}:0x{next(node):08x})"
+    vals = "".join(f"<ml:val>{mb._escape(o)}</ml:val>" for o in region.options)
+    width = max(60, 8 * max(len(o) for o in region.options) + 25)
+    height = 20 * len(region.options) + 10
+    return (f'<ml:define>{explicit(writer.emit(region.target)[0])}'
+            f'<ml:ListBoxScriptableControl Sort="false" FlowDirection="LeftToRight" '
+            f'Count="{len(region.options)}" SelectedIndex="{region.selected}" '
+            f'Script="{packed}" EngineType="JScript" ScriptObjectControlName="" '
+            f'IsNeedsCalculate="false" Foreground="#FF000000" Background="#00FFFFFF" '
+            f'FontSize="14" Width="{width}" Height="{height}" '
+            f'RL="{base64.b64encode(rl.encode("ascii")).decode("ascii")}">'
+            f"<ml:vals>{vals}</ml:vals></ml:ListBoxScriptableControl></ml:define>")
+
+
 def region_xml(region: ir.Region, rid: int, top: float, writer: Writer, refs) -> str:
+    if isinstance(region, ListBox):
+        # The name is hidden, as Prime shows a list box: only the list.
+        return (f'<region region-id="{rid}" top="{top}" left="38.4">'
+                f'<math resultRef="{next(refs)}" visibilityLhsOfDefinition="Hidden">'
+                f"{list_box_xml(region, writer)}</math></region>")
     if isinstance(region, (ir.SymbolicEquation, ir.SymbolicEval)):
         return (f'<region region-id="{rid}" top="{top}" left="38.4">'
                 f'<math resultRef="{next(refs)}">{symbolic_xml(region, writer)}</math></region>')
@@ -1487,7 +1588,9 @@ def rows(region: ir.Region) -> float:
     if isinstance(region, (ir.Plot, ir.GridPlot)):
         return PLOT_SIZE / ROW + 2.5
     if isinstance(region, ir.SolveBlock):
-        return solve_rows(region)  # the graph, its axis labels and a gap
+        return solve_rows(region)
+    if isinstance(region, ListBox):
+        return (20 * len(region.options) + 10) / ROW + 1  # the graph, its axis labels and a gap
     if isinstance(region, ir.TextRegion):
         lines = sum(1 + len(p) * CHAR_WIDTH // TEXT_MAX_WIDTH
                     for p in region.text.split("\n"))
