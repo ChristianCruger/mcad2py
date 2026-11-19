@@ -19,9 +19,12 @@ The input is the *flat* dialect ``mcad2py convert -f py`` writes:
 A comment *after* code on the same line (``# mcdx region 3`` from
 ``--trace-source``) is not text and is ignored.
 
-Expressions: numbers, ``ureg.<unit>``, names, ``+ - * / **``, negation, the
-calls ``f(x, ...)`` of a Mathcad builtin, ``nth_root(x, n)``, ``math.pi``,
-``math.exp``. Everything else is refused, naming the line.
+Also: programs (``def``), ranges, matrices, Σ/∫/d/dx (``summation``,
+``range_sum``, ``integral``, ``double_integral``, ``derivative``), difference
+equations (``vec_set`` seeds and ``_recur_`` loops), ``a, b = tuple(V)``,
+bare calls (``Seed(1)``), the constants of ``math`` and ``mcad2py.const``, and
+codegen's ``try`` guard around a region Mathcad could not compute (dropped:
+Prime finds the error again). Everything else is refused, naming the line.
 
 The new names a sheet defines are turned back into Mathcad names by a fixed
 rule (``sigma_c`` -> ``σ`` with subscript ``c``), because ``sanitize()`` has
@@ -43,7 +46,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from mcad2py import ir  # noqa: E402
 from mcad2py.emit import mcdx_backend as mb  # noqa: E402
-from mcad2py.mapping import FUNCTIONS, GREEK, UNIT_ALIASES  # noqa: E402
+from mcad2py.mapping import CONSTANTS, FUNCTIONS, GREEK, UNIT_ALIASES  # noqa: E402
 
 
 class Refused(Exception):
@@ -68,6 +71,12 @@ _FUNC_BACK.update({"math.exp": "exp", "math.log": "ln", "math.sqrt": "sqrt"})
 
 _UNIT_BACK = {py: mc for mc, py in UNIT_ALIASES.items()}
 
+# Name imported from mcad2py.const -> Mathcad's display name (``hbar`` -> ℏ).
+_CONST_BACK: dict[str, str] = {}
+for _mc, _py in CONSTANTS.items():
+    if "." not in _py:
+        _CONST_BACK.setdefault(_py, _mc)
+
 # Runtime helpers that are *codegen idioms*, not Mathcad builtins: each one
 # stands for an operator or a region shape, so a same-name call would be wrong.
 _IDIOMS = {
@@ -89,7 +98,7 @@ _RUNTIME_SAME_NAME = _runtime_names()
 
 # Calls the parser makes from an operator element rather than a named builtin.
 _OPERATOR_CALLS = {"matrow": "matrow", "abs": "absval", "determinant": "determinant",
-                   "cross": "crossProduct"}
+                   "cross": "crossProduct", "math.factorial": "factorial", "xor": "xor"}
 
 _OPS = {ast.Add: "add", ast.Sub: "sub", ast.Mult: "mul", ast.Div: "div", ast.Pow: "pow"}
 
@@ -98,7 +107,13 @@ def mathcad_name(py: str) -> str:
     """``sigma_c`` -> ``σ_c``: the inverse of sanitize() by convention."""
     # A trailing ``_`` is sanitize()'s guard against a Python keyword or
     # builtin (``lambda_``, ``range_``); Mathcad cannot end a name in one.
-    head, sep, sub = py.rstrip("_").partition("_")
+    py = py.rstrip("_")
+    first, dunder, rest = py.partition("__")
+    if dunder and first in _GREEK_BACK:
+        # ``lambda__0``: the Greek head took a ``_`` guard (``lambda`` is a
+        # keyword) before the subscript separator was added.
+        py = f"{first}_{rest}"
+    head, sep, sub = py.partition("_")
     head = _GREEK_BACK.get(head, head)
     return head + sep + sub
 
@@ -114,6 +129,12 @@ class Reader:
         # A call to one is labelled VARIABLE, which is how Prime tells it from
         # a builtin.
         self.functions: dict[str, str] = {}
+        # Names the module imports from mcad2py.const: Mathcad's built-in
+        # constants, labelled CONSTANT rather than VARIABLE.
+        self.constants = {
+            alias.name for node in ast.parse(text).body
+            if isinstance(node, ast.ImportFrom) and node.module == "mcad2py.const"
+            for alias in node.names}
 
     def expr(self, node: ast.expr) -> ir.Expr:
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
@@ -149,16 +170,26 @@ class Reader:
                 and node.func.id in self.functions and not node.keywords):
             return ir.Call(func=node.func.id, args=[self.expr(a) for a in node.args],
                            role="VARIABLE")
+        if (isinstance(node, ast.Constant) and isinstance(node.value, complex)
+                and node.value.real == 0):
+            # ``2j``: Mathcad's imaginary literal ``2i``.
+            return ir.Number(ast.get_source_segment(self.text, node) or repr(node.value))
         if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)) \
                 and not isinstance(node.value, bool):
             return ir.Number(ast.get_source_segment(self.text, node) or repr(node.value))
         if isinstance(node, ast.Name):
+            if node.id in self.constants and node.id in _CONST_BACK:
+                return ir.Name(py=node.id, original=_CONST_BACK[node.id], role="CONSTANT")
             return ir.Name(py=node.id, original=mathcad_name(node.id))
         if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
             if node.value.id == "ureg":
                 return ir.UnitRef(_UNIT_BACK.get(node.attr, node.attr))
             if ast.unparse(node) == "math.pi":
                 return ir.Name(py="pi", original="π", role="CONSTANT")
+            if ast.unparse(node) == "math.e":
+                return ir.Name(py="e", original="e", role="CONSTANT")
+            if ast.unparse(node) == "math.inf":
+                return ir.Name(py="inf", original="∞", role="CONSTANT")
         if isinstance(node, ast.BinOp) and type(node.op) in _OPS:
             op = _OPS[type(node.op)]
             left, right = self.expr(node.left), self.expr(node.right)
@@ -183,6 +214,8 @@ class Reader:
                 return ir.MatrixLiteral(rows=len(rows), cols=len(rows[0]),
                                         elements=[r[j] for j in range(len(rows[0]))
                                                   for r in rows])
+            if (operator := self.calculus(head, node)) is not None:
+                return operator
             args = [self.expr(a) for a in node.args]
             if head == "col" and args:
                 return ir.MatrixLiteral(rows=len(args), cols=1, elements=args)
@@ -206,7 +239,7 @@ class Reader:
                 return ir.BinOp(op="mul", left=args[0], right=args[1])
             if head in ("mc_min", "mc_max"):
                 return ir.Call(func=head[3:], args=args)
-            if head in ("determinant", "cross"):
+            if head in ("determinant", "cross", "math.factorial", "xor", "element_of"):
                 return ir.Call(func=head, args=args)
             if head == "nth_root" and len(args) == 2:
                 degree = args[1]
@@ -220,6 +253,38 @@ class Reader:
                 # A builtin with no FUNCTIONS entry keeps its Mathcad name.
                 return ir.Call(func=head, args=args)
         raise Refused(f"line {node.lineno}: {ast.unparse(node)!r} is outside the subset")
+
+    def lambda_(self, node: ast.expr, arity: int) -> ir.Lambda:
+        if not (isinstance(node, ast.Lambda) and len(node.args.args) == arity):
+            raise Refused(f"line {node.lineno}: expected a lambda of {arity} parameter(s)")
+        return ir.Lambda(params=[a.arg for a in node.args.args], body=self.expr(node.body))
+
+    def calculus(self, head: str, node: ast.Call) -> ir.Expr | None:
+        """The operators codegen writes as a call on a lambda: Σ, ∫, d/dx."""
+        args = node.args
+        if head == "range_sum" and len(args) == 2:
+            # ``range_sum(i, lambda i: E)``: Σ over a range variable, no bounds.
+            return ir.RangeSum(func=self.lambda_(args[1], 1))
+        if head in ("summation", "integral") and len(args) == 3:
+            cls = ir.Summation if head == "summation" else ir.Integral
+            return cls(func=self.lambda_(args[0], 1), lower=self.expr(args[1]),
+                       upper=self.expr(args[2]))
+        if head == "double_integral" and len(args) == 5:
+            # codegen folds ∫∫ into one call; Mathcad nests two ∫, inner first.
+            fn = args[0]
+            if not (isinstance(fn, ast.Lambda) and len(fn.args.args) == 2):
+                raise Refused(f"line {node.lineno}: double_integral needs a 2-argument lambda")
+            inner_var, outer_var = (a.arg for a in fn.args.args)
+            inner = ir.Integral(func=ir.Lambda(params=[inner_var], body=self.expr(fn.body)),
+                                lower=self.expr(args[1]), upper=self.expr(args[2]))
+            return ir.Integral(func=ir.Lambda(params=[outer_var], body=inner),
+                               lower=self.expr(args[3]), upper=self.expr(args[4]))
+        if head == "derivative" and len(args) == 3:
+            func = self.lambda_(args[0], 1)
+            if ast.unparse(args[1]) != func.params[0]:
+                raise Refused(f"line {node.lineno}: derivative must be taken at its own variable")
+            return ir.Derivative(func=func, var=func.params[0], degree=self.expr(args[2]))
+        return None
 
     def program(self, fn: ast.FunctionDef) -> ir.Expr:
         return ProgramReader(self).read(fn)
@@ -499,13 +564,124 @@ def grid_plot(reader: Reader, block: list[ast.stmt]) -> ir.GridPlot:
     return ir.GridPlot(expr=expr, z_unit=z_unit, mesh_names=mesh, threed=threed)
 
 
+# codegen's guard around a region Mathcad itself could not compute.
+_GUARD_HANDLER = "print('error:', _err)"
+_GUARD_NOTE = "Mathcad reports an error here:"
+
+
+def unguard(body: list[ast.stmt]) -> list[ast.stmt]:
+    """``try: <region> except Exception as _err: print('error:', _err)`` -> the
+    region. The guard only exists because Mathcad cached an error there; Prime
+    will find the same error again when it calculates."""
+    out: list[ast.stmt] = []
+    for s in body:
+        if (isinstance(s, ast.Try) and len(s.handlers) == 1 and not s.orelse
+                and not s.finalbody
+                and "\n".join(ast.unparse(h) for h in s.handlers[0].body) == _GUARD_HANDLER):
+            out.extend(s.body)
+        else:
+            out.append(s)
+    return out
+
+
+def _vec_set(stmt: ast.stmt) -> tuple[str, ast.expr, ast.expr, ast.expr] | None:
+    """``X = vec_set(src, idx, value)`` -> (X, src, idx, value)."""
+    if (isinstance(stmt, ast.Assign) and len(stmt.targets) == 1
+            and isinstance(stmt.targets[0], ast.Name) and _call_named(stmt.value, "vec_set")
+            and len(stmt.value.args) == 3):
+        return (stmt.targets[0].id, *stmt.value.args)
+    return None
+
+
+def _is_step(stmt: ast.stmt) -> bool:
+    return (isinstance(stmt, ast.Assign) and len(stmt.targets) == 1
+            and ast.unparse(stmt.targets[0]) == "_step")
+
+
+def recurrence_writes(reader: Reader, stmts: list[ast.stmt]):
+    """One step of a difference equation -> (targets, value, values).
+
+    Several targets are staged through ``_step`` so they update together:
+    ``_step = (a, b)`` is a matrix right-hand side, ``_step = tuple(V)`` one
+    vector expression spread over the targets.
+    """
+    value, values = None, None
+    writes = stmts
+    if writes and _is_step(writes[0]):
+        step, writes = writes[0].value, writes[1:]
+        if isinstance(step, ast.Tuple):
+            values = [reader.expr(e) for e in step.elts]
+        elif _call_named(step, "tuple") and len(step.args) == 1:
+            value = reader.expr(step.args[0])
+        else:
+            raise Refused(f"line {step.lineno}: an unknown _step form")
+    targets = []
+    for n, s in enumerate(writes):
+        got = _vec_set(s)
+        if got is None:
+            raise Refused(f"line {s.lineno}: a difference equation writes with vec_set only")
+        name, _src, idx, val = got
+        base = ir.Name(py=name, original=mathcad_name(name))
+        if isinstance(idx, ast.Tuple) and len(idx.elts) == 2:
+            targets.append(ir.ElementTarget(base=base, index=reader.expr(idx.elts[0]),
+                                            col=reader.expr(idx.elts[1])))
+        else:
+            targets.append(ir.ElementTarget(base=base, index=reader.expr(idx)))
+        if value is None and values is None:
+            value = reader.expr(val)
+        elif ast.unparse(val) != f"_step[{n}]":
+            raise Refused(f"line {s.lineno}: expected _step[{n}]")
+    if not targets:
+        raise Refused("a difference equation with no writes")
+    return targets, value, values
+
+
+def recurrence_def(reader: Reader, fn: ast.FunctionDef, call: ast.stmt | None):
+    """``def _recur_X(_idx, X): for i in _idx: ...`` + ``X = _recur_X(i, X)``."""
+    loop = fn.body[0] if len(fn.body) == 2 else None
+    if not (isinstance(loop, ast.For) and isinstance(loop.target, ast.Name)
+            and isinstance(call, ast.Assign) and _call_named(call.value, fn.name)):
+        raise Refused(f"line {fn.lineno}: an unknown difference-equation shape")
+    index = call.value.args[0]
+    if ast.unparse(index) != loop.target.id:
+        raise Refused(f"line {fn.lineno}: the loop must run over its own range variable")
+    targets, value, values = recurrence_writes(reader, loop.body)
+    return ir.Recurrence(targets=targets, value=value, values=values,
+                         index=reader.expr(index))
+
+
+def multi_assign(reader: Reader, stmt: ast.stmt) -> ir.MultiAssign | None:
+    """``a, b, c = tuple(V)`` -> ``[a; b; c] := V``; ``tuple(unpack(M))`` is a
+    matrix of names."""
+    if not (isinstance(stmt, ast.Assign) and len(stmt.targets) == 1
+            and isinstance(stmt.targets[0], ast.Tuple)
+            and all(isinstance(e, ast.Name) for e in stmt.targets[0].elts)
+            and _call_named(stmt.value, "tuple") and len(stmt.value.args) == 1):
+        return None
+    names = [reader.expr(e) for e in stmt.targets[0].elts]
+    value = stmt.value.args[0]
+    matrix_target = _call_named(value, "unpack")
+    if matrix_target:
+        value = value.args[0]
+    return ir.MultiAssign(targets=names, value=reader.expr(value),
+                          matrix_target=matrix_target)
+
+
+def _shows_all(stmt: ast.stmt | None, names: list[ir.Name]) -> bool:
+    """``print([a, b, c])``: codegen's echo of a multi-assignment."""
+    return stmt is not None and ast.unparse(stmt) == (
+        f"print([{', '.join(n.py for n in names)}])")
+
+
 def read_python(text: str) -> list[ir.Region]:
     tree = ast.parse(text)
     reader = Reader(text)
     body = [s for s in tree.body if not isinstance(s, (ast.Import, ast.ImportFrom))]
     if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
         body = body[1:]  # docstring
-    texts = comment_blocks(text)
+    body = unguard(body)
+    texts = [(line, paras) for line, paras in comment_blocks(text)
+             if not all(p.startswith(_GUARD_NOTE) for p in paras)]
     regions: list[ir.Region] = []
     i = 0
     while i < len(body) or texts:
@@ -528,10 +704,44 @@ def read_python(text: str) -> list[ir.Region]:
             regions.append(built)
         elif is_elementwise_line(stmt):
             pass  # ``f = elementwise(f)``: Mathcad's vectorize arrow implies it
+        elif (isinstance(stmt, ast.Assign) and isinstance(stmt.value, ast.Constant)
+                and stmt.value.value is None):
+            pass  # ``X = None``: codegen's declaration before a difference equation
+        elif isinstance(stmt, ast.FunctionDef) and stmt.name.startswith("_recur_"):
+            nxt = body[i + 1] if i + 1 < len(body) else None
+            regions.append(recurrence_def(reader, stmt, nxt))
+            i += 1
+        elif _is_step(stmt) or _vec_set(stmt) is not None:
+            # A seed: ``X[0] := 30``, or several slots from one vector at once.
+            run = [stmt]
+            if _is_step(stmt):
+                while i + 1 < len(body) and _vec_set(body[i + 1]) is not None:
+                    i += 1
+                    run.append(body[i])
+            targets, value, values = recurrence_writes(reader, run)
+            regions.append(ir.Recurrence(targets=targets, value=value, values=values))
+        elif (multi := multi_assign(reader, stmt)) is not None:
+            nxt = body[i + 1] if i + 1 < len(body) else None
+            if _shows_all(nxt, multi.targets):
+                multi.evaluate = True
+                i += 1
+            regions.append(multi)
         elif isinstance(stmt, ast.FunctionDef):
             name = stmt.name
             nxt = body[i + 1] if i + 1 < len(body) else None
             if (not stmt.args.args and name.startswith("_") and isinstance(nxt, ast.Assign)
+                    and isinstance(nxt.targets[0], ast.Tuple)
+                    and ast.unparse(nxt.value) == f"tuple({name}())"):
+                # A program returning a vector, spread over several names.
+                multi = ir.MultiAssign(targets=[reader.expr(e) for e in nxt.targets[0].elts],
+                                       value=reader.program(stmt))
+                i += 1
+                after = body[i + 1] if i + 1 < len(body) else None
+                if _shows_all(after, multi.targets):
+                    multi.evaluate = True
+                    i += 1
+                regions.append(multi)
+            elif (not stmt.args.args and name.startswith("_") and isinstance(nxt, ast.Assign)
                     and ast.unparse(nxt) == f"{name[1:]} = {name}()"):
                 # A nullary helper: ``x := <program>`` for a plain variable.
                 target = reader.expr(ast.Name(id=name[1:]))
@@ -570,6 +780,9 @@ def read_python(text: str) -> list[ir.Region]:
             regions.append(define)
         elif (shown := reader.shown(stmt)) is not None:
             regions.append(ir.Evaluate(value=shown[0], display_unit=shown[1]))
+        elif isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call):
+            # A bare call such as ``Seed(1)``: Mathcad runs it and shows nothing.
+            regions.append(ir.Statement(value=reader.expr(stmt.value)))
         else:
             raise Refused(f"line {stmt.lineno}: {ast.unparse(stmt)[:60]!r} is not a "
                           "definition or an evaluation")
@@ -591,6 +804,18 @@ class Writer(mb._Writer):
     def __init__(self, ids, functions: dict[str, str] | None = None):
         super().__init__(ids)
         self.functions = functions or {}
+
+    def unit(self, name):
+        # ``label-is-contextual`` lets Prime pick the label itself, and where
+        # the sheet also has a variable of the same name (``m``, ``s``) it
+        # picks the variable. Prime's own files label a unit explicitly.
+        return explicit(super().unit(name))
+
+    def identifier(self, original, role):
+        # The same for a built-in constant: ``R`` is the gas constant and
+        # also a unit, and a contextual label leaves Prime unable to choose.
+        xml = super().identifier(original, role)
+        return explicit(xml) if role == "CONSTANT" else xml
 
     def binop(self, node):
         tag = _LOGIC_TAGS.get(node.op)
@@ -617,6 +842,14 @@ class Writer(mb._Writer):
             args = [self.emit(a)[0] for a in node.args]
             inner = args[0] if len(args) == 1 else f"<ml:sequence>{''.join(args)}</ml:sequence>"
             return f"<ml:apply>{head}{inner}</ml:apply>", mb.ATOM_PREC
+        if (isinstance(node, ir.Call) and node.func == "element_of"
+                and isinstance(node.args[1], ir.Str)):
+            # The number set is a bare, unlabelled id: ℤ, ℝ, ℚ, ℂ, ℕ.
+            num_set = f'<ml:id xml:space="preserve">{mb._escape(node.args[1].value)}</ml:id>'
+            return (f"<ml:apply><ml:elementOf />{self.emit(node.args[0])[0]}{num_set}</ml:apply>",
+                    mb.ATOM_PREC)
+        if isinstance(node, ir.Number) and node.value.endswith("j"):
+            return f'<ml:imag symbol="i">{mb._number(node.value[:-1])}</ml:imag>', mb.ATOM_PREC
         if isinstance(node, ir.Call) and node.func in _OPERATOR_CALLS:
             return self.apply(_OPERATOR_CALLS[node.func], *node.args)
         if isinstance(node, ir.Call):
@@ -658,6 +891,24 @@ class Writer(mb._Writer):
             return self.apply("transpose", node.operand)
         if isinstance(node, ir.Vectorize):
             return self.apply("vectorize", node.operand)
+        if isinstance(node, (ir.Summation, ir.Integral, ir.RangeSum, ir.Derivative)):
+            tag = {ir.Summation: "summation", ir.Integral: "integral",
+                   ir.RangeSum: "summation", ir.Derivative: "derivative"}[type(node)]
+            func = node.func
+            bound = "".join(self.identifier(mathcad_name(p), "VARIABLE") for p in func.params)
+            parts = [f"<ml:lambda><ml:boundVars>{bound}</ml:boundVars>"
+                     f"{self.emit(func.body)[0]}</ml:lambda>"]
+            if isinstance(node, ir.Derivative):
+                parts.append(f"<ml:degree>{self.emit(node.degree)[0]}</ml:degree>")
+            elif isinstance(node, ir.RangeSum):
+                parts.append("<ml:upperBound><ml:placeholder /></ml:upperBound>")
+            else:
+                parts.append(f"<ml:lowerBound>{self.emit(node.lower)[0]}</ml:lowerBound>"
+                             f"<ml:upperBound>{self.emit(node.upper)[0]}</ml:upperBound>")
+            # These operators extend to the right in Prime, so give them the
+            # precedence of ``+``: an operand then gets the group it needs.
+            return (f"<ml:apply><ml:{tag} />{''.join(parts)}</ml:apply>",
+                    mb.BINARY_OPS["add"][1])
         if isinstance(node, ir.VectorSum):
             # A bare Σ: no bound variable, no bounds.
             return ("<ml:apply><ml:summation /><ml:lambda><ml:boundVars><ml:placeholder />"
@@ -720,6 +971,15 @@ class Writer(mb._Writer):
     def apply(self, tag: str, *operands: ir.Expr) -> tuple[str, int]:
         inner = "".join(self.emit(o)[0] for o in operands)
         return f"<ml:apply><ml:{tag} />{inner}</ml:apply>", mb.ATOM_PREC
+
+
+def explicit(xml: str) -> str:
+    """Drop ``label-is-contextual``: the label stays what it says.
+
+    Used for units and for the name a region defines. Left contextual, Prime
+    relabels the target of ``m := 1 m`` (to ``*``) and the unit (to VARIABLE).
+    """
+    return xml.replace(' label-is-contextual="true"', "")
 
 
 def override_xml(writer: Writer, unit: ir.Expr | None) -> str:
@@ -879,12 +1139,45 @@ def region_xml(region: ir.Region, rid: int, top: float, writer: Writer, refs) ->
     if isinstance(region, ir.GridPlot):
         return (f'<region region-id="{rid}" top="{top}" left="38.4">'
                 f"{grid_plot_xml(region, writer, refs)}</region>")
+    if isinstance(region, (ir.Statement, ir.MultiAssign, ir.Recurrence)):
+        if isinstance(region, ir.Statement):
+            math = writer.emit(region.value)[0]
+        else:
+            if isinstance(region, ir.MultiAssign):
+                n = len(region.targets)
+                rows, cols = n, 1
+                if region.matrix_target:
+                    # The Python keeps only the count; assume a square matrix.
+                    side = round(n ** 0.5)
+                    if side * side != n:
+                        raise Refused(f"cannot tell the shape of a {n}-name matrix target")
+                    rows = cols = side
+                cells = "".join(writer.emit(t)[0] for t in region.targets)
+                target = explicit(f'<ml:matrix rows="{rows}" cols="{cols}">{cells}</ml:matrix>')
+                value = writer.emit(region.value)[0]
+            else:
+                slots = [writer.emit(ir.Index(base=t.base, index=t.index) if t.col is None
+                                     else ir.Index2D(base=t.base, row=t.index, col=t.col))[0]
+                         for t in region.targets]
+                target = explicit(slots[0] if len(slots) == 1 else
+                                  f'<ml:matrix rows="{len(slots)}" cols="1">{"".join(slots)}</ml:matrix>')
+                if region.values is not None:
+                    value = (f'<ml:matrix rows="{len(region.values)}" cols="1">'
+                             + "".join(writer.emit(v)[0] for v in region.values)
+                             + "</ml:matrix>")
+                else:
+                    value = writer.emit(region.value)[0]
+            if getattr(region, "evaluate", False):
+                value = f"<ml:eval>{value}{override_xml(writer, None)}</ml:eval>"
+            math = f"<ml:define>{target}{value}</ml:define>"
+        return (f'<region region-id="{rid}" top="{top}" left="38.4">'
+                f'<math resultRef="{next(refs)}">{math}</math></region>')
     if isinstance(region, ir.TextRegion):
         width = text_width(region.text.split("\n"))
         return (f'<region region-id="{rid}" width="{width}" top="{top}" left="38.4">'
                 f'<text item-idref="Rtext{rid}">{FLOW_DOC}</text></region>')
     if isinstance(region, ir.IndexAssign):
-        target = (writer.emit(ir.Index(base=region.target, index=region.index))[0]
+        target = explicit(writer.emit(ir.Index(base=region.target, index=region.index))[0]
                   if region.col_index is None else
                   writer.emit(ir.Index2D(base=region.target, row=region.index,
                                          col=region.col_index))[0])
@@ -897,10 +1190,10 @@ def region_xml(region: ir.Region, rid: int, top: float, writer: Writer, refs) ->
     if isinstance(region, ir.Define) and region.params:
         name = writer.identifier(region.target.original, "VARIABLE")
         bound = "".join(writer.identifier(mathcad_name(p), "VARIABLE") for p in region.params)
-        target = f"<ml:function>{name}<ml:boundVars>{bound}</ml:boundVars></ml:function>"
+        target = explicit(f"<ml:function>{name}<ml:boundVars>{bound}</ml:boundVars></ml:function>")
         math = f"<ml:define>{target}{writer.emit(region.value)[0]}</ml:define>"
     elif isinstance(region, ir.Define):
-        target = writer.emit(region.target)[0]
+        target = explicit(writer.emit(region.target)[0])
         value = writer.emit(region.value)[0]
         if region.evaluate:
             value = f"<ml:eval>{value}{override_xml(writer, region.display_unit)}</ml:eval>"
