@@ -846,9 +846,13 @@ def grid_plot_xml(region: ir.GridPlot, writer: Writer, refs) -> str:
                 f"<plotEquations>{equation}</plotEquations></plot3D></plot>")
 
     def axis(tag, dom, extra):
+        # Prime marks the whole region CorruptedRegion if the z axis line is
+        # ``ticknumberlock`` like the other two (found by trying variants).
+        line = ('position="origin" positionticmark="5"' if tag == "zAxis"
+                else 'position="ticknumberlock" positionticmark="0"')
         return (f'<{tag} rank="1"{extra} start="0" end="1">'
-                '<axisLine position="ticknumberlock" positionticmark="0" legendWidth="0" />'
-                + _AXIS_GRID.format(freq=11) +
+                f'<axisLine {line} legendWidth="0" />'
+                + _AXIS_GRID.format(freq=9 if tag == "zAxis" else 11) +
                 f'<axisLabel /><markers /><{dom} scale-type="linear" auto-scale="true">'
                 "<startValue><ml:placeholder /></startValue>"
                 f"<endValue><ml:placeholder /></endValue></{dom}></{tag}>")
