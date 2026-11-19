@@ -22,7 +22,8 @@ A comment *after* code on the same line (``# mcdx region 3`` from
 Also: programs (``def``), ranges, matrices, Σ/∫/d/dx (``summation``,
 ``range_sum``, ``integral``, ``double_integral``, ``derivative``), difference
 equations (``vec_set`` seeds and ``_recur_`` loops), ``a, b = tuple(V)``,
-bare calls (``Seed(1)``), the constants of ``math`` and ``mcad2py.const``, and
+solve blocks (``solve_block`` with its ``_residuals_`` function, also inside a
+``def``), bare calls (``Seed(1)``), the constants of ``math`` and ``mcad2py.const``, and
 codegen's ``try`` guard around a region Mathcad could not compute (dropped:
 Prime finds the error again). Everything else is refused, naming the line.
 
@@ -667,6 +668,62 @@ def multi_assign(reader: Reader, stmt: ast.stmt) -> ir.MultiAssign | None:
                           matrix_target=matrix_target)
 
 
+def _solve_call(node: ast.expr | None):
+    """``solve_block(_residuals_X, [u, v])`` -> (residual name, [u, v])."""
+    if (_call_named(node, "solve_block") and len(node.args) == 2
+            and isinstance(node.args[0], ast.Name) and isinstance(node.args[1], ast.List)
+            and all(isinstance(e, ast.Name) for e in node.args[1].elts)):
+        return node.args[0].id, [e.id for e in node.args[1].elts]
+    return None
+
+
+def residuals(reader: Reader, fn: ast.FunctionDef, unknowns: list[str]) -> list[ir.Equation]:
+    """``def _residuals_X(_x): u, v = _x; return [lhs - (rhs), ...]`` -> the
+    constraints ``lhs = rhs``. codegen brackets the right side, so it is
+    always the right operand of the outermost minus."""
+    if not (len(fn.body) == 2 and isinstance(fn.body[0], ast.Assign)
+            and ast.unparse(fn.body[0].value) == "_x"
+            and [e.id for e in getattr(fn.body[0].targets[0], "elts", [])] == unknowns
+            and isinstance(fn.body[1], ast.Return) and isinstance(fn.body[1].value, ast.List)):
+        raise Refused(f"line {fn.lineno}: an unknown residual function shape")
+    out = []
+    for item in fn.body[1].value.elts:
+        if not (isinstance(item, ast.BinOp) and isinstance(item.op, ast.Sub)):
+            raise Refused(f"line {item.lineno}: a residual is not lhs - (rhs)")
+        out.append(ir.Equation(lhs=reader.expr(item.left), rhs=reader.expr(item.right)))
+    return out
+
+
+def solve_function(reader: Reader, fn: ast.FunctionDef) -> ir.SolveBlock | None:
+    """``def f(a, b): <guesses>; def _residuals_x...; return solve_block(...)[0]``
+    -> ``f(a, b) := find(x)`` inside a solve block."""
+    last = fn.body[-1] if fn.body else None
+    ret = last.value if isinstance(last, ast.Return) else None
+    if isinstance(ret, ast.Subscript) and ast.unparse(ret.slice) == "0":
+        ret = ret.value
+    found = _solve_call(ret)
+    if found is None:
+        return None
+    resid_name, unknowns = found
+    guesses, resid = [], None
+    for s in fn.body[:-1]:
+        if isinstance(s, ast.FunctionDef) and s.name == resid_name:
+            resid = s
+        elif (isinstance(s, ast.Assign) and len(s.targets) == 1
+              and isinstance(s.targets[0], ast.Name) and s.targets[0].id in unknowns):
+            guesses.append(ir.Define(target=reader.expr(s.targets[0]),
+                                     value=reader.expr(s.value)))
+        else:
+            raise Refused(f"line {s.lineno}: unexpected inside a solve-block function")
+    if resid is None:
+        raise Refused(f"line {fn.lineno}: no residual function")
+    name = ir.Name(py=fn.name, original=mathcad_name(fn.name))
+    reader.functions[fn.name] = name.original
+    return ir.SolveBlock(guesses=guesses, constraints=residuals(reader, resid, unknowns),
+                         unknowns=[reader.expr(ast.Name(id=u)) for u in unknowns],
+                         targets=[name], params=[a.arg for a in fn.args.args])
+
+
 def _shows_all(stmt: ast.stmt | None, names: list[ir.Name]) -> bool:
     """``print([a, b, c])``: codegen's echo of a multi-assignment."""
     return stmt is not None and ast.unparse(stmt) == (
@@ -707,6 +764,40 @@ def read_python(text: str) -> list[ir.Region]:
         elif (isinstance(stmt, ast.Assign) and isinstance(stmt.value, ast.Constant)
                 and stmt.value.value is None):
             pass  # ``X = None``: codegen's declaration before a difference equation
+        elif (isinstance(stmt, ast.FunctionDef) and stmt.name.startswith("_residuals_")
+                and i + 1 < len(body)):
+            # The guesses came just before, and were read as plain definitions.
+            nxt = body[i + 1]
+            call = nxt.value if isinstance(nxt, ast.Assign) else None
+            single = isinstance(call, ast.Subscript) and ast.unparse(call.slice) == "0"
+            found = _solve_call(call.value if single else call)
+            if found is None or found[0] != stmt.name:
+                raise Refused(f"line {stmt.lineno}: a residual function with no solve_block")
+            unknowns = found[1]
+            guesses: list[ir.Define] = []
+            while (regions and isinstance(regions[-1], ir.Define) and not regions[-1].params
+                   and regions[-1].target.py in unknowns
+                   and regions[-1].target.py not in [g.target.py for g in guesses]):
+                guesses.insert(0, regions.pop())
+            target_node = nxt.targets[0]
+            names = target_node.elts if isinstance(target_node, ast.Tuple) else [target_node]
+            block = ir.SolveBlock(guesses=guesses,
+                                  constraints=residuals(reader, stmt, unknowns),
+                                  unknowns=[reader.expr(ast.Name(id=u)) for u in unknowns],
+                                  targets=[reader.expr(n) for n in names])
+            i += 1
+            after = body[i + 1] if i + 1 < len(body) else None
+            shown = reader.shown(after) if after is not None and len(names) == 1 else None
+            if shown and isinstance(shown[0], ir.Name) and shown[0].py == block.targets[0].py:
+                block.evaluate, block.display_unit = True, shown[1]
+                i += 1
+            elif len(names) > 1 and _shows_all(after, block.targets):
+                block.evaluate = True
+                i += 1
+            regions.append(block)
+        elif (isinstance(stmt, ast.FunctionDef) and not stmt.name.startswith("_")
+                and (solved := solve_function(reader, stmt)) is not None):
+            regions.append(solved)
         elif isinstance(stmt, ast.FunctionDef) and stmt.name.startswith("_recur_"):
             nxt = body[i + 1] if i + 1 < len(body) else None
             regions.append(recurrence_def(reader, stmt, nxt))
@@ -1128,7 +1219,54 @@ PLOT_SIZE = 230.4
 XY_REGION = (364.8, 326.4)
 
 
+def solve_block_xml(region: ir.SolveBlock, rid: int, top: float, writer: Writer,
+                    refs) -> str:
+    """``<solveblock>``: guesses, constraints and the ``find`` line, each its
+    own region with coordinates relative to the block."""
+    subs, row = [], 0
+    sub_id = itertools.count(1000 * (rid + 1))
+
+    def sub(category: str, math: str) -> None:
+        nonlocal row
+        subs.append(f'<region region-id="{next(sub_id)}" top="{19.2 + row * ROW}" '
+                    f'left="19.2" solve-block-category="{category}">'
+                    f'<math resultRef="{next(refs)}">{math}</math></region>')
+        row += 1.5
+
+    for g in region.guesses:
+        sub("guess-value", f"<ml:define>{explicit(writer.emit(g.target)[0])}"
+                           f"{writer.emit(g.value)[0]}</ml:define>")
+    for c in region.constraints:
+        sub("constraint", writer.emit(ir.BinOp(op="eq", left=c.lhs, right=c.rhs))[0])
+
+    unknowns = [writer.emit(u)[0] for u in region.unknowns]
+    args = unknowns[0] if len(unknowns) == 1 else f"<ml:sequence>{''.join(unknowns)}</ml:sequence>"
+    find = (f'<ml:apply><ml:id labels="KEYWORD" algorithm="" xml:space="preserve">'
+            f'{region.command}</ml:id>{args}</ml:apply>')
+    if region.params:
+        name = writer.identifier(region.targets[0].original, "VARIABLE")
+        bound = "".join(writer.identifier(mathcad_name(p), "VARIABLE") for p in region.params)
+        target = f"<ml:function>{name}<ml:boundVars>{bound}</ml:boundVars></ml:function>"
+    elif len(region.targets) == 1:
+        target = writer.emit(region.targets[0])[0]
+    else:
+        cells = "".join(writer.emit(t)[0] for t in region.targets)
+        target = f'<ml:matrix rows="{len(region.targets)}" cols="1">{cells}</ml:matrix>'
+    if region.evaluate:
+        find = f"<ml:eval>{find}{override_xml(writer, region.display_unit)}</ml:eval>"
+    sub("solver", f"<ml:define>{explicit(target)}{find}</ml:define>")
+    height = round(19.2 + row * ROW + 19.2, 4)
+    return (f'<region region-id="{rid}" width="300" height="{height}" top="{top}" left="38.4">'
+            f'<solveblock><regions>{"".join(subs)}</regions></solveblock></region>')
+
+
+def solve_rows(region: ir.SolveBlock) -> float:
+    return 1.5 * (len(region.guesses) + len(region.constraints) + 1) + 2
+
+
 def region_xml(region: ir.Region, rid: int, top: float, writer: Writer, refs) -> str:
+    if isinstance(region, ir.SolveBlock):
+        return solve_block_xml(region, rid, top, writer, refs)
     if isinstance(region, ir.Plot):
         # Without a fixed size the region opens and calculates, but Prime
         # crashes laying it out for print (PlotGraphControl measures to
@@ -1262,7 +1400,9 @@ PRESENTATION = Path(__file__).with_name("mcdx_template") / "presentation.xml"
 def rows(region: ir.Region) -> float:
     """Grid rows ``region`` takes, including the gap below it."""
     if isinstance(region, (ir.Plot, ir.GridPlot)):
-        return PLOT_SIZE / ROW + 2.5  # the graph, its axis labels and a gap
+        return PLOT_SIZE / ROW + 2.5
+    if isinstance(region, ir.SolveBlock):
+        return solve_rows(region)  # the graph, its axis labels and a gap
     if isinstance(region, ir.TextRegion):
         lines = sum(1 + len(p) * CHAR_WIDTH // TEXT_MAX_WIDTH
                     for p in region.text.split("\n"))
@@ -1298,6 +1438,8 @@ def _stmt_lines(s: ir.Stmt) -> float:
 def build(regions: list[ir.Region]) -> dict[str, str | bytes]:
     functions = {r.target.py: r.target.original for r in regions
                  if isinstance(r, ir.Define) and r.params}
+    functions.update({r.targets[0].py: r.targets[0].original for r in regions
+                      if isinstance(r, ir.SolveBlock) and r.params})
     writer = Writer({}, functions)
     body, top, rels = [], 2 * ROW, []
     parts: dict[str, str | bytes] = dict(PARTS)
