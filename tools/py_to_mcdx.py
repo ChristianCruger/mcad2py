@@ -23,7 +23,10 @@ Also: programs (``def``), ranges, matrices, Σ/∫/d/dx (``summation``,
 ``range_sum``, ``integral``, ``double_integral``, ``derivative``), difference
 equations (``vec_set`` seeds and ``_recur_`` loops), ``a, b = tuple(V)``,
 solve blocks (``solve_block`` with its ``_residuals_`` function, also inside a
-``def``), bare calls (``Seed(1)``), the constants of ``math`` and ``mcad2py.const``, and
+``def``), bare calls (``Seed(1)``), the constants of ``math`` and ``mcad2py.const``,
+symbolic regions (``Eq(a, b)`` alone, ``print(solve(Eq(...), C))``, the plain
+arrow ``print(simplify(x))``; the ``Symbol`` declarations are dropped, and their
+names written unlabelled as Prime does), the ``x / (10**-6)`` display scale, and
 codegen's ``try`` guard around a region Mathcad could not compute (dropped:
 Prime finds the error again). Everything else is refused, naming the line.
 
@@ -38,6 +41,7 @@ import argparse
 import ast
 import io
 import itertools
+import re
 import sys
 import tokenize
 import zipfile
@@ -119,6 +123,9 @@ def mathcad_name(py: str) -> str:
     return head + sep + sub
 
 
+# SymPy calls codegen writes for a symbolic evaluation (mapping.SYMBOLIC_COMMANDS).
+_SYM_COMMANDS = {"solve", "simplify", "factor", "expand"}
+
 _CMP = {ast.Lt: "lt", ast.Gt: "gt", ast.LtE: "le", ast.GtE: "ge", ast.Eq: "eq",
         ast.NotEq: "ne"}
 
@@ -136,6 +143,9 @@ class Reader:
             alias.name for node in ast.parse(text).body
             if isinstance(node, ast.ImportFrom) and node.module == "mcad2py.const"
             for alias in node.names}
+        # Names currently bound to a SymPy ``Symbol``: free names of the
+        # symbolic regions, written as unlabelled ids the way Prime has them.
+        self.symbols: set[str] = set()
 
     def expr(self, node: ast.expr) -> ir.Expr:
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
@@ -178,7 +188,12 @@ class Reader:
         if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)) \
                 and not isinstance(node.value, bool):
             return ir.Number(ast.get_source_segment(self.text, node) or repr(node.value))
+        if (isinstance(node, ast.Call) and ast.unparse(node.func) == "Eq"
+                and len(node.args) == 2 and not node.keywords):
+            return ir.Equation(lhs=self.expr(node.args[0]), rhs=self.expr(node.args[1]))
         if isinstance(node, ast.Name):
+            if node.id in self.symbols:
+                return ir.Name(py=node.id, original=mathcad_name(node.id), role="SYMBOL")
             if node.id in self.constants and node.id in _CONST_BACK:
                 return ir.Name(py=node.id, original=_CONST_BACK[node.id], role="CONSTANT")
             return ir.Name(py=node.id, original=mathcad_name(node.id))
@@ -290,6 +305,24 @@ class Reader:
     def program(self, fn: ast.FunctionDef) -> ir.Expr:
         return ProgramReader(self).read(fn)
 
+    def symbolic(self, stmt: ast.stmt) -> ir.Region | None:
+        """``Eq(a, b)`` on its own line, or ``print(solve(Eq(...), C))``."""
+        if not (isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call)):
+            return None
+        call = stmt.value
+        if ast.unparse(call.func) == "Eq":
+            equation = self.expr(call)
+            if isinstance(equation, ir.Equation):
+                return ir.SymbolicEquation(equation=equation)
+        if (ast.unparse(call.func) == "print" and len(call.args) == 1
+                and isinstance(call.args[0], ast.Call) and not call.args[0].keywords):
+            inner = call.args[0]
+            command = ast.unparse(inner.func)
+            if command in _SYM_COMMANDS and inner.args:
+                return ir.SymbolicEval(expr=self.expr(inner.args[0]), command=command,
+                                       args=[self.expr(a) for a in inner.args[1:]])
+        return None
+
     def shown(self, stmt: ast.stmt) -> tuple[ir.Expr, ir.Expr | None] | None:
         """``print(x)`` / ``print(disp(x[, unit]))`` -> (x, unit)."""
         if not (isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call)
@@ -302,7 +335,18 @@ class Reader:
         if (isinstance(arg, ast.Call) and isinstance(arg.func, ast.Attribute)
                 and arg.func.attr == "to" and len(arg.args) == 1):
             return self.expr(arg.func.value), self.expr(arg.args[0])
+        if (isinstance(arg, ast.BinOp) and isinstance(arg.op, ast.Div)
+                and not any(isinstance(n, (ast.Name, ast.Attribute)) for n in ast.walk(arg.right))
+                and self.text_between(arg.left, arg.right).rstrip().endswith("/ (")):
+            # ``x / (10**-6)``: codegen's form for a numeric display scale.
+            return self.expr(arg.left), self.expr(arg.right)
         return self.expr(arg), None
+
+    def text_between(self, a: ast.AST, b: ast.AST) -> str:
+        lines = self.text.splitlines(keepends=True)
+        if a.end_lineno != b.lineno:
+            return ""
+        return lines[b.lineno - 1].encode("utf-8")[a.end_col_offset:b.col_offset].decode("utf-8")
 
 
 def comment_blocks(text: str) -> list[tuple[int, list[str]]]:
@@ -759,6 +803,13 @@ def read_python(text: str) -> list[ir.Region]:
                 built.evaluate, built.display_unit = True, nxt[1]
                 i += 1
             regions.append(built)
+        elif (isinstance(stmt, ast.Assign) and len(stmt.targets) == 1
+                and isinstance(stmt.targets[0], ast.Name)
+                and ast.unparse(stmt.value) == f"Symbol({stmt.targets[0].id!r})"):
+            # ``x = Symbol('x')``: the converter declares these itself.
+            reader.symbols.add(stmt.targets[0].id)
+        elif (sym := reader.symbolic(stmt)) is not None:
+            regions.append(sym)
         elif is_elementwise_line(stmt):
             pass  # ``f = elementwise(f)``: Mathcad's vectorize arrow implies it
         elif (isinstance(stmt, ast.Assign) and isinstance(stmt.value, ast.Constant)
@@ -862,8 +913,10 @@ def read_python(text: str) -> list[ir.Region]:
                                      params=[a.arg for a in fn.args.args]))
         elif (isinstance(stmt, ast.Assign) and len(stmt.targets) == 1
                 and isinstance(stmt.targets[0], ast.Name)):
+            value = reader.expr(stmt.value)
+            reader.symbols.discard(stmt.targets[0].id)  # a number from here on
             target = reader.expr(stmt.targets[0])
-            define = ir.Define(target=target, value=reader.expr(stmt.value))
+            define = ir.Define(target=target, value=value)
             nxt = reader.shown(body[i + 1]) if i + 1 < len(body) else None
             if nxt and isinstance(nxt[0], ir.Name) and nxt[0].py == target.py:
                 define.evaluate, define.display_unit = True, nxt[1]
@@ -903,6 +956,18 @@ class Writer(mb._Writer):
         return explicit(super().unit(name))
 
     def identifier(self, original, role):
+        if role == "SYMBOL":
+            # A free name in a symbolic region: Prime leaves it unlabelled.
+            return re.sub(r' labels="[A-Z]+"( label-is-contextual="true")?', "",
+                          super().identifier(original, "VARIABLE"), count=1)
+        head, _sep, sub = original.partition("_")
+        if head and "_" in sub and (role, original) not in self.ids:
+            # ``ε_cd_100mm``: the backend refuses a second underscore, since
+            # Prime has no key for it, but a subscript can hold one (pasted
+            # in; shrinkage.mcdx has it) and the XAML form stores it as is.
+            body = mb.SPAN_TEMPLATE.format(head=mb._escape(head), sub=mb._escape(sub))
+            xml = mb.ID_TEMPLATE.format(role=role, body=body)
+            return explicit(xml) if role == "CONSTANT" else xml
         # The same for a built-in constant: ``R`` is the gas constant and
         # also a unit, and a contextual label leaves Prime unable to choose.
         xml = super().identifier(original, role)
@@ -918,6 +983,8 @@ class Writer(mb._Writer):
         return f"<ml:apply><ml:{tag} />{left}{right}</ml:apply>", prec
 
     def emit(self, node):
+        if isinstance(node, ir.Equation):
+            return self.emit(ir.BinOp(op="eq", left=node.lhs, right=node.rhs))
         if isinstance(node, ir.Str):
             return f"<ml:str>{mb._escape(node.value)}</ml:str>", mb.ATOM_PREC
         if isinstance(node, ir.UnaryOp) and node.op == "not_":
@@ -1264,7 +1331,25 @@ def solve_rows(region: ir.SolveBlock) -> float:
     return 1.5 * (len(region.guesses) + len(region.constraints) + 1) + 2
 
 
+def symbolic_xml(region: ir.SymbolicEquation | ir.SymbolicEval, writer: Writer) -> str:
+    """A bare ``lhs = rhs``, or ``<ml:symEval>`` with its keyword. The plain
+    arrow (``simplify``) has no keyword: its command is a placeholder."""
+    if isinstance(region, ir.SymbolicEquation):
+        return writer.emit(region.equation)[0]
+    if region.command == "simplify" and not region.args:
+        command = "<ml:placeholder />"
+    else:
+        args = "".join(writer.emit(a)[0] for a in region.args)
+        command = (f'<ml:sequence><ml:id xml:space="preserve">{region.command}</ml:id>'
+                   f"{args}</ml:sequence>")
+    return (f"<ml:symEval>{writer.emit(region.expr)[0]}"
+            f"<ml:command>{command}</ml:command></ml:symEval>")
+
+
 def region_xml(region: ir.Region, rid: int, top: float, writer: Writer, refs) -> str:
+    if isinstance(region, (ir.SymbolicEquation, ir.SymbolicEval)):
+        return (f'<region region-id="{rid}" top="{top}" left="38.4">'
+                f'<math resultRef="{next(refs)}">{symbolic_xml(region, writer)}</math></region>')
     if isinstance(region, ir.SolveBlock):
         return solve_block_xml(region, rid, top, writer, refs)
     if isinstance(region, ir.Plot):
