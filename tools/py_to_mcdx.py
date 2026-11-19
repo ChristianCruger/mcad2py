@@ -865,11 +865,16 @@ def grid_plot_xml(region: ir.GridPlot, writer: Writer, refs) -> str:
 
 
 PLOT_SIZE = 230.4
+XY_REGION = (364.8, 326.4)
 
 
 def region_xml(region: ir.Region, rid: int, top: float, writer: Writer, refs) -> str:
     if isinstance(region, ir.Plot):
-        return (f'<region region-id="{rid}" top="{top}" left="38.4">'
+        # Without a fixed size the region opens and calculates, but Prime
+        # crashes laying it out for print (PlotGraphControl measures to
+        # infinity). The size is Prime's own for a 230.4 px graph.
+        return (f'<region region-id="{rid}" width="{XY_REGION[0]}" height="{XY_REGION[1]}" '
+                f'top="{top}" left="38.4">'
                 f"{xy_plot_xml(region, writer, refs)}</region>")
     if isinstance(region, ir.GridPlot):
         return (f'<region region-id="{rid}" top="{top}" left="38.4">'
