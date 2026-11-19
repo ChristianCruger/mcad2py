@@ -11,6 +11,9 @@ The input is the *flat* dialect ``mcad2py convert -f py`` writes:
                                          -> that definition also shows ``=``
 * ``print(expr)`` on its own             -> an evaluation ``expr =``
 * a block of ``# comment`` lines         -> a text region, one paragraph per line
+* a figure, ``_fig, _ax = ...`` to ``plt.show()``
+                                         -> an xy, contour or 3D plot; only the
+                                            lines carrying math are read
 * imports and the module docstring       -> skipped
 
 A comment *after* code on the same line (``# mcdx region 3`` from
@@ -30,6 +33,7 @@ from __future__ import annotations
 import argparse
 import ast
 import io
+import itertools
 import sys
 import tokenize
 import zipfile
@@ -396,6 +400,105 @@ class ProgramReader:
                       "program form")
 
 
+def _call_named(node: ast.AST, head: str) -> bool:
+    return isinstance(node, ast.Call) and ast.unparse(node.func) == head
+
+
+def plot_block(reader: Reader, body: list[ast.stmt], i: int):
+    """The statements of one figure -> ``(Plot | GridPlot, index of plt.show())``.
+
+    codegen writes a figure as a fixed run of statements ending in
+    ``plt.show()``. Only the lines that carry the plot's math are read; the
+    styling lines around them are codegen's own and say nothing about the sheet.
+    """
+    stmt = body[i]
+    implicit = None
+    if (isinstance(stmt, ast.Assign) and len(stmt.targets) == 1
+            and isinstance(stmt.targets[0], ast.Name)
+            and stmt.targets[0].id.startswith("_domain_")
+            and _call_named(stmt.value, "plot_domain")):
+        # A plot of a variable the sheet never defines: Mathcad invents it.
+        bounds = [ast.literal_eval(a) for a in stmt.value.args]
+        implicit = (stmt.targets[0].id, bounds)
+        i += 1
+        stmt = body[i]
+    grid = (isinstance(stmt, ast.Assign)
+            and ast.unparse(stmt.targets[0]) == "(_X, _Y, _Z, _kind)"
+            and _call_named(stmt.value, "resolve_plot_grid"))
+    if not grid and ast.unparse(stmt) != "_fig, _ax = plt.subplots()":
+        if implicit:
+            raise Refused(f"line {stmt.lineno}: plot_domain() not followed by a plot")
+        return None
+    end = i
+    while end < len(body) and ast.unparse(body[end]) != "plt.show()":
+        end += 1
+    if end == len(body):
+        raise Refused(f"line {stmt.lineno}: a figure with no plt.show()")
+    block = body[i:end]
+    region = grid_plot(reader, block) if grid else xy_plot(reader, block, implicit)
+    return region, end
+
+
+def xy_plot(reader: Reader, block: list[ast.stmt], implicit) -> ir.Plot:
+    domain_var = implicit[0] if implicit else None
+
+    def axis(node: ast.expr) -> tuple[ir.Expr, ir.Expr | None]:
+        if not (_call_named(node, "plot_axis") and len(node.args) == 2):
+            raise Refused(f"line {node.lineno}: a plot axis is not plot_axis(data, unit)")
+        data, unit = node.args
+        unit_ir = (None if isinstance(unit, ast.Constant) and unit.value is None
+                   else reader.expr(unit))
+        if isinstance(data, ast.Name) and data.id == domain_var:
+            name = data.id.removeprefix("_domain_")
+            return ir.Name(py=name, original=mathcad_name(name)), unit_ir
+        if _call_named(data, "sample") and isinstance(data.args[0], ast.Lambda):
+            # ``sample(lambda x: E, x)`` is E evaluated over the domain.
+            return reader.expr(data.args[0].body), unit_ir
+        if _call_named(data, "static_axis"):
+            return reader.expr(data.args[0]), unit_ir
+        return reader.expr(data), unit_ir
+
+    traces = []
+    for s in block:
+        if not (isinstance(s, ast.Expr) and _call_named(s.value, "_ax.plot")):
+            continue
+        call = s.value
+        pair = call.args[0].value if isinstance(call.args[0], ast.Starred) else None
+        if not (_call_named(pair, "plot_trace") and len(pair.args) == 2):
+            raise Refused(f"line {s.lineno}: a trace is not plot_trace(x, y)")
+        (x, xu), (y, yu) = axis(pair.args[0]), axis(pair.args[1])
+        color = next((ast.literal_eval(k.value) for k in call.keywords
+                      if k.arg == "color"), None)
+        traces.append(ir.PlotTrace(x=x, y=y, x_unit=xu, y_unit=yu, color=color))
+    if not traces:
+        raise Refused(f"line {block[0].lineno}: a figure with no traces")
+    limits = None
+    if implicit and tuple(implicit[1][:2]) != (-10.0, 10.0):
+        limits = (float(implicit[1][0]), float(implicit[1][1]))
+    return ir.Plot(traces=traces, x_limits=limits)
+
+
+def grid_plot(reader: Reader, block: list[ast.stmt]) -> ir.GridPlot:
+    value = block[0].value.args[0]
+    mesh = None
+    if (_call_named(value, "mesh_grid") and len(value.args) == 3
+            and isinstance(value.args[0], ast.Lambda)):
+        # ``mesh_grid(lambda x, y: E, x, y)`` is E over the two ranges' grid.
+        mesh = tuple(ast.unparse(a) for a in value.args[1:])
+        expr = reader.expr(value.args[0].body)
+    else:
+        expr = reader.expr(value)
+    z_unit = None
+    for s in block:
+        if (isinstance(s, ast.Assign) and ast.unparse(s.targets[0]) == "(_Xs, _Ys, _Zs)"
+                and isinstance(s.value, ast.Tuple)):
+            unit = s.value.elts[2].args[1] if len(s.value.elts[2].args) > 1 else None
+            if unit is not None and not (isinstance(unit, ast.Constant) and unit.value is None):
+                z_unit = reader.expr(unit)
+    threed = any(ast.unparse(s) == "_ax = _fig.add_subplot(projection='3d')" for s in block)
+    return ir.GridPlot(expr=expr, z_unit=z_unit, mesh_names=mesh, threed=threed)
+
+
 def read_python(text: str) -> list[ir.Region]:
     tree = ast.parse(text)
     reader = Reader(text)
@@ -411,7 +514,10 @@ def read_python(text: str) -> list[ir.Region]:
             regions.append(ir.TextRegion(text="\n".join(paras)))
             continue
         stmt = body[i]
-        if (built := index_build(reader, stmt)) is not None:
+        if (plot := plot_block(reader, body, i)) is not None:
+            region, i = plot
+            regions.append(region)
+        elif (built := index_build(reader, stmt)) is not None:
             nxt = reader.shown(body[i + 1]) if i + 1 < len(body) else None
             # A 1-D build echoes ``X[i]``; a 2-D one echoes the whole matrix.
             echo = (built.target.py if built.col_index is not None
@@ -664,7 +770,106 @@ def text_width(paragraphs: list[str]) -> float:
     return max(TEXT_MIN_WIDTH, min(TEXT_MAX_WIDTH, round(longest * CHAR_WIDTH)))
 
 
-def region_xml(region: ir.Region, rid: int, top: float, writer: Writer) -> str:
+# Prime's own trace colours, in the order it gives them to new traces.
+TRACE_COLORS = ["#00008B", "#8B0000", "#006400", "#8B008B", "#000000"]
+
+_AXIS_GRID = ('<axisGrid><gridFrequency>{freq}</gridFrequency><gridLabels display="true" />'
+              '<gridLines /><tickMarks display="true" /></axisGrid>')
+
+
+def _equation(writer: Writer, expr: ir.Expr, unit: ir.Expr | None) -> str:
+    unit_xml = "<ml:placeholder />" if unit is None else writer.emit(unit)[0]
+    return (f"<plotEquation><math>{writer.emit(expr)[0]}</math>"
+            f"<math>{unit_xml}</math></plotEquation>")
+
+
+def _axis_equations(writer: Writer, pairs) -> str:
+    """One equation per trace, or one shared by all when every trace agrees
+    (how the parser pairs them: a single equation serves every trace)."""
+    texts = {(expr_text(e), expr_text(u) if u is not None else "") for e, u in pairs}
+    if len(texts) == 1:
+        pairs = pairs[:1]
+    return "".join(_equation(writer, e, u) for e, u in pairs)
+
+
+def _limit(refs, value: float | None) -> tuple[str, str]:
+    if value is None:
+        return "<ml:placeholder />", ""
+    return f"<ml:real>{value:g}</ml:real>", f' resultRef="{next(refs)}"'
+
+
+def xy_plot_xml(region: ir.Plot, writer: Writer, refs) -> str:
+    traces = "".join(
+        f'<trace resultRef="{next(refs)}"><traceStyle color="#FF'
+        f'{(t.color or TRACE_COLORS[n % len(TRACE_COLORS)]).lstrip("#").upper()}" '
+        'symbol="none" line-weight="1" line-style="Solid">lines</traceStyle></trace>'
+        for n, t in enumerate(region.traces))
+    lo, hi = region.x_limits or (None, None)
+    domains = {}
+    for name in ("x", "y"):
+        (start, sref), (end, eref) = ((_limit(refs, lo), _limit(refs, hi)) if name == "x"
+                                      else (_limit(refs, None), _limit(refs, None)))
+        domains[name] = (f'<xyDomain scale-type="linear" auto-scale="true">'
+                         f"<startValue{sref}>{start}</startValue>"
+                         f"<endValue{eref}>{end}</endValue></xyDomain>")
+    x_eqs = _axis_equations(writer, [(t.x, t.x_unit) for t in region.traces])
+    y_eqs = _axis_equations(writer, [(t.y, t.y_unit) for t in region.traces])
+
+    def axis(tag, legend, eqs, domain):
+        return (f'<{tag} rank="1" legend-position="{legend}" start="-1" end="1">'
+                '<axisLine position="origin" positionticmark="0" legendWidth="0" />'
+                + _AXIS_GRID.format(freq=11) +
+                f"<axisLabel /><markers /><plotEquations>{eqs}</plotEquations>"
+                f"{domain}</{tag}>")
+
+    return ('<plot origin-positioning="true"><xyPlot><title /><legend />'
+            f'<traces>{traces}</traces><graph-size width="{PLOT_SIZE}" height="{PLOT_SIZE}" />'
+            "<axes>" + axis("xAxis", "PlotBoundaryBottom", x_eqs, domains["x"])
+            + axis("yAxis", "PlotBoundaryRight", y_eqs, domains["y"])
+            + "</axes></xyPlot></plot>")
+
+
+def grid_plot_xml(region: ir.GridPlot, writer: Writer, refs) -> str:
+    equation = _equation(writer, region.expr, region.z_unit)
+    size = f'<graph-size width="{PLOT_SIZE}" height="{PLOT_SIZE}" />'
+    if region.threed:
+        def axis(tag, dom):
+            return (f'<{tag} start="0" end="1" rank="1"><axisLine />'
+                    + _AXIS_GRID.format(freq=5) +
+                    f'<axisLabel /><{dom} scale-type="linear" allow-negative-values="true" '
+                    f'auto-scale="true"><startValue /><endValue /></{dom}></{tag}>')
+        return ('<plot><plot3D><traces><trace3D num-of-points="41" '
+                f'resultRef="{next(refs)}"><traceStyle color="#FF000000" '
+                'automaticStyle="true">surface</traceStyle></trace3D></traces>'
+                f'{size}<axes>{axis("xAxis", "xyDomain")}{axis("yAxis", "xyDomain")}'
+                f'{axis("zAxis", "zDomain")}</axes>'
+                f"<plotEquations>{equation}</plotEquations></plot3D></plot>")
+
+    def axis(tag, dom, extra):
+        return (f'<{tag} rank="1"{extra} start="0" end="1">'
+                '<axisLine position="ticknumberlock" positionticmark="0" legendWidth="0" />'
+                + _AXIS_GRID.format(freq=11) +
+                f'<axisLabel /><markers /><{dom} scale-type="linear" auto-scale="true">'
+                "<startValue><ml:placeholder /></startValue>"
+                f"<endValue><ml:placeholder /></endValue></{dom}></{tag}>")
+    return ('<plot background-type="white"><contourPlot><axes>'
+            + axis("xAxis", "xyDomain", ' legend-position="PlotBoundaryBottom"')
+            + axis("yAxis", "xyDomain", ' legend-position="PlotBoundaryLeft"')
+            + axis("zAxis", "zDomain", "")
+            + f'</axes><contour color="#FF000000" show-lables="false" resultRef="{next(refs)}" />'
+            f"{size}{equation}</contourPlot></plot>")
+
+
+PLOT_SIZE = 230.4
+
+
+def region_xml(region: ir.Region, rid: int, top: float, writer: Writer, refs) -> str:
+    if isinstance(region, ir.Plot):
+        return (f'<region region-id="{rid}" top="{top}" left="38.4">'
+                f"{xy_plot_xml(region, writer, refs)}</region>")
+    if isinstance(region, ir.GridPlot):
+        return (f'<region region-id="{rid}" top="{top}" left="38.4">'
+                f"{grid_plot_xml(region, writer, refs)}</region>")
     if isinstance(region, ir.TextRegion):
         width = text_width(region.text.split("\n"))
         return (f'<region region-id="{rid}" width="{width}" top="{top}" left="38.4">'
@@ -679,7 +884,7 @@ def region_xml(region: ir.Region, rid: int, top: float, writer: Writer) -> str:
             value = f"<ml:eval>{value}{override_xml(writer, region.display_unit)}</ml:eval>"
         math = f"<ml:define>{target}{value}</ml:define>"
         return (f'<region region-id="{rid}" top="{top}" left="38.4">'
-                f'<math resultRef="{rid}">{math}</math></region>')
+                f'<math resultRef="{next(refs)}">{math}</math></region>')
     if isinstance(region, ir.Define) and region.params:
         name = writer.identifier(region.target.original, "VARIABLE")
         bound = "".join(writer.identifier(mathcad_name(p), "VARIABLE") for p in region.params)
@@ -695,7 +900,7 @@ def region_xml(region: ir.Region, rid: int, top: float, writer: Writer) -> str:
         value = writer.emit(region.value)[0]
         math = f"<ml:eval>{value}{override_xml(writer, region.display_unit)}</ml:eval>"
     return (f'<region region-id="{rid}" top="{top}" left="38.4">'
-            f'<math resultRef="{rid}">{math}</math></region>')
+            f'<math resultRef="{next(refs)}">{math}</math></region>')
 
 
 # ---------------------------------------------------------------------------
@@ -754,6 +959,8 @@ PRESENTATION = Path(__file__).with_name("mcdx_template") / "presentation.xml"
 
 def rows(region: ir.Region) -> float:
     """Grid rows ``region`` takes, including the gap below it."""
+    if isinstance(region, (ir.Plot, ir.GridPlot)):
+        return PLOT_SIZE / ROW + 2.5  # the graph, its axis labels and a gap
     if isinstance(region, ir.TextRegion):
         lines = sum(1 + len(p) * CHAR_WIDTH // TEXT_MAX_WIDTH
                     for p in region.text.split("\n"))
@@ -792,19 +999,16 @@ def build(regions: list[ir.Region]) -> dict[str, str | bytes]:
     writer = Writer({}, functions)
     body, top, rels = [], 2 * ROW, []
     parts: dict[str, str | bytes] = dict(PARTS)
-    math_id = 0
+    # resultRef numbers everything that has a result -- math, plot traces,
+    # axis limits -- in one sequence, as Prime does.
+    refs = itertools.count()
     for rid, region in enumerate(regions):
         if isinstance(region, ir.TextRegion):
             target = f"/mathcad/xaml/FlowDocument{rid}.XamlPackage"
             parts[target.lstrip("/")] = xaml_package(region.text.split("\n"))
             rels.append('<Relationship Type="http://schemas.openxmlformats.org/officeDocument/'
                         f'2006/relationships/flowDocument" Target="{target}" Id="Rtext{rid}" />')
-            body.append(region_xml(region, rid, round(top, 4), writer))
-        else:
-            # resultRef numbers the math regions only, as Prime does.
-            body.append(region_xml(region, rid, round(top, 4), writer)
-                        .replace(f'resultRef="{rid}"', f'resultRef="{math_id}"'))
-            math_id += 1
+        body.append(region_xml(region, rid, round(top, 4), writer, refs))
         top += rows(region) * ROW
     if rels:
         parts["mathcad/_rels/worksheet.xml.rels"] = _XML + (
