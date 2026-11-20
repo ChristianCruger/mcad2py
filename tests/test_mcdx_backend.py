@@ -128,6 +128,8 @@ def test_a_subscripted_name_becomes_a_xaml_span():
     ("a + b * c", 0),        # a tighter one is not
     ("a - (b - c)", 1),      # the right of a left-associative operator
     ("a / b / c", 0),        # ... but not its left
+    ("(a + b) / (c - d)", 0),  # a stacked fraction's bar is the group
+    ("a / (b * c)", 0),
     ("(a ** b) ** c", 1),    # the left of a right-associative one
     ("a ** b ** c", 0),
 ])

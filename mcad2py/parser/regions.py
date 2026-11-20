@@ -54,6 +54,7 @@ def parse_worksheet(
 
     io_tags = _parse_integration(integration_xml)
     engine_errors = _parse_engine_errors(result_xml)
+    cached_scalars = _parse_cached_scalars(result_xml)
 
     # Names defined as a Mathcad *range* (``x0 := -50, -49 .. 50``), tracked as
     # we go so a later contour/3D plot equation can tell "``f(x0, y0)`` over two
@@ -83,6 +84,8 @@ def parse_worksheet(
             item.source = source
             if error is not None:
                 item.cached_error = error
+            if isinstance(item, ir.StatusControl) and math_elem is not None:
+                item.cached_value = cached_scalars.get(math_elem.get("resultRef", ""))
             if isinstance(item, ir.Define) and isinstance(item.value, ir.Range):
                 range_names.add(item.target.py)
             ws.regions.append(item)
@@ -157,6 +160,27 @@ def _parse_engine_errors(result_xml: str | None) -> dict[str, str]:
             continue
         errors[result_id] = message.text.strip()
     return errors
+
+
+def _parse_cached_scalars(result_xml: str | None) -> dict[str, str]:
+    """Map ``resultRef`` -> the number cached for a single-valued result (a
+    plain ``<ml:real>`` or a 1x1 matrix of one), as Prime wrote it."""
+    if not result_xml:
+        return {}
+    out: dict[str, str] = {}
+    for data in ET.fromstring(result_xml):
+        # Only a bare number: anything else under the result (a unit, an
+        # imaginary part, a <neg/>) would make the one <ml:real> mean less.
+        # A string is allowed: a status control recalculated with its script
+        # disabled caches ``[[1]; ""]``, the input beside an empty message.
+        tags = [localname(e.tag) for e in data.iter()][1:]
+        reals = [e for e in data.iter() if localname(e.tag) == "real"]
+        result_id = data.get("result-id")
+        if (result_id is not None and len(reals) == 1 and reals[0].text
+                and set(tags) <= {"result", "matrix", "real", "str"}
+                and re.fullmatch(r"-?\d+(\.\d+)?([eE][-+]?\d+)?", reals[0].text.strip())):
+            out[result_id] = reals[0].text.strip()
+    return out
 
 
 def _ordered_regions(regions_elem: ET.Element) -> list[ET.Element]:

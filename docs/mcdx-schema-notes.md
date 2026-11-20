@@ -257,7 +257,13 @@ file-name field keeps the value Prime last **cached**, which can be stale.
   emits `print("<expr>", <expr>, "<message>")`: the expression source, its live value, and the cached
   `<ml:vals>` message (`"All loadcases pass!"`, `"OK!"`), so the reader sees how the value drove the
   message. (Contrast `_parse_scriptable_control`, which recovers a define-*driving* control's cached
-  `RL` value.)
+  `RL` value.) The script's *other* messages are lost, so the message alone doesn't say which outcome
+  it reports; `result.xml` caches the input's value at the control's `resultRef` (a 1×1 matrix, `1`
+  for every control in `RC_col.mcdx`), and the line above the print says so:
+  `# Mathcad status control: the message is for the value 1.` `tools/py_to_mcdx.py` reads that note
+  back, writes the value into the new sheet's `result.xml`, and rebuilds a script that shows the
+  message for that value only. Prime runs no control script under Application Automation (it caches
+  the old output and adds a `ScriptableWarning`), so a script is only exercised by hand in Prime.
 ## `RC_col.mcdx` constructs (Stage 2 — imperative programs)
 
 - **Multi-line program** (`<ml:program>` with statements) → a new statement IR (`ir.ProgramBlock` of
@@ -1397,6 +1403,12 @@ Prime's parens are also looser than Python's in a second way beyond the note abo
 scaled quantity as juxtaposition and a division as a stacked fraction, and puts a group around
 neither — except a fraction under a power (`(RH/100)³`), where it does. Emitting on that rule takes
 byte-identical re-emission from 954 to 996 of 1124.
+
+The same bar groups the fraction's own **operands**: `(1 + sin ϕ)/(1 − sin ϕ)` is drawn as two
+stacked lines and Prime writes no `<ml:parens>` around either (89 compound operands across the
+fixtures, 2 bracketed by hand). Dropping the group there takes re-emission to 1024 of 1124. Found
+when a sheet built by `tools/py_to_mcdx.py` showed `(2·√k)` in a denominator that the original drew
+bare.
 
 ### Confirmed against Prime itself
 

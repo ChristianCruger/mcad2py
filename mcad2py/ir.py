@@ -491,6 +491,11 @@ class StatusControl(Region):
     value: Expr
     message: str
     source: SourceRef | None = None
+    # The value Mathcad last computed for ``value`` (``result.xml``): the one
+    # ``message`` belongs to. The script's other messages are not kept, so
+    # this is what tells a reader -- and the reverse converter -- which
+    # outcome the message reports.
+    cached_value: str | None = None
 
 
 @dataclass

@@ -233,6 +233,11 @@ class _Writer:
         text, prec = self.emit(node)
         if isinstance(node, ir.Quantity):
             return text
+        if parent_op == "div":
+            # The other side of the stacked fraction: the bar already groups
+            # the numerator and the denominator, and Prime writes no bracket
+            # there (89 compound operands in the fixtures, 2 bracketed by hand).
+            return text
         if isinstance(node, ir.BinOp) and node.op == "div" and parent_op != "pow":
             return text
         if prec < parent_prec or (tighter and prec == parent_prec):

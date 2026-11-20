@@ -48,7 +48,6 @@ import zipfile
 from pathlib import Path
 
 _RESULTS = "mathcad/result.xml"
-_STATUS = re.compile(r'calculation-status="(\w+)"')
 
 
 class RecalcError(Exception):
@@ -63,10 +62,29 @@ def _cache(path: Path) -> bytes:
         return zf.read(_RESULTS)
 
 
+_RESULT_ENTRY = re.compile(r'result-id="(\d+)" calculation-status="(\w+)"')
+_CONTEXT_PARTS = ("mathcad/header.xml", "mathcad/footer.xml")
+
+
+def _context_refs(path: Path) -> set[str]:
+    """``resultRef``s of math in the header and footer. Prime never computes
+    those -- they stay ``Pending`` for good (``header_footer.mcdx`` as Prime
+    saved it) -- so they can't count against a finished calculation."""
+    refs: set[str] = set()
+    with zipfile.ZipFile(path) as zf:
+        for part in _CONTEXT_PARTS:
+            if part in zf.namelist():
+                text = zf.read(part).decode("utf-8", "replace")
+                refs.update(re.findall(r'resultRef="(\d+)"', text))
+    return refs
+
+
 def pending_count(path: Path) -> int:
     """Cached results in ``path`` that Prime has not finished computing."""
     text = _cache(path).decode("utf-8", "replace")
-    return sum(1 for status in _STATUS.findall(text) if status != "Synchronized")
+    skip = _context_refs(path)
+    return sum(1 for ref, status in _RESULT_ENTRY.findall(text)
+               if status != "Synchronized" and ref not in skip)
 
 
 def recalculate(path: Path, out: Path, timeout: float = 120.0,

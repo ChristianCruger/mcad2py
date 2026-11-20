@@ -23,6 +23,7 @@ from ..mapping import (
 )
 
 _ATOM = 100
+_TERNARY = -3  # below every BINARY_OPS precedence (``or`` is -2)
 
 # A matrix literal wider than this is emitted one row per line.
 _WRAP_WIDTH = 88
@@ -93,6 +94,11 @@ def _emit(node: ir.Expr) -> tuple[str, int]:
         sym, prec = BINARY_OPS[node.op]
         right_assoc = node.op == "pow"
         left = _wrap(node.left, prec, is_left=True, right_assoc=right_assoc)
+        if (node.op == "pow" and isinstance(node.left, ir.Number)
+                and node.left.value.startswith("-")):
+            # Prime writes ``(-2)²`` as a negative <ml:real> in a group, and
+            # Python's ``-2**2`` is ``-(2**2)``: the literal needs its brackets.
+            left = f"({left})"
         right = _wrap(node.right, prec, is_left=False, right_assoc=right_assoc)
         joiner = sym if node.op == "pow" else f" {sym} "
         return f"{left}{joiner}{right}", prec
@@ -242,7 +248,9 @@ def _emit(node: ir.Expr) -> tuple[str, int]:
     if isinstance(node, ir.Program):
         # Inline fallback (a chain of ternaries); a Program that is a Define's
         # value is emitted as a multi-line ``def`` by ``assignment_line``.
-        return _program_ternary(node.branches), _ATOM
+        # A conditional expression binds looser than anything, ``or``
+        # included: as an operand (``1 + (2 if c else 3)``) it needs brackets.
+        return _program_ternary(node.branches), _TERNARY
 
     if isinstance(node, ir.Str):
         return repr(node.value), _ATOM
@@ -328,7 +336,15 @@ def status_control_line(region: ir.StatusControl) -> str:
     transpiled, so we surface both so the reader can see how they relate.
     """
     expr_s = expr_to_str(region.value)
-    return f"print({expr_s!r}, {expr_s}, {region.message!r})"
+    line = f"print({expr_s!r}, {expr_s}, {region.message!r})"
+    if region.cached_value is None:
+        return line
+    # The script's other messages aren't kept, so say which outcome this is.
+    return f"{STATUS_NOTE}{region.cached_value}.\n{line}"
+
+
+# The note above a status line; tools/py_to_mcdx.py reads it back.
+STATUS_NOTE = "# Mathcad status control: the message is for the value "
 
 
 def multi_assign_lines(region: ir.MultiAssign) -> list[str]:
