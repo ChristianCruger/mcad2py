@@ -23,6 +23,7 @@ from ..mapping import (
 )
 
 _ATOM = 100
+_TERNARY = -3  # below every BINARY_OPS precedence (``or`` is -2)
 
 # A matrix literal wider than this is emitted one row per line.
 _WRAP_WIDTH = 88
@@ -247,7 +248,9 @@ def _emit(node: ir.Expr) -> tuple[str, int]:
     if isinstance(node, ir.Program):
         # Inline fallback (a chain of ternaries); a Program that is a Define's
         # value is emitted as a multi-line ``def`` by ``assignment_line``.
-        return _program_ternary(node.branches), _ATOM
+        # A conditional expression binds looser than anything, ``or``
+        # included: as an operand (``1 + (2 if c else 3)``) it needs brackets.
+        return _program_ternary(node.branches), _TERNARY
 
     if isinstance(node, ir.Str):
         return repr(node.value), _ATOM

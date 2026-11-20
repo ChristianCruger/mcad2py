@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import contextlib
 import base64
 import gzip
 import io
@@ -116,6 +117,11 @@ _RUNTIME_SAME_NAME = _runtime_names()
 # Calls the parser makes from an operator element rather than a named builtin.
 _OPERATOR_CALLS = {"matrow": "matrow", "abs": "absval", "determinant": "determinant",
                    "cross": "crossProduct", "math.factorial": "factorial", "xor": "xor"}
+_OPERATOR_ARITY = {"matrow": 2, "abs": 1, "determinant": 1, "cross": 2,
+                   "math.factorial": 1, "xor": 2}
+
+# Calls the reader keeps by name, with the number of arguments each takes.
+_ARITY = {"determinant": 1, "cross": 2, "math.factorial": 1, "xor": 2, "element_of": 2}
 
 _OPS = {ast.Add: "add", ast.Sub: "sub", ast.Mult: "mul", ast.Div: "div", ast.Pow: "pow"}
 
@@ -158,6 +164,26 @@ class Reader:
         # Names currently bound to a SymPy ``Symbol``: free names of the
         # symbolic regions, written as unlabelled ids the way Prime has them.
         self.symbols: set[str] = set()
+        # Names bound where the reader is now -- a lambda's or a def's own
+        # parameters and locals. They hide a constant of the same name: ``g``
+        # as a parameter is the parameter, not standard gravity.
+        self.shadow: set[str] = set()
+
+    @contextlib.contextmanager
+    def bound(self, names):
+        added = set(names) - self.shadow
+        self.shadow |= added
+        try:
+            yield
+        finally:
+            self.shadow -= added
+
+    def bound_in(self, fn: ast.FunctionDef | ast.Lambda) -> set[str]:
+        """A function's parameters and every name it assigns."""
+        names = {a.arg for a in fn.args.args}
+        names.update(n.id for n in ast.walk(fn)
+                     if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store))
+        return names
 
     def expr(self, node: ast.expr) -> ir.Expr:
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
@@ -206,7 +232,8 @@ class Reader:
         if isinstance(node, ast.Name):
             if node.id in self.symbols:
                 return ir.Name(py=node.id, original=mathcad_name(node.id), role="SYMBOL")
-            if node.id in self.constants and node.id in _CONST_BACK:
+            if (node.id in self.constants and node.id in _CONST_BACK
+                    and node.id not in self.shadow):
                 return ir.Name(py=node.id, original=_CONST_BACK[node.id], role="CONSTANT")
             return ir.Name(py=node.id, original=mathcad_name(node.id))
         if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
@@ -236,7 +263,7 @@ class Reader:
             if head == "matrix" and node.args and all(
                     isinstance(a, ast.List) for a in node.args):
                 rows = [[self.expr(e) for e in a.elts] for a in node.args]
-                if len({len(r) for r in rows}) != 1:
+                if not rows[0] or len({len(r) for r in rows}) != 1:
                     raise Refused(f"line {node.lineno}: a matrix with ragged rows")
                 # IR elements are column-major, as Prime stores them.
                 return ir.MatrixLiteral(rows=len(rows), cols=len(rows[0]),
@@ -267,7 +294,11 @@ class Reader:
                 return ir.BinOp(op="mul", left=args[0], right=args[1])
             if head in ("mc_min", "mc_max"):
                 return ir.Call(func=head[3:], args=args)
-            if head in ("determinant", "cross", "math.factorial", "xor", "element_of"):
+            if head in _ARITY:
+                if len(args) != _ARITY[head] or (
+                        head == "element_of" and not isinstance(args[1], ir.Str)):
+                    raise Refused(f"line {node.lineno}: {ast.unparse(node)!r} has the "
+                                  "wrong arguments")
                 return ir.Call(func=head, args=args)
             if head == "nth_root" and len(args) == 2:
                 degree = args[1]
@@ -282,10 +313,14 @@ class Reader:
                 return ir.Call(func=head, args=args)
         raise Refused(f"line {node.lineno}: {ast.unparse(node)!r} is outside the subset")
 
+    def lambda_body(self, node: ast.Lambda) -> ir.Expr:
+        with self.bound(a.arg for a in node.args.args):
+            return self.expr(node.body)
+
     def lambda_(self, node: ast.expr, arity: int) -> ir.Lambda:
         if not (isinstance(node, ast.Lambda) and len(node.args.args) == arity):
             raise Refused(f"line {node.lineno}: expected a lambda of {arity} parameter(s)")
-        return ir.Lambda(params=[a.arg for a in node.args.args], body=self.expr(node.body))
+        return ir.Lambda(params=[a.arg for a in node.args.args], body=self.lambda_body(node))
 
     def calculus(self, head: str, node: ast.Call) -> ir.Expr | None:
         """The operators codegen writes as a call on a lambda: Σ, ∫, d/dx."""
@@ -307,7 +342,7 @@ class Reader:
             if not (isinstance(fn, ast.Lambda) and len(fn.args.args) == 2):
                 raise Refused(f"line {node.lineno}: double_integral needs a 2-argument lambda")
             inner_var, outer_var = (a.arg for a in fn.args.args)
-            inner = ir.Integral(func=ir.Lambda(params=[inner_var], body=self.expr(fn.body)),
+            inner = ir.Integral(func=ir.Lambda(params=[inner_var], body=self.lambda_body(fn)),
                                 lower=self.expr(args[1]), upper=self.expr(args[2]))
             return ir.Integral(func=ir.Lambda(params=[outer_var], body=inner),
                                lower=self.expr(args[3]), upper=self.expr(args[4]))
@@ -319,7 +354,8 @@ class Reader:
         return None
 
     def program(self, fn: ast.FunctionDef) -> ir.Expr:
-        return ProgramReader(self).read(fn)
+        with self.bound(self.bound_in(fn)):
+            return ProgramReader(self).read(fn)
 
     def symbolic(self, stmt: ast.stmt) -> ir.Region | None:
         """``Eq(a, b)`` on its own line, or ``print(solve(Eq(...), C))``."""
@@ -330,7 +366,7 @@ class Reader:
             equation = self.expr(call)
             if isinstance(equation, ir.Equation):
                 return ir.SymbolicEquation(equation=equation)
-        if (ast.unparse(call.func) == "print" and len(call.args) == 1
+        if (ast.unparse(call.func) == "print" and len(call.args) == 1 and not call.keywords
                 and isinstance(call.args[0], ast.Call) and not call.args[0].keywords):
             inner = call.args[0]
             command = ast.unparse(inner.func)
@@ -348,10 +384,12 @@ class Reader:
             raise Refused(f"line {stmt.lineno}: print() with keyword arguments")
         arg = stmt.value.args[0]
         if isinstance(arg, ast.Call) and ast.unparse(arg.func) == "disp":
+            if arg.keywords or not 1 <= len(arg.args) <= 2:
+                raise Refused(f"line {stmt.lineno}: disp() takes a value and a unit")
             unit = self.expr(arg.args[1]) if len(arg.args) > 1 else None
             return self.expr(arg.args[0]), unit
         if (isinstance(arg, ast.Call) and isinstance(arg.func, ast.Attribute)
-                and arg.func.attr == "to" and len(arg.args) == 1):
+                and arg.func.attr == "to" and len(arg.args) == 1 and not arg.keywords):
             return self.expr(arg.func.value), self.expr(arg.args[0])
         if (isinstance(arg, ast.BinOp) and isinstance(arg.op, ast.Div)
                 and _is_scale(arg.right)
@@ -421,7 +459,7 @@ def index_build(reader: Reader, stmt: ast.stmt) -> ir.IndexAssign | None:
     call = stmt.value
     head = ast.unparse(call.func)
     arity = {"index_build": 1, "index_build_2d": 2}.get(head)
-    if arity is None or len(call.args) != arity + 1:
+    if arity is None or len(call.args) != arity + 1 or call.keywords:
         return None
     indices, fn = call.args[:arity], call.args[arity]
     params = [a.arg for a in fn.args.args] if isinstance(fn, ast.Lambda) else []
@@ -431,7 +469,7 @@ def index_build(reader: Reader, stmt: ast.stmt) -> ir.IndexAssign | None:
                       "range variables")
     names = [reader.expr(x) for x in indices]
     return ir.IndexAssign(target=reader.expr(stmt.targets[0]), index=names[0],
-                          value=reader.expr(fn.body),
+                          value=reader.lambda_body(fn),
                           col_index=names[1] if arity == 2 else None)
 
 
@@ -467,12 +505,14 @@ class ProgramReader:
     def if_chain(self, body: list[ast.stmt]):
         if not body or not isinstance(body[0], ast.If) or len(body) > 2:
             return None
-        if len(body) == 2 and not isinstance(body[1], ast.Return):
+        if len(body) == 2 and not (isinstance(body[1], ast.Return)
+                                   and body[1].value is not None):
             return None
         branches = []
         node: ast.stmt | None = body[0]
         while isinstance(node, ast.If):
-            if len(node.body) != 1 or not isinstance(node.body[0], ast.Return):
+            if (len(node.body) != 1 or not isinstance(node.body[0], ast.Return)
+                    or node.body[0].value is None):
                 return None
             branches.append((self.r.expr(node.test), self.r.expr(node.body[0].value)))
             if not node.orelse:
@@ -495,7 +535,7 @@ class ProgramReader:
         if isinstance(s, ast.Assign) and len(s.targets) == 1:
             target, value = s.targets[0], s.value
             if (isinstance(value, ast.Call) and isinstance(target, ast.Name)
-                    and ast.unparse(value.func) in ("vec_set", "col_set")
+                    and ast.unparse(value.func) in ("vec_set", "col_set") and not value.keywords
                     and len(value.args) == 3 and ast.unparse(value.args[0]) == target.id):
                 base = r.expr(target)
                 where, new = value.args[1], r.expr(value.args[2])
@@ -530,7 +570,9 @@ class ProgramReader:
         if isinstance(s, ast.Expr):
             return ir.ExprStmt(value=r.expr(s.value))
         if (isinstance(s, ast.Try) and len(s.handlers) == 1 and not s.orelse
-                and not s.finalbody):
+                and not s.finalbody and s.handlers[0].name is None
+                and s.handlers[0].type is not None
+                and ast.unparse(s.handlers[0].type) == "Exception"):
             return ir.TryCatch(body=self.block(s.body, s.lineno),
                                handler=self.block(s.handlers[0].body, s.lineno))
         raise Refused(f"line {s.lineno}: {ast.unparse(s)[:60]!r} has no Mathcad "
@@ -590,7 +632,14 @@ def xy_plot(reader: Reader, block: list[ast.stmt], implicit) -> ir.Plot:
             return ir.Name(py=name, original=mathcad_name(name)), unit_ir
         if _call_named(data, "sample") and isinstance(data.args[0], ast.Lambda):
             # ``sample(lambda x: E, x)`` is E evaluated over the domain.
-            return reader.expr(data.args[0].body), unit_ir
+            fn = data.args[0]
+            over = ast.unparse(data.args[1]) if len(data.args) == 2 else None
+            params = [a.arg for a in fn.args.args]
+            # Over the variable itself, or over codegen's ``_domain_x`` for it.
+            if not (len(params) == 1 and over in (params[0], f"_domain_{params[0]}")):
+                raise Refused(f"line {data.lineno}: sample() over a variable its lambda "
+                              "does not take")
+            return reader.lambda_body(fn), unit_ir
         if _call_named(data, "static_axis"):
             return reader.expr(data.args[0]), unit_ir
         return reader.expr(data), unit_ir
@@ -625,7 +674,10 @@ def grid_plot(reader: Reader, block: list[ast.stmt]) -> ir.GridPlot:
             and isinstance(value.args[0], ast.Lambda)):
         # ``mesh_grid(lambda x, y: E, x, y)`` is E over the two ranges' grid.
         mesh = tuple(ast.unparse(a) for a in value.args[1:])
-        expr = reader.expr(value.args[0].body)
+        if [a.arg for a in value.args[0].args.args] != list(mesh):
+            raise Refused(f"line {value.lineno}: mesh_grid() over variables its lambda "
+                          "does not take")
+        expr = reader.lambda_body(value.args[0])
     else:
         expr = reader.expr(value)
     z_unit = None
@@ -663,7 +715,7 @@ def _vec_set(stmt: ast.stmt) -> tuple[str, ast.expr, ast.expr, ast.expr] | None:
     """``X = vec_set(src, idx, value)`` -> (X, src, idx, value)."""
     if (isinstance(stmt, ast.Assign) and len(stmt.targets) == 1
             and isinstance(stmt.targets[0], ast.Name) and _call_named(stmt.value, "vec_set")
-            and len(stmt.value.args) == 3):
+            and len(stmt.value.args) == 3 and not stmt.value.keywords):
         return (stmt.targets[0].id, *stmt.value.args)
     return None
 
@@ -719,8 +771,18 @@ def recurrence_writes(reader: Reader, stmts: list[ast.stmt]):
 def recurrence_def(reader: Reader, fn: ast.FunctionDef, call: ast.stmt | None):
     """``def _recur_X(_idx, X): for i in _idx: ...`` + ``X = _recur_X(i, X)``."""
     loop = fn.body[0] if len(fn.body) == 2 else None
+    params = [a.arg for a in fn.args.args]
+    names = params[1:]
+    state = names[0] if len(names) == 1 else f"({', '.join(names)})"
     if not (isinstance(loop, ast.For) and isinstance(loop.target, ast.Name)
-            and isinstance(call, ast.Assign) and _call_named(call.value, fn.name)):
+            and ast.unparse(loop.iter) == "_idx" and params[:1] == ["_idx"] and names
+            and not loop.orelse
+            and isinstance(fn.body[1], ast.Return) and fn.body[1].value is not None
+            and ast.unparse(fn.body[1].value) == state
+            and isinstance(call, ast.Assign) and len(call.targets) == 1
+            and ast.unparse(call.targets[0]) == state
+            and _call_named(call.value, fn.name)
+            and [ast.unparse(a) for a in call.value.args[1:]] == names):
         raise Refused(f"line {fn.lineno}: an unknown difference-equation shape")
     index = call.value.args[0]
     if ast.unparse(index) != loop.target.id:
@@ -784,7 +846,14 @@ def solve_function(reader: Reader, fn: ast.FunctionDef) -> ir.SolveBlock | None:
     if found is None:
         return None
     resid_name, unknowns = found
-    plain_params(fn)
+    if not plain_params(fn):
+        raise Refused(f"line {fn.lineno}: Mathcad has no function of no arguments")
+    with reader.bound(reader.bound_in(fn)):
+        return _solve_function(reader, fn, resid_name, unknowns)
+
+
+def _solve_function(reader: Reader, fn: ast.FunctionDef, resid_name: str,
+                    unknowns: list[str]) -> ir.SolveBlock:
     guesses, resid = [], None
     for s in fn.body[:-1]:
         if isinstance(s, ast.FunctionDef) and s.name == resid_name:
@@ -901,7 +970,10 @@ def read_context(text: str) -> dict[str, list[ir.Region]]:
             source = para[len(_DISPLAY_MATH):]
             reader = Reader(source)
             reader.constants = constants
-            stmt = ast.parse(source).body[0]
+            stmts = ast.parse(source).body
+            if len(stmts) != 1:
+                raise Refused(f"{paras[0]}: {source!r} is not one statement")
+            stmt = stmts[0]
             if (isinstance(stmt, ast.Assign) and len(stmt.targets) == 1
                     and isinstance(stmt.targets[0], ast.Name)):
                 regions.append(ir.Define(target=reader.expr(stmt.targets[0]),
@@ -916,15 +988,28 @@ def read_context(text: str) -> dict[str, list[ir.Region]]:
 
 def read_python(text: str) -> list[ir.Region]:
     tree = ast.parse(text)
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.Lambda)):
+            plain_params(node)  # every one, nested or not: refuses the rest
+        elif isinstance(node, (ast.AsyncFunctionDef, ast.ClassDef)):
+            raise Refused(f"line {node.lineno}: no Mathcad form")
     reader = Reader(text)
     body = [s for s in tree.body if not isinstance(s, (ast.Import, ast.ImportFrom))]
-    if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
+    if (body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant)
+            and isinstance(body[0].value.value, str)):
         body = body[1:]  # docstring
     body = unguard(body)
     texts = [(line, paras) for line, paras in comment_blocks(text)
              if not all(p.startswith(_GUARD_NOTE) for p in paras)
              and paras[0] not in _CONTEXT_TITLES]
     controls = control_notes(texts)
+    for line, _paras in texts:
+        inside = next((s for s in body if s.lineno < line <= s.end_lineno), None)
+        if inside is not None:
+            # A comment inside a def or a bracketed line: a Mathcad program
+            # has no place for text, and moving it out would reorder it.
+            raise Refused(f"line {line}: a comment inside the statement at line "
+                          f"{inside.lineno}")
 
     def ahead(j: int) -> ast.stmt | None:
         """``body[j]``, unless a text block sits between it and the line before:
@@ -980,7 +1065,7 @@ def read_python(text: str) -> list[ir.Region]:
         elif (isinstance(stmt, ast.FunctionDef) and stmt.name.startswith("_residuals_")
                 and i + 1 < len(body)):
             # The guesses came just before, and were read as plain definitions.
-            nxt = body[i + 1]
+            nxt = ahead(i + 1)
             call = nxt.value if isinstance(nxt, ast.Assign) else None
             single = isinstance(call, ast.Subscript) and ast.unparse(call.slice) == "0"
             found = _solve_call(call.value if single else call)
@@ -991,6 +1076,9 @@ def read_python(text: str) -> list[ir.Region]:
             while (regions and isinstance(regions[-1], ir.Define) and not regions[-1].params
                    and regions[-1].target.py in unknowns
                    and regions[-1].target.py not in [g.target.py for g in guesses]):
+                if regions[-1].evaluate:
+                    raise Refused(f"line {stmt.lineno}: a solve-block guess shown with ="
+                                  " (a guess region shows no value)")
                 guesses.insert(0, regions.pop())
             target_node = nxt.targets[0]
             names = target_node.elts if isinstance(target_node, ast.Tuple) else [target_node]
@@ -1012,14 +1100,15 @@ def read_python(text: str) -> list[ir.Region]:
                 and (solved := solve_function(reader, stmt)) is not None):
             regions.append(solved)
         elif isinstance(stmt, ast.FunctionDef) and stmt.name.startswith("_recur_"):
-            nxt = body[i + 1] if i + 1 < len(body) else None
+            nxt = ahead(i + 1)
             regions.append(recurrence_def(reader, stmt, nxt))
             i += 1
         elif _is_step(stmt) or _vec_set(stmt) is not None:
             # A seed: ``X[0] := 30``, or several slots from one vector at once.
             run = [stmt]
             if _is_step(stmt):
-                while i + 1 < len(body) and _vec_set(body[i + 1]) is not None:
+                while (i + 1 < len(body) and (w := _vec_set(body[i + 1])) is not None
+                       and ast.unparse(w[3]) == f"_step[{len(run) - 1}]"):
                     i += 1
                     run.append(body[i])
             targets, value, values = recurrence_writes(reader, run)
@@ -1032,8 +1121,7 @@ def read_python(text: str) -> list[ir.Region]:
             regions.append(multi)
         elif isinstance(stmt, ast.FunctionDef):
             name = stmt.name
-            plain_params(stmt)
-            nxt = body[i + 1] if i + 1 < len(body) else None
+            nxt = ahead(i + 1)
             if (not stmt.args.args and name.startswith("_") and isinstance(nxt, ast.Assign)
                     and isinstance(nxt.targets[0], ast.Tuple)
                     and ast.unparse(nxt.value) == f"tuple({name}())"):
@@ -1058,6 +1146,9 @@ def read_python(text: str) -> list[ir.Region]:
                     i += 1
                 regions.append(define)
             else:
+                if not stmt.args.args:
+                    raise Refused(f"line {stmt.lineno}: Mathcad has no function of no "
+                                  "arguments")
                 target = ir.Name(py=name, original=mathcad_name(name))
                 reader.functions[name] = target.original
                 params = [a.arg for a in stmt.args.args]
@@ -1071,12 +1162,15 @@ def read_python(text: str) -> list[ir.Region]:
             name = stmt.targets[0].id
             target = ir.Name(py=name, original=mathcad_name(name))
             reader.functions[name] = target.original  # also for a recursive body
-            regions.append(ir.Define(target=target, value=reader.expr(fn.body),
+            if not params:
+                raise Refused(f"line {stmt.lineno}: Mathcad has no function of no arguments")
+            regions.append(ir.Define(target=target, value=reader.lambda_body(fn),
                                      params=params))
         elif (isinstance(stmt, ast.Assign) and len(stmt.targets) == 1
                 and isinstance(stmt.targets[0], ast.Name)):
             value = reader.expr(stmt.value)
             reader.symbols.discard(stmt.targets[0].id)  # a number from here on
+            reader.constants.discard(stmt.targets[0].id)  # the sheet's own from here on
             target = reader.expr(stmt.targets[0])
             define = ir.Define(target=target, value=value)
             nxt = reader.shown(ahead(i + 1)) if ahead(i + 1) else None
@@ -1176,6 +1270,9 @@ class Writer(mb._Writer):
                     mb.ATOM_PREC)
         if isinstance(node, ir.Number) and node.value.endswith("j"):
             return f'<ml:imag symbol="i">{mb._number(node.value[:-1])}</ml:imag>', mb.ATOM_PREC
+        if (isinstance(node, ir.Call) and node.func in _OPERATOR_CALLS
+                and len(node.args) != _OPERATOR_ARITY[node.func]):
+            raise mb.Unsupported(f"{node.func} with {len(node.args)} argument(s)")
         if isinstance(node, ir.Call) and node.func in _OPERATOR_CALLS:
             return self.apply(_OPERATOR_CALLS[node.func], *node.args)
         if isinstance(node, ir.Call):
@@ -1298,8 +1395,17 @@ class Writer(mb._Writer):
         raise mb.Unsupported(f"{type(s).__name__} statement")
 
     def apply(self, tag: str, *operands: ir.Expr) -> tuple[str, int]:
-        inner = "".join(self.emit(o)[0] for o in operands)
+        parts = [self.emit(o) for o in operands]
+        if tag in _GROUPS_FIRST and parts and parts[0][1] < mb.ATOM_PREC:
+            # ``(a + b)!``, ``¬(a ∧ b)``, ``(A + B)ᵀ``, ``(A + B)₀``: Prime draws
+            # these operators in line with their operand.
+            parts[0] = (f"<ml:parens>{parts[0][0]}</ml:parens>", mb.ATOM_PREC)
+        inner = "".join(xml for xml, _prec in parts)
         return f"<ml:apply><ml:{tag} />{inner}</ml:apply>", mb.ATOM_PREC
+
+
+# Operators whose first operand Prime draws without a group of its own.
+_GROUPS_FIRST = {"not", "factorial", "transpose", "indexer", "matcol", "matrow"}
 
 
 def explicit(xml: str) -> str:
@@ -1888,16 +1994,16 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("file", type=Path)
     ap.add_argument("-o", "--output", type=Path, required=True)
     args = ap.parse_args(argv)
+    text = args.file.read_text(encoding="utf-8")
     try:
-        text = args.file.read_text(encoding="utf-8")
-        regions = read_python(text)
-        parts = build(regions, read_context(text))
-    except (IndexError, AttributeError, KeyError, TypeError, ValueError) as exc:
-        # A shape a reader half-matched and then indexed past: outside the
-        # subset all the same, so refuse it rather than print a traceback.
-        print(f"error: an unsupported input shape ({type(exc).__name__}: {exc})",
-              file=sys.stderr)
-        return 1
+        try:
+            regions, context = read_python(text), read_context(text)
+        except (IndexError, AttributeError, KeyError, TypeError, ValueError) as exc:
+            # A shape a reader half-matched and then indexed past: outside
+            # the subset all the same. Only the *reading* is covered: the
+            # writer gets checked IR, so an error there is a bug to see.
+            raise Refused(f"an unsupported input shape ({type(exc).__name__}: {exc})") from exc
+        parts = build(regions, context)
     except (Refused, mb.Unsupported, SyntaxError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
