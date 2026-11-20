@@ -30,7 +30,9 @@ names written unlabelled as Prime does), the ``x / (10**-6)`` display scale, a
 list box (codegen's note and the selected value; its script is rebuilt to give
 that value for that option and an error for the others), a status message
 (``print('<expr>', <expr>, '<message>')`` under codegen's note naming the value
-the message is for, which goes into ``result.xml``), and
+the message is for, which goes into ``result.xml``), the ``# Mathcad header`` /
+``# Mathcad footer`` blocks (a part each; a page number field is not in the
+Python and stays lost), and
 codegen's ``try`` guard around a region Mathcad could not compute (dropped:
 Prime finds the error again). Everything else is refused, naming the line.
 
@@ -839,6 +841,39 @@ def status_control(reader: Reader, stmt: ast.stmt, value: str) -> ir.StatusContr
                             cached_value=value)
 
 
+_CONTEXT_TITLES = ("Mathcad header", "Mathcad footer")
+_DISPLAY_MATH = "[display math] "
+
+
+def read_context(text: str) -> dict[str, list[ir.Region]]:
+    """codegen's ``# Mathcad header`` / ``# Mathcad footer`` comment blocks ->
+    ``{"header": [...], "footer": [...]}``. Each line was one region: a text
+    line, or ``[display math] <python>``, which Mathcad shows and does not
+    compute. A page number field is not in the Python, so it stays lost."""
+    out: dict[str, list[ir.Region]] = {}
+    for _line, paras in comment_blocks(text):
+        if paras[0] not in _CONTEXT_TITLES:
+            continue
+        regions: list[ir.Region] = []
+        for para in paras[1:]:
+            if not para.startswith(_DISPLAY_MATH):
+                regions.append(ir.TextRegion(text=para))
+                continue
+            source = para[len(_DISPLAY_MATH):]
+            reader = Reader(source)
+            stmt = ast.parse(source).body[0]
+            if (isinstance(stmt, ast.Assign) and len(stmt.targets) == 1
+                    and isinstance(stmt.targets[0], ast.Name)):
+                regions.append(ir.Define(target=reader.expr(stmt.targets[0]),
+                                         value=reader.expr(stmt.value)))
+            elif isinstance(stmt, ast.Expr):
+                regions.append(ir.Evaluate(value=reader.expr(stmt.value), display_unit=None))
+            else:
+                raise Refused(f"{paras[0]}: {source!r} is not a definition or an expression")
+        out[paras[0].split()[1]] = regions
+    return out
+
+
 def read_python(text: str) -> list[ir.Region]:
     tree = ast.parse(text)
     reader = Reader(text)
@@ -847,7 +882,8 @@ def read_python(text: str) -> list[ir.Region]:
         body = body[1:]  # docstring
     body = unguard(body)
     texts = [(line, paras) for line, paras in comment_blocks(text)
-             if not all(p.startswith(_GUARD_NOTE) for p in paras)]
+             if not all(p.startswith(_GUARD_NOTE) for p in paras)
+             and paras[0] not in _CONTEXT_TITLES]
     controls = control_notes(texts)
     statuses = status_notes(texts)
     regions: list[ir.Region] = []
@@ -1703,7 +1739,40 @@ def _stmt_lines(s: ir.Stmt) -> float:
     return 1.0
 
 
-def build(regions: list[ir.Region]) -> dict[str, str | bytes]:
+CONTEXT_COLUMNS = 4  # header/footer regions in one row, before the next row
+CONTEXT_COLUMN = 192.0
+
+
+def context_part(kind: str, regions: list[ir.Region], first_rid: int, writer: Writer,
+                 refs, parts: dict[str, str | bytes]) -> None:
+    """``mathcad/header.xml`` or ``footer.xml``, its rels and text packages.
+    Region ids and resultRefs continue the worksheet's, as Prime's do. The
+    regions go in rows, left to right, which is the order they are read in."""
+    body, rels = [], []
+    for k, region in enumerate(regions):
+        rid = first_rid + k
+        row, col = divmod(k, CONTEXT_COLUMNS)
+        if isinstance(region, ir.TextRegion):
+            target = f"/mathcad/xaml/FlowDocument{rid}.XamlPackage"
+            parts[target.lstrip("/")] = xaml_package(region.text.split("\n"))
+            rels.append('<Relationship Type="http://schemas.openxmlformats.org/officeDocument/'
+                        f'2006/relationships/flowDocument" Target="{target}" Id="Rtext{rid}" />')
+        xml = region_xml(region, rid, round(19.2 + row * ROW, 4), writer, refs)
+        body.append(xml.replace(' left="38.4"', f' left="{48 + col * CONTEXT_COLUMN}"', 1))
+    parts[f"mathcad/{kind}.xml"] = f'<{kind} {_NS}><regions>{"".join(body)}</regions></{kind}>'
+    if rels:
+        parts[f"mathcad/_rels/{kind}.xml.rels"] = _XML + (
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            + "".join(rels) + "</Relationships>")
+    parts["_rels/.rels"] = parts["_rels/.rels"].replace(
+        "</Relationships>",
+        '<Relationship Type="http://schemas.openxmlformats.org/officeDocument/2006/'
+        f'relationships/officeDocument" Target="/mathcad/{kind}.xml" Id="R{kind}" />'
+        "</Relationships>")
+
+
+def build(regions: list[ir.Region],
+          context: dict[str, list[ir.Region]] | None = None) -> dict[str, str | bytes]:
     functions = {r.target.py: r.target.original for r in regions
                  if isinstance(r, ir.Define) and r.params}
     functions.update({r.targets[0].py: r.targets[0].original for r in regions
@@ -1733,6 +1802,11 @@ def build(regions: list[ir.Region]) -> dict[str, str | bytes]:
         '<Override PartName="/mathcad/settings/presentation.xml" '
         f'ContentType="{_CT}.settings.presentation+xml" /></Types>')
     parts["mathcad/worksheet.xml"] = (f'<worksheet {_NS}><regions>{body}</regions></worksheet>')
+    rid = len(regions)
+    for kind in ("header", "footer"):
+        if context and context.get(kind):
+            context_part(kind, context[kind], rid, writer, refs, parts)
+            rid += len(context[kind])
     if writer.cached:
         results = "".join(
             f'<resultData result-id="{ref}" calculation-status="Synchronized"><ml:result>'
@@ -1757,8 +1831,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("-o", "--output", type=Path, required=True)
     args = ap.parse_args(argv)
     try:
-        regions = read_python(args.file.read_text(encoding="utf-8"))
-        parts = build(regions)
+        text = args.file.read_text(encoding="utf-8")
+        regions = read_python(text)
+        parts = build(regions, read_context(text))
     except (Refused, mb.Unsupported, SyntaxError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

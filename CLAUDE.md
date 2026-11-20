@@ -202,7 +202,8 @@ adding support for a new XML construct.
   `Synchronize()` is **asynchronous** — saving straight after it writes back the *old* numbers — and
   "no `Pending` entry" alone is not a finish test, because an edited-but-unrecalculated sheet already
   reads fully `Synchronized`. The loop therefore waits for two consecutive byte-identical,
-  `Pending`-free saves. MathcadPy is the `mathcad` extra, not a dependency: Windows-only, and it needs
+  `Pending`-free saves — not counting header/footer math, which Prime never computes and leaves
+  `Pending` for good. MathcadPy is the `mathcad` extra, not a dependency: Windows-only, and it needs
   Prime installed. Prime is left running unless the tool launched it (`Dispatch` attaches to a running
   instance, and quitting it would close the user's other worksheets).
 - Writing a whole **formula** back needs the reverse of the pipeline, and
