@@ -169,9 +169,16 @@ def _parse_cached_scalars(result_xml: str | None) -> dict[str, str]:
         return {}
     out: dict[str, str] = {}
     for data in ET.fromstring(result_xml):
+        # Only a bare number: anything else under the result (a unit, an
+        # imaginary part, a <neg/>) would make the one <ml:real> mean less.
+        # A string is allowed: a status control recalculated with its script
+        # disabled caches ``[[1]; ""]``, the input beside an empty message.
+        tags = [localname(e.tag) for e in data.iter()][1:]
         reals = [e for e in data.iter() if localname(e.tag) == "real"]
         result_id = data.get("result-id")
-        if result_id is not None and len(reals) == 1 and reals[0].text:
+        if (result_id is not None and len(reals) == 1 and reals[0].text
+                and set(tags) <= {"result", "matrix", "real", "str"}
+                and re.fullmatch(r"-?\d+(\.\d+)?([eE][-+]?\d+)?", reals[0].text.strip())):
             out[result_id] = reals[0].text.strip()
     return out
 

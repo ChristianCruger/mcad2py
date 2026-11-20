@@ -93,6 +93,11 @@ def _emit(node: ir.Expr) -> tuple[str, int]:
         sym, prec = BINARY_OPS[node.op]
         right_assoc = node.op == "pow"
         left = _wrap(node.left, prec, is_left=True, right_assoc=right_assoc)
+        if (node.op == "pow" and isinstance(node.left, ir.Number)
+                and node.left.value.startswith("-")):
+            # Prime writes ``(-2)²`` as a negative <ml:real> in a group, and
+            # Python's ``-2**2`` is ``-(2**2)``: the literal needs its brackets.
+            left = f"({left})"
         right = _wrap(node.right, prec, is_left=False, right_assoc=right_assoc)
         joiner = sym if node.op == "pow" else f" {sym} "
         return f"{left}{joiner}{right}", prec

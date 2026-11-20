@@ -99,6 +99,9 @@ _IDIOMS = {
     "plot_axis", "plot_trace", "nth_root", "power", "col", "matrix", "arange",
     "matelem", "matcol", "transpose", "vectorize", "total", "matmul", "mc_min",
     "mc_max", "determinant", "cross",
+    # Internals of the runtime: types and plot plumbing, no Mathcad name.
+    "Mesh", "NamedTuple", "col_set", "double_integral", "mesh_grid",
+    "resolve_plot_grid", "static_axis", "unpack",
 }
 
 
@@ -289,7 +292,11 @@ class Reader:
         args = node.args
         if head == "range_sum" and len(args) == 2:
             # ``range_sum(i, lambda i: E)``: Σ over a range variable, no bounds.
-            return ir.RangeSum(func=self.lambda_(args[1], 1))
+            func = self.lambda_(args[1], 1)
+            if ast.unparse(args[0]) != func.params[0]:
+                raise Refused(f"line {node.lineno}: range_sum over {ast.unparse(args[0])!r} "
+                              f"with a lambda of {func.params[0]!r}")
+            return ir.RangeSum(func=func)
         if head in ("summation", "integral") and len(args) == 3:
             cls = ir.Summation if head == "summation" else ir.Integral
             return cls(func=self.lambda_(args[0], 1), lower=self.expr(args[1]),
@@ -337,6 +344,8 @@ class Reader:
         if not (isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call)
                 and ast.unparse(stmt.value.func) == "print" and len(stmt.value.args) == 1):
             return None
+        if stmt.value.keywords:
+            raise Refused(f"line {stmt.lineno}: print() with keyword arguments")
         arg = stmt.value.args[0]
         if isinstance(arg, ast.Call) and ast.unparse(arg.func) == "disp":
             unit = self.expr(arg.args[1]) if len(arg.args) > 1 else None
@@ -345,7 +354,7 @@ class Reader:
                 and arg.func.attr == "to" and len(arg.args) == 1):
             return self.expr(arg.func.value), self.expr(arg.args[0])
         if (isinstance(arg, ast.BinOp) and isinstance(arg.op, ast.Div)
-                and not any(isinstance(n, (ast.Name, ast.Attribute)) for n in ast.walk(arg.right))
+                and _is_scale(arg.right)
                 and self.text_between(arg.left, arg.right).rstrip().endswith("/ (")):
             # ``x / (10**-6)``: codegen's form for a numeric display scale.
             return self.expr(arg.left), self.expr(arg.right)
@@ -356,6 +365,15 @@ class Reader:
         if a.end_lineno != b.lineno:
             return ""
         return lines[b.lineno - 1].encode("utf-8")[a.end_col_offset:b.col_offset].decode("utf-8")
+
+
+def _is_scale(node: ast.expr) -> bool:
+    """A display scale as codegen writes one: a number, or ``10**n``."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+        return True
+    return (isinstance(node, ast.BinOp) and isinstance(node.op, ast.Pow)
+            and ast.unparse(node.left) == "10"
+            and re.fullmatch(r"-?\d+", ast.unparse(node.right)) is not None)
 
 
 def comment_blocks(text: str) -> list[tuple[int, list[str]]]:
@@ -588,6 +606,9 @@ def xy_plot(reader: Reader, block: list[ast.stmt], implicit) -> ir.Plot:
         (x, xu), (y, yu) = axis(pair.args[0]), axis(pair.args[1])
         color = next((ast.literal_eval(k.value) for k in call.keywords
                       if k.arg == "color"), None)
+        if color is not None and not (isinstance(color, str)
+                                      and re.fullmatch(r"#?[0-9A-Fa-f]{6}", color)):
+            raise Refused(f"line {call.lineno}: trace colour {color!r} is not #RRGGBB")
         traces.append(ir.PlotTrace(x=x, y=y, x_unit=xu, y_unit=yu, color=color))
     if not traces:
         raise Refused(f"line {block[0].lineno}: a figure with no traces")
@@ -674,7 +695,9 @@ def recurrence_writes(reader: Reader, stmts: list[ast.stmt]):
         got = _vec_set(s)
         if got is None:
             raise Refused(f"line {s.lineno}: a difference equation writes with vec_set only")
-        name, _src, idx, val = got
+        name, src, idx, val = got
+        if ast.unparse(src) not in ("None", name):
+            raise Refused(f"line {s.lineno}: vec_set writes {name} from {ast.unparse(src)}")
         base = ir.Name(py=name, original=mathcad_name(name))
         if isinstance(idx, ast.Tuple) and len(idx.elts) == 2:
             targets.append(ir.ElementTarget(base=base, index=reader.expr(idx.elts[0]),
@@ -687,6 +710,9 @@ def recurrence_writes(reader: Reader, stmts: list[ast.stmt]):
             raise Refused(f"line {s.lineno}: expected _step[{n}]")
     if not targets:
         raise Refused("a difference equation with no writes")
+    if values is not None and len(values) != len(targets):
+        raise Refused(f"line {stmts[0].lineno}: _step has {len(values)} values "
+                      f"for {len(targets)} writes")
     return targets, value, values
 
 
@@ -758,6 +784,7 @@ def solve_function(reader: Reader, fn: ast.FunctionDef) -> ir.SolveBlock | None:
     if found is None:
         return None
     resid_name, unknowns = found
+    plain_params(fn)
     guesses, resid = [], None
     for s in fn.body[:-1]:
         if isinstance(s, ast.FunctionDef) and s.name == resid_name:
@@ -777,6 +804,16 @@ def solve_function(reader: Reader, fn: ast.FunctionDef) -> ir.SolveBlock | None:
                          targets=[name], params=[a.arg for a in fn.args.args])
 
 
+def plain_params(fn: ast.FunctionDef | ast.Lambda) -> list[str]:
+    """The parameter names, or Refused: Mathcad has no defaults, no
+    ``*args``, no keyword-only or positional-only parameters, no decorators."""
+    a = fn.args
+    if (a.posonlyargs or a.vararg or a.kwarg or a.kwonlyargs or a.defaults or a.kw_defaults
+            or getattr(fn, "decorator_list", None)):
+        raise Refused(f"line {fn.lineno}: only plain positional parameters")
+    return [x.arg for x in a.args]
+
+
 def _shows_all(stmt: ast.stmt | None, names: list[ir.Name]) -> bool:
     """``print([a, b, c])``: codegen's echo of a multi-assignment."""
     return stmt is not None and ast.unparse(stmt) == (
@@ -787,7 +824,8 @@ _CONTROL_NOTE = re.compile(
     r'Mathcad ListBoxScriptableControl: selected "(?P<chosen>.*)" \(options: (?P<options>.*)\)\.$')
 _CONTROL_TAIL = "Embedded JScript not transpiled; using the cached output value."
 _STATUS_NOTE = re.compile(
-    r"Mathcad status control: the message is for the value (?P<value>-?[0-9.eE+-]+)\.$")
+    r"Mathcad status control: the message is for the value "
+    r"(?P<value>-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)\.$")
 
 
 @dataclass
@@ -851,6 +889,7 @@ def read_context(text: str) -> dict[str, list[ir.Region]]:
     line, or ``[display math] <python>``, which Mathcad shows and does not
     compute. A page number field is not in the Python, so it stays lost."""
     out: dict[str, list[ir.Region]] = {}
+    constants = Reader(text).constants  # the module's mcad2py.const imports
     for _line, paras in comment_blocks(text):
         if paras[0] not in _CONTEXT_TITLES:
             continue
@@ -861,6 +900,7 @@ def read_context(text: str) -> dict[str, list[ir.Region]]:
                 continue
             source = para[len(_DISPLAY_MATH):]
             reader = Reader(source)
+            reader.constants = constants
             stmt = ast.parse(source).body[0]
             if (isinstance(stmt, ast.Assign) and len(stmt.targets) == 1
                     and isinstance(stmt.targets[0], ast.Name)):
@@ -885,6 +925,16 @@ def read_python(text: str) -> list[ir.Region]:
              if not all(p.startswith(_GUARD_NOTE) for p in paras)
              and paras[0] not in _CONTEXT_TITLES]
     controls = control_notes(texts)
+
+    def ahead(j: int) -> ast.stmt | None:
+        """``body[j]``, unless a text block sits between it and the line before:
+        the echo then is its own region, after the text."""
+        if j >= len(body):
+            return None
+        gap = (body[j - 1].end_lineno, body[j].lineno)
+        if any(gap[0] < line < gap[1] for line, _ in texts):
+            return None
+        return body[j]
     statuses = status_notes(texts)
     regions: list[ir.Region] = []
     i = 0
@@ -898,7 +948,7 @@ def read_python(text: str) -> list[ir.Region]:
             region, i = plot
             regions.append(region)
         elif (built := index_build(reader, stmt)) is not None:
-            nxt = reader.shown(body[i + 1]) if i + 1 < len(body) else None
+            nxt = reader.shown(ahead(i + 1)) if ahead(i + 1) else None
             # A 1-D build echoes ``X[i]``; a 2-D one echoes the whole matrix.
             echo = (built.target.py if built.col_index is not None
                     else f"{built.target.py}[{built.index.py}]")
@@ -949,7 +999,7 @@ def read_python(text: str) -> list[ir.Region]:
                                   unknowns=[reader.expr(ast.Name(id=u)) for u in unknowns],
                                   targets=[reader.expr(n) for n in names])
             i += 1
-            after = body[i + 1] if i + 1 < len(body) else None
+            after = ahead(i + 1)
             shown = reader.shown(after) if after is not None and len(names) == 1 else None
             if shown and isinstance(shown[0], ir.Name) and shown[0].py == block.targets[0].py:
                 block.evaluate, block.display_unit = True, shown[1]
@@ -975,13 +1025,14 @@ def read_python(text: str) -> list[ir.Region]:
             targets, value, values = recurrence_writes(reader, run)
             regions.append(ir.Recurrence(targets=targets, value=value, values=values))
         elif (multi := multi_assign(reader, stmt)) is not None:
-            nxt = body[i + 1] if i + 1 < len(body) else None
+            nxt = ahead(i + 1)
             if _shows_all(nxt, multi.targets):
                 multi.evaluate = True
                 i += 1
             regions.append(multi)
         elif isinstance(stmt, ast.FunctionDef):
             name = stmt.name
+            plain_params(stmt)
             nxt = body[i + 1] if i + 1 < len(body) else None
             if (not stmt.args.args and name.startswith("_") and isinstance(nxt, ast.Assign)
                     and isinstance(nxt.targets[0], ast.Tuple)
@@ -990,7 +1041,7 @@ def read_python(text: str) -> list[ir.Region]:
                 multi = ir.MultiAssign(targets=[reader.expr(e) for e in nxt.targets[0].elts],
                                        value=reader.program(stmt))
                 i += 1
-                after = body[i + 1] if i + 1 < len(body) else None
+                after = ahead(i + 1)
                 if _shows_all(after, multi.targets):
                     multi.evaluate = True
                     i += 1
@@ -1001,7 +1052,7 @@ def read_python(text: str) -> list[ir.Region]:
                 target = reader.expr(ast.Name(id=name[1:]))
                 define = ir.Define(target=target, value=reader.program(stmt))
                 i += 1
-                shown = reader.shown(body[i + 1]) if i + 1 < len(body) else None
+                shown = reader.shown(ahead(i + 1)) if ahead(i + 1) else None
                 if shown and isinstance(shown[0], ir.Name) and shown[0].py == target.py:
                     define.evaluate, define.display_unit = True, shown[1]
                     i += 1
@@ -1016,20 +1067,19 @@ def read_python(text: str) -> list[ir.Region]:
                 and isinstance(stmt.targets[0], ast.Name)
                 and isinstance(stmt.value, ast.Lambda)):
             fn = stmt.value
-            if fn.args.vararg or fn.args.kwarg or fn.args.kwonlyargs or fn.args.defaults:
-                raise Refused(f"line {stmt.lineno}: only plain positional parameters")
+            params = plain_params(fn)
             name = stmt.targets[0].id
             target = ir.Name(py=name, original=mathcad_name(name))
             reader.functions[name] = target.original  # also for a recursive body
             regions.append(ir.Define(target=target, value=reader.expr(fn.body),
-                                     params=[a.arg for a in fn.args.args]))
+                                     params=params))
         elif (isinstance(stmt, ast.Assign) and len(stmt.targets) == 1
                 and isinstance(stmt.targets[0], ast.Name)):
             value = reader.expr(stmt.value)
             reader.symbols.discard(stmt.targets[0].id)  # a number from here on
             target = reader.expr(stmt.targets[0])
             define = ir.Define(target=target, value=value)
-            nxt = reader.shown(body[i + 1]) if i + 1 < len(body) else None
+            nxt = reader.shown(ahead(i + 1)) if ahead(i + 1) else None
             if nxt and isinstance(nxt[0], ir.Name) and nxt[0].py == target.py:
                 define.evaluate, define.display_unit = True, nxt[1]
                 i += 1
@@ -1089,6 +1139,9 @@ class Writer(mb._Writer):
         return explicit(xml) if role == "CONSTANT" else xml
 
     def binop(self, node):
+        if (node.op == "pow" and isinstance(node.left, ir.Number)
+                and node.left.value.startswith("-")):
+            node = ir.BinOp(op="pow", left=ir.Parens(node.left), right=node.right)
         tag = _LOGIC_TAGS.get(node.op)
         if tag is None:
             return super().binop(node)
@@ -1107,7 +1160,7 @@ class Writer(mb._Writer):
         if isinstance(node, ir.Program):
             return self.if_xml(node.branches, block=False), mb.ATOM_PREC
         if isinstance(node, ir.ProgramBlock):
-            return self.block(node), mb.ATOM_PREC
+            return self.block(node, outer=True), mb.ATOM_PREC
         if isinstance(node, ir.Call) and node.role == "VARIABLE":
             name = ir.Name(py=node.func, original=self.functions.get(
                 node.func, mathcad_name(node.func)))
@@ -1212,14 +1265,17 @@ class Writer(mb._Writer):
             out.append(arm if i == 0 else f"<ml:elseif>{arm}</ml:elseif>")
         return f"<ml:if>{''.join(out)}</ml:if>"
 
-    def block(self, block: ir.ProgramBlock) -> str:
-        return f"<ml:program>{self.block_lines(block)}</ml:program>"
+    def block(self, block: ir.ProgramBlock, *, outer: bool = False) -> str:
+        return f"<ml:program>{self.block_lines(block, outer=outer)}</ml:program>"
 
-    def block_lines(self, block: ir.ProgramBlock) -> str:
+    def block_lines(self, block: ir.ProgramBlock, *, outer: bool = False) -> str:
+        # Only the last line of the *outermost* program is Mathcad's implicit
+        # return. Inside an if, a for or a try, a bare last value does not
+        # leave the program; the lines after the block still run.
         stmts = block.statements
         if not stmts:
             return "<ml:placeholder />"
-        return "".join(self.stmt(s, last=s is stmts[-1]) for s in stmts)
+        return "".join(self.stmt(s, last=outer and s is stmts[-1]) for s in stmts)
 
     def stmt(self, s: ir.Stmt, *, last: bool) -> str:
         if isinstance(s, ir.LocalAssign):
@@ -1481,7 +1537,7 @@ def list_box_xml(region: ListBox, writer: Writer) -> str:
     ``RL`` is the cached output the converter reads; Prime rewrites it."""
     nums, rows, cols = _control_numbers(region.value)
     js_value = nums[0] if not rows else "[ " + ", ".join(nums) + " ]"
-    adds = "".join(f'ListBox.AddString("{o}");\r\n' for o in region.options)
+    adds = "".join(f"ListBox.AddString({_js_string(o)});\r\n" for o in region.options)
     script = (
         "// Rebuilt by mcad2py from Python, which keeps the value of the\r\n"
         "// selected option only. Write the other values in here.\r\n"
@@ -1515,7 +1571,9 @@ def list_box_xml(region: ListBox, writer: Writer) -> str:
 
 
 def _js_string(text: str) -> str:
-    return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    escaped = (text.replace("\\", "\\\\").replace('"', '\\"')
+               .replace("\n", "\\n").replace("\r", "\\r"))
+    return f'"{escaped}"'
 
 
 def status_xml(region: ir.StatusControl, writer: Writer) -> str:
@@ -1834,6 +1892,12 @@ def main(argv: list[str] | None = None) -> int:
         text = args.file.read_text(encoding="utf-8")
         regions = read_python(text)
         parts = build(regions, read_context(text))
+    except (IndexError, AttributeError, KeyError, TypeError, ValueError) as exc:
+        # A shape a reader half-matched and then indexed past: outside the
+        # subset all the same, so refuse it rather than print a traceback.
+        print(f"error: an unsupported input shape ({type(exc).__name__}: {exc})",
+              file=sys.stderr)
+        return 1
     except (Refused, mb.Unsupported, SyntaxError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
