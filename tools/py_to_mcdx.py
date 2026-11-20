@@ -28,7 +28,9 @@ symbolic regions (``Eq(a, b)`` alone, ``print(solve(Eq(...), C))``, the plain
 arrow ``print(simplify(x))``; the ``Symbol`` declarations are dropped, and their
 names written unlabelled as Prime does), the ``x / (10**-6)`` display scale, a
 list box (codegen's note and the selected value; its script is rebuilt to give
-that value for that option and an error for the others), and
+that value for that option and an error for the others), a status message
+(``print('<expr>', <expr>, '<message>')`` under codegen's note naming the value
+the message is for, which goes into ``result.xml``), and
 codegen's ``try`` guard around a region Mathcad could not compute (dropped:
 Prime finds the error again). Everything else is refused, naming the line.
 
@@ -782,6 +784,8 @@ def _shows_all(stmt: ast.stmt | None, names: list[ir.Name]) -> bool:
 _CONTROL_NOTE = re.compile(
     r'Mathcad ListBoxScriptableControl: selected "(?P<chosen>.*)" \(options: (?P<options>.*)\)\.$')
 _CONTROL_TAIL = "Embedded JScript not transpiled; using the cached output value."
+_STATUS_NOTE = re.compile(
+    r"Mathcad status control: the message is for the value (?P<value>-?[0-9.eE+-]+)\.$")
 
 
 @dataclass
@@ -810,6 +814,31 @@ def control_notes(texts) -> dict[int, tuple[list[str], int]]:
     return found
 
 
+def status_notes(texts) -> dict[int, str]:
+    """Codegen's note above a status line, by the line the ``print`` is on:
+    ``{line: cached value}``. The notes leave ``texts``."""
+    found = {}
+    for block in list(texts):
+        line, paras = block
+        m = _STATUS_NOTE.match(paras[0]) if len(paras) == 1 else None
+        if m:
+            found[line + 1] = m["value"]
+            texts.remove(block)
+    return found
+
+
+def status_control(reader: Reader, stmt: ast.stmt, value: str) -> ir.StatusControl | None:
+    """``print('<expr>', <expr>, '<message>')`` -> the status control."""
+    call = stmt.value if isinstance(stmt, ast.Expr) else None
+    if not (isinstance(call, ast.Call) and ast.unparse(call.func) == "print"
+            and len(call.args) == 3 and not call.keywords
+            and all(isinstance(call.args[k], ast.Constant) and isinstance(call.args[k].value, str)
+                    for k in (0, 2))):
+        return None
+    return ir.StatusControl(value=reader.expr(call.args[1]), message=call.args[2].value,
+                            cached_value=value)
+
+
 def read_python(text: str) -> list[ir.Region]:
     tree = ast.parse(text)
     reader = Reader(text)
@@ -820,6 +849,7 @@ def read_python(text: str) -> list[ir.Region]:
     texts = [(line, paras) for line, paras in comment_blocks(text)
              if not all(p.startswith(_GUARD_NOTE) for p in paras)]
     controls = control_notes(texts)
+    statuses = status_notes(texts)
     regions: list[ir.Region] = []
     i = 0
     while i < len(body) or texts:
@@ -851,6 +881,9 @@ def read_python(text: str) -> list[ir.Region]:
             regions.append(ListBox(target=reader.expr(stmt.targets[0]),
                                    value=reader.expr(stmt.value),
                                    options=options, selected=selected))
+        elif (stmt.lineno in statuses
+                and (status := status_control(reader, stmt, statuses[stmt.lineno])) is not None):
+            regions.append(status)
         elif (sym := reader.symbolic(stmt)) is not None:
             regions.append(sym)
         elif is_elementwise_line(stmt):
@@ -991,6 +1024,9 @@ class Writer(mb._Writer):
     def __init__(self, ids, functions: dict[str, str] | None = None):
         super().__init__(ids)
         self.functions = functions or {}
+        # resultRef -> a value result.xml must carry: a status control's
+        # value, which says which outcome its one known message is for.
+        self.cached: dict[int, str] = {}
 
     def unit(self, name):
         # ``label-is-contextual`` lets Prime pick the label itself, and where
@@ -1442,7 +1478,51 @@ def list_box_xml(region: ListBox, writer: Writer) -> str:
             f"<ml:vals>{vals}</ml:vals></ml:ListBoxScriptableControl></ml:define>")
 
 
+def _js_string(text: str) -> str:
+    return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def status_xml(region: ir.StatusControl, writer: Writer) -> str:
+    """``<ml:TextBoxScriptableControl>`` with the input as its PiggybackNode.
+    The original script is not in the Python: the new one shows the message
+    for the value it belongs to, and says so for any other value."""
+    script = (
+        "// Rebuilt by mcad2py from Python, which keeps the message for one\r\n"
+        "// value only. Write the other messages in here.\r\n"
+        "function TextBoxEvent_Start(Inputs, Outputs) {\r\n"
+        "   TextBoxEvent_Exec(Inputs, Outputs)\r\n};\r\n\r\n"
+        "function TextBoxEvent_Exec(Inputs, Outputs) {\r\n"
+        "\tvar A = Inputs[0].Value;\r\n\r\n"
+        f"\tif (A == {region.cached_value}) {{\r\n"
+        f"\t\tTextBox.Text({_js_string(region.message)})\r\n"
+        "\t\tTextBox.BackColor(0xAAFFAA);\r\n"
+        "\t} else {\r\n"
+        '\t\tTextBox.Text("No message known for the value " + A)\r\n'
+        "\t\tTextBox.BackColor(0xFFAAAA);\r\n"
+        "\t}\r\n};\r\n\r\n"
+        "function TextBoxEvent_Stop(Inputs, Outputs) {\r\n};\r\n")
+    packed = base64.b64encode(gzip.compress(script.encode("utf-8"), mtime=0)).decode("ascii")
+    width = max(60, round(7 * len(region.message)) + 20)
+    return (f'<ml:TextBoxScriptableControl TextAlignment="Left" AcceptsReturn="false" '
+            f'ReadOnly="false" Border="false" SelectedIndex="0" Script="{packed}" '
+            f'EngineType="JScript" ScriptObjectControlName="" IsNeedsCalculate="false" '
+            f'Foreground="#FF000000" Background="#FFAAFFAA" FontSize="10.6666666666667" '
+            f'Width="{width}" Height="30" IsInputFieldShown="true" IsEvaluation="true" '
+            f'InputFieldSExpression="(@ScriptableControl 1 1 )">'
+            f"<ml:vals><ml:val>{mb._escape(region.message)}</ml:val></ml:vals>"
+            f"<ml:calcs><ml:calc></ml:calc></ml:calcs><ml:PiggybackNode>"
+            f'<ml:inputControlInputField rows="1" cols="1" '
+            f'xmlns:ml="http://schemas.mathsoft.com/math50">'
+            f"<ml:parens>{writer.emit(region.value)[0]}</ml:parens>"
+            f"</ml:inputControlInputField></ml:PiggybackNode></ml:TextBoxScriptableControl>")
+
+
 def region_xml(region: ir.Region, rid: int, top: float, writer: Writer, refs) -> str:
+    if isinstance(region, ir.StatusControl):
+        ref = next(refs)
+        writer.cached[ref] = region.cached_value
+        return (f'<region region-id="{rid}" top="{top}" left="38.4">'
+                f'<math resultRef="{ref}">{status_xml(region, writer)}</math></region>')
     if isinstance(region, ListBox):
         # The name is hidden, as Prime shows a list box: only the list.
         return (f'<region region-id="{rid}" top="{top}" left="38.4">'
@@ -1653,6 +1733,14 @@ def build(regions: list[ir.Region]) -> dict[str, str | bytes]:
         '<Override PartName="/mathcad/settings/presentation.xml" '
         f'ContentType="{_CT}.settings.presentation+xml" /></Types>')
     parts["mathcad/worksheet.xml"] = (f'<worksheet {_NS}><regions>{body}</regions></worksheet>')
+    if writer.cached:
+        results = "".join(
+            f'<resultData result-id="{ref}" calculation-status="Synchronized"><ml:result>'
+            f'<ml:matrix rows="1" cols="1"><ml:real>{value}</ml:real></ml:matrix>'
+            f"</ml:result></resultData>" for ref, value in writer.cached.items())
+        parts["mathcad/result.xml"] = parts["mathcad/result.xml"].replace(
+            ' xmlns="http://schemas.mathsoft.com/result10" />',
+            f' xmlns="http://schemas.mathsoft.com/result10">{results}</resultsList>')
     return parts
 
 

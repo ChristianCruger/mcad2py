@@ -257,7 +257,13 @@ file-name field keeps the value Prime last **cached**, which can be stale.
   emits `print("<expr>", <expr>, "<message>")`: the expression source, its live value, and the cached
   `<ml:vals>` message (`"All loadcases pass!"`, `"OK!"`), so the reader sees how the value drove the
   message. (Contrast `_parse_scriptable_control`, which recovers a define-*driving* control's cached
-  `RL` value.)
+  `RL` value.) The script's *other* messages are lost, so the message alone doesn't say which outcome
+  it reports; `result.xml` caches the input's value at the control's `resultRef` (a 1×1 matrix, `1`
+  for every control in `RC_col.mcdx`), and the line above the print says so:
+  `# Mathcad status control: the message is for the value 1.` `tools/py_to_mcdx.py` reads that note
+  back, writes the value into the new sheet's `result.xml`, and rebuilds a script that shows the
+  message for that value only. Prime runs no control script under Application Automation (it caches
+  the old output and adds a `ScriptableWarning`), so a script is only exercised by hand in Prime.
 ## `RC_col.mcdx` constructs (Stage 2 — imperative programs)
 
 - **Multi-line program** (`<ml:program>` with statements) → a new statement IR (`ir.ProgramBlock` of

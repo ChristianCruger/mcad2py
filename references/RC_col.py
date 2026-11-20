@@ -260,6 +260,7 @@ print(disp(n_0))
 lambda__lim = 20 * A * B * C / nth_root(n_0, 2)
 print(disp(lambda__lim))
 
+# Mathcad status control: the message is for the value 1.
 print('lambda_ < lambda__lim', lambda_ < lambda__lim, 'Effects can be neglected!')
 
 # Imperfections:
@@ -389,8 +390,10 @@ def _UR_c_max_i_c_UR_s_max_i_s_ERR_E():
 UR_c_max, i_c, UR_s_max, i_s, ERR, E = tuple(_UR_c_max_i_c_UR_s_max_i_s_ERR_E())
 print([UR_c_max, i_c, UR_s_max, i_s, ERR, E])
 
+# Mathcad status control: the message is for the value 1.
 print('ERR == 0', ERR == 0, 'Solved without errors')
 
+# Mathcad status control: the message is for the value 1.
 print('mc_max(UR_c_max, UR_s_max) < 1', mc_max(UR_c_max, UR_s_max) < 1, 'All loadcases pass!')
 
 # 4.2 Critical load cases
@@ -680,6 +683,7 @@ print(disp(UR_vc))
 
 print(mc_max(UR_vc))
 
+# Mathcad status control: the message is for the value 1.
 print('mc_max(UR_vc) < 1', mc_max(UR_vc) < 1, 'OK!')
 
 # 6 Minimum reinforcement
@@ -699,6 +703,7 @@ print(disp(A_smax, ureg.mm**2))
 A_s_total = total(A_s)
 print(disp(A_s_total, ureg.mm**2))
 
+# Mathcad status control: the message is for the value 1.
 print('A_s_total > A_smin and A_s_total < A_smax', A_s_total > A_smin and A_s_total < A_smax, 'OK!')
 
 # Maximum allowed stirrup spacing:
@@ -706,6 +711,7 @@ print('A_s_total > A_smin and A_s_total < A_smax', A_s_total > A_smin and A_s_to
 s_max = mc_min(400 * ureg.mm, 20 * ø, l_c, w_c)
 print(disp(s_max, ureg.mm))
 
+# Mathcad status control: the message is for the value 1.
 print('s_w <= s_max', s_w <= s_max, 'OK!')
 
 # 7 Bursting at temp bearing
@@ -772,4 +778,5 @@ print(disp(s_req, ureg.mm))
 
 s_b = 300 * ureg.mm
 
+# Mathcad status control: the message is for the value 1.
 print('s_b <= s_req', s_b <= s_req, 'OK!')

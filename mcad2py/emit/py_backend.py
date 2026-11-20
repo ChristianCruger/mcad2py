@@ -132,7 +132,7 @@ def _render_region(region: ir.Region, *, prints: bool = True) -> list[str]:
         return ["", expr_to_str(region.value)]
 
     if isinstance(region, ir.StatusControl):
-        return ["", status_control_line(region)]
+        return ["", *status_control_line(region).split("\n")]
 
     if isinstance(region, ir.SymbolDeclarations):
         return ["", *declaration_lines(region)]

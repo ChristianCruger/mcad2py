@@ -138,6 +138,9 @@ def test_textbox_status_control_prints_expr_value_and_message():
         "mc_max(UR_c_max, UR_s_max) < 1, 'All loadcases pass!')" in src
     )
     assert "print('ERR == 0', ERR == 0, 'Solved without errors')" in src
+    # The message is for one outcome only; the cached input value says which.
+    assert ("# Mathcad status control: the message is for the value 1.\n"
+            "print('ERR == 0', ERR == 0," in src)
 
 
 def test_no_unsupported_regions():

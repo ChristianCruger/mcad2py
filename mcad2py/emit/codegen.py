@@ -328,7 +328,15 @@ def status_control_line(region: ir.StatusControl) -> str:
     transpiled, so we surface both so the reader can see how they relate.
     """
     expr_s = expr_to_str(region.value)
-    return f"print({expr_s!r}, {expr_s}, {region.message!r})"
+    line = f"print({expr_s!r}, {expr_s}, {region.message!r})"
+    if region.cached_value is None:
+        return line
+    # The script's other messages aren't kept, so say which outcome this is.
+    return f"{STATUS_NOTE}{region.cached_value}.\n{line}"
+
+
+# The note above a status line; tools/py_to_mcdx.py reads it back.
+STATUS_NOTE = "# Mathcad status control: the message is for the value "
 
 
 def multi_assign_lines(region: ir.MultiAssign) -> list[str]:
